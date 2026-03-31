@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { useEffect, useState } from 'react';
 import { Platform, StyleSheet } from 'react-native';
 
 import { HelloWave } from '@/components/hello-wave';
@@ -6,8 +7,28 @@ import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Link } from 'expo-router';
+import { testFirestoreWrite } from '../../lib/testFirebase';
 
 export default function HomeScreen() {
+  const [firestoreStatus, setFirestoreStatus] = useState('Testing Firestore write...');
+
+  useEffect(() => {
+    async function runFirestoreTest() {
+      const result = await testFirestoreWrite();
+
+      if (result.ok) {
+        setFirestoreStatus(
+          `Firestore write succeeded. Collection: ${result.collection}, doc ID: ${result.id}`
+        );
+        return;
+      }
+
+      setFirestoreStatus(`Firestore write failed: ${result.error}`);
+    }
+
+    runFirestoreTest();
+  }, []);
+
   return (
     <ParallaxScrollView
       headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
@@ -35,6 +56,7 @@ export default function HomeScreen() {
           </ThemedText>{' '}
           to open developer tools.
         </ThemedText>
+        <ThemedText type="defaultSemiBold">{firestoreStatus}</ThemedText>
       </ThemedView>
       <ThemedView style={styles.stepContainer}>
         <Link href="/modal">
