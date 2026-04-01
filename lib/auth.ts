@@ -6,9 +6,9 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 
-import { auth, db } from "../firebaseConfig";
+import { auth } from "../firebaseConfig";
+import { createOrUpdateUserProfile } from "./firestore";
 
 const UW_EMAIL_DOMAIN = "@wisc.edu";
 
@@ -21,24 +21,19 @@ export function isValidUwEmail(email: string) {
 }
 
 async function upsertUserProfile(user: User) {
-  await setDoc(
-    doc(db, "users", user.uid),
-    {
-      email: user.email,
-      displayName: user.displayName ?? "",
-      photoURL: user.photoURL ?? "",
-      createdAt:
-        user.metadata.creationTime ??
-        user.metadata.lastSignInTime ??
-        new Date().toISOString(),
-      lastLoginAt:
-        user.metadata.lastSignInTime ??
-        user.metadata.creationTime ??
-        new Date().toISOString(),
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
+  await createOrUpdateUserProfile(user.uid, {
+    email: user.email ?? "",
+    displayName: user.displayName ?? "",
+    photoURL: user.photoURL ?? "",
+    createdAt:
+      user.metadata.creationTime ??
+      user.metadata.lastSignInTime ??
+      new Date().toISOString(),
+    lastLoginAt:
+      user.metadata.lastSignInTime ??
+      user.metadata.creationTime ??
+      new Date().toISOString(),
+  });
 }
 
 export async function signInOrCreateAccount(email: string, password: string) {
