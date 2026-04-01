@@ -11,7 +11,6 @@ import {
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { testFirestoreWrite } from '../../lib/testFirebase';
 import { logOut, signInOrCreateAccount, subscribeToAuthState } from '../../lib/auth';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -23,7 +22,6 @@ export default function HomeScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authStatus, setAuthStatus] = useState('Checking session...');
-  const [firestoreStatus, setFirestoreStatus] = useState('Testing Firestore write...');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isBusy, setIsBusy] = useState(false);
 
@@ -41,23 +39,6 @@ export default function HomeScreen() {
     });
 
     return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    async function runFirestoreTest() {
-      const result = await testFirestoreWrite();
-
-      if (result.ok) {
-        setFirestoreStatus(
-          `Firestore write succeeded. Collection: ${result.collection}, doc ID: ${result.id}`
-        );
-        return;
-      }
-
-      setFirestoreStatus(`Firestore write failed: ${result.error}`);
-    }
-
-    runFirestoreTest();
   }, []);
 
   async function handleSignIn() {
@@ -108,7 +89,7 @@ export default function HomeScreen() {
 
       <ThemedView style={[styles.card, { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' }]}>
         <ThemedText type="subtitle">Firebase Status</ThemedText>
-        <ThemedText>{firestoreStatus}</ThemedText>
+        <ThemedText>Firestore rules are active for `users`, `sessions`, and `locations`.</ThemedText>
         <ThemedText>{authStatus}</ThemedText>
       </ThemedView>
 
