@@ -12,12 +12,25 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { logOut, signInOrCreateAccount, subscribeToAuthState } from '../../lib/auth';
-import { getUserProfile, updateUserClasses } from '../../lib/firestore';
+import {
+  getUserProfile,
+  updateUserAvailability,
+  updateUserClasses,
+  type AvailabilityDay,
+  type AvailabilitySlot,
+} from '../../lib/firestore';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { User } from 'firebase/auth';
 
 const SUGGESTED_CLASSES = ['CS400', 'CS300', 'MATH221', 'STAT240', 'CHEM103', 'ECON101'];
+const SUGGESTED_AVAILABILITY: AvailabilitySlot[] = [
+  { day: 'mon', startMinutes: 1080, endMinutes: 1200 },
+  { day: 'tue', startMinutes: 960, endMinutes: 1080 },
+  { day: 'wed', startMinutes: 1140, endMinutes: 1260 },
+  { day: 'thu', startMinutes: 900, endMinutes: 1020 },
+  { day: 'fri', startMinutes: 780, endMinutes: 900 },
+];
 
 export default function HomeScreen() {
   const colorScheme = useColorScheme() ?? 'light';
@@ -31,6 +44,10 @@ export default function HomeScreen() {
   const [isProfileBusy, setIsProfileBusy] = useState(false);
   const [classes, setClasses] = useState<string[]>([]);
   const [classesStatus, setClassesStatus] = useState('Sign in to start adding your classes.');
+  const [availability, setAvailability] = useState<AvailabilitySlot[]>([]);
+  const [availabilityStatus, setAvailabilityStatus] = useState(
+    'Sign in to start adding your availability.'
+  );
   const isSignedIn = !!currentUser;
 
   useEffect(() => {
@@ -45,6 +62,8 @@ export default function HomeScreen() {
 
       setClasses([]);
       setClassesStatus('Sign in to start adding your classes.');
+      setAvailability([]);
+      setAvailabilityStatus('Sign in to start adding your availability.');
       setAuthStatus('Not signed in');
     });
 
@@ -61,6 +80,7 @@ export default function HomeScreen() {
         setIsProfileBusy(true);
         const profile = await getUserProfile(currentUser.uid);
         const savedClasses = profile?.classes ?? [];
+        const savedAvailability = profile?.availability ?? [];
 
         setClasses(savedClasses);
         setClassesStatus(
@@ -68,9 +88,18 @@ export default function HomeScreen() {
             ? `Saved ${savedClasses.length} class${savedClasses.length === 1 ? '' : 'es'} to your profile.`
             : 'No classes saved yet.'
         );
+        setAvailability(savedAvailability);
+        setAvailabilityStatus(
+          savedAvailability.length > 0
+            ? `Saved ${savedAvailability.length} availability slot${
+                savedAvailability.length === 1 ? '' : 's'
+              } to your profile.`
+            : 'No availability saved yet.'
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to load your profile.';
         setClassesStatus(message);
+        setAvailabilityStatus(message);
       } finally {
         setIsProfileBusy(false);
       }
@@ -102,6 +131,38 @@ export default function HomeScreen() {
     setCustomClass('');
   }
 
+  function formatTime(minutes: number) {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHour = hours % 12 === 0 ? 12 : hours % 12;
+    return `${displayHour}:${mins.toString().padStart(2, '0')} ${period}`;
+  }
+
+  function formatDay(day: AvailabilityDay) {
+    return day.charAt(0).toUpperCase() + day.slice(1);
+  }
+
+  function formatAvailabilitySlot(slot: AvailabilitySlot) {
+    return `${formatDay(slot.day)} ${formatTime(slot.startMinutes)}-${formatTime(slot.endMinutes)}`;
+  }
+
+  function isSameSlot(first: AvailabilitySlot, second: AvailabilitySlot) {
+    return (
+      first.day === second.day &&
+      first.startMinutes === second.startMinutes &&
+      first.endMinutes === second.endMinutes
+    );
+  }
+
+  function toggleAvailabilitySlot(slot: AvailabilitySlot) {
+    setAvailability((currentAvailability) =>
+      currentAvailability.some((savedSlot) => isSameSlot(savedSlot, slot))
+        ? currentAvailability.filter((savedSlot) => !isSameSlot(savedSlot, slot))
+        : [...currentAvailability, slot]
+    );
+  }
+
   async function handleSaveClasses() {
     if (!currentUser) {
       setClassesStatus('Sign in before saving classes.');
@@ -120,6 +181,32 @@ export default function HomeScreen() {
       const message = error instanceof Error ? error.message : 'Unable to save classes right now.';
       setClassesStatus(message);
       Alert.alert('Classes Error', message);
+    } finally {
+      setIsProfileBusy(false);
+    }
+  }
+
+  async function handleSaveAvailability() {
+    if (!currentUser) {
+      setAvailabilityStatus('Sign in before saving availability.');
+      return;
+    }
+
+    try {
+      setIsProfileBusy(true);
+      await updateUserAvailability(currentUser.uid, availability);
+      setAvailabilityStatus(
+        availability.length > 0
+          ? `Saved ${availability.length} availability slot${
+              availability.length === 1 ? '' : 's'
+            } to your profile.`
+          : 'Cleared availability from your profile.'
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to save availability right now.';
+      setAvailabilityStatus(message);
+      Alert.alert('Availability Error', message);
     } finally {
       setIsProfileBusy(false);
     }
@@ -299,6 +386,79 @@ export default function HomeScreen() {
               styles.card,
               { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
             ]}>
+            <ThemedText type="subtitle">Set Availability</ThemedText>
+            <ThemedText style={styles.helperText}>
+              Save a few common study windows so Studi can match you with classmates who are free
+              at the same time.
+            </ThemedText>
+            <ThemedText>{availabilityStatus}</ThemedText>
+
+            <View style={styles.chipRow}>
+              {SUGGESTED_AVAILABILITY.map((slot) => {
+                const isSelected = availability.some((savedSlot) => isSameSlot(savedSlot, slot));
+
+                return (
+                  <Pressable
+                    key={`${slot.day}-${slot.startMinutes}-${slot.endMinutes}`}
+                    disabled={isProfileBusy}
+                    onPress={() => toggleAvailabilitySlot(slot)}
+                    style={[
+                      styles.chip,
+                      styles.wideChip,
+                      {
+                        backgroundColor: isSelected
+                          ? palette.tint
+                          : colorScheme === 'dark'
+                            ? '#1b252a'
+                            : '#f4fafc',
+                        borderColor: isSelected
+                          ? palette.tint
+                          : colorScheme === 'dark'
+                            ? '#35515b'
+                            : '#c8dbe2',
+                        opacity: isProfileBusy ? 0.5 : 1,
+                      },
+                    ]}>
+                    <ThemedText
+                      type="defaultSemiBold"
+                      lightColor={isSelected ? '#ffffff' : undefined}
+                      darkColor={isSelected ? '#ffffff' : undefined}>
+                      {formatAvailabilitySlot(slot)}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <ThemedText>
+              Selected availability:{' '}
+              {availability.length > 0
+                ? availability.map((slot) => formatAvailabilitySlot(slot)).join(', ')
+                : 'None yet'}
+            </ThemedText>
+
+            <Pressable
+              disabled={isProfileBusy}
+              onPress={handleSaveAvailability}
+              style={[
+                styles.primaryButton,
+                { backgroundColor: palette.tint, opacity: isProfileBusy ? 0.5 : 1 },
+              ]}>
+              {isProfileBusy ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
+                  Save Availability
+                </ThemedText>
+              )}
+            </Pressable>
+          </ThemedView>
+
+          <ThemedView
+            style={[
+              styles.card,
+              { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+            ]}>
             <ThemedText type="subtitle">What This Gives You</ThemedText>
             <ThemedText>
               Authenticated users persist across app restarts on native once AsyncStorage is
@@ -440,6 +600,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  wideChip: {
+    minHeight: 48,
   },
   flexInput: {
     flex: 1,
