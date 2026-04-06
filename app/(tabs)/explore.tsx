@@ -1,112 +1,204 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useRouter } from 'expo-router';
 
-import { Collapsible } from '@/components/ui/collapsible';
-import { ExternalLink } from '@/components/external-link';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Fonts } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getLocations, type StudyLocation } from '@/lib/firestore';
 
-export default function TabTwoScreen() {
+export default function StudyLocationsScreen() {
+  const router = useRouter();
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+  const [locations, setLocations] = useState<StudyLocation[]>([]);
+  const [status, setStatus] = useState('Loading study locations...');
+  const [isLoading, setIsLoading] = useState(true);
+
+  async function loadLocations() {
+    try {
+      setIsLoading(true);
+      const loadedLocations = await getLocations();
+      setLocations(loadedLocations);
+      setStatus(
+        loadedLocations.length > 0
+          ? `Loaded ${loadedLocations.length} study location${
+              loadedLocations.length === 1 ? '' : 's'
+            }.`
+          : 'No study locations found yet.'
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to load locations right now.';
+      setStatus(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadLocations();
+  }, []);
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
-      headerImage={
-        <IconSymbol
-          size={310}
-          color="#808080"
-          name="chevron.left.forwardslash.chevron.right"
-          style={styles.headerImage}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText
-          type="title"
-          style={{
-            fontFamily: Fonts.rounded,
-          }}>
-          Explore
+    <ScrollView
+      style={[styles.screen, { backgroundColor: palette.background }]}
+      contentContainerStyle={styles.content}>
+      <ThemedView
+        style={[
+          styles.hero,
+          { backgroundColor: colorScheme === 'dark' ? '#1f3035' : '#eef7fa' },
+        ]}>
+        <ThemedText type="title" style={styles.heroTitle}>
+          Study Locations
+        </ThemedText>
+        <ThemedText style={styles.heroText}>
+          Browse places around campus where students can meet, focus, and start study sessions.
         </ThemedText>
       </ThemedView>
-      <ThemedText>This app includes example code to help you get started.</ThemedText>
-      <Collapsible title="File-based routing">
-        <ThemedText>
-          This app has two screens:{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/explore.tsx</ThemedText>
-        </ThemedText>
-        <ThemedText>
-          The layout file in <ThemedText type="defaultSemiBold">app/(tabs)/_layout.tsx</ThemedText>{' '}
-          sets up the tab navigator.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/router/introduction">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Android, iOS, and web support">
-        <ThemedText>
-          You can open this project on Android, iOS, and the web. To open the web version, press{' '}
-          <ThemedText type="defaultSemiBold">w</ThemedText> in the terminal running this project.
-        </ThemedText>
-      </Collapsible>
-      <Collapsible title="Images">
-        <ThemedText>
-          For static images, you can use the <ThemedText type="defaultSemiBold">@2x</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">@3x</ThemedText> suffixes to provide files for
-          different screen densities
-        </ThemedText>
-        <Image
-          source={require('@/assets/images/react-logo.png')}
-          style={{ width: 100, height: 100, alignSelf: 'center' }}
-        />
-        <ExternalLink href="https://reactnative.dev/docs/images">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Light and dark mode components">
-        <ThemedText>
-          This template has light and dark mode support. The{' '}
-          <ThemedText type="defaultSemiBold">useColorScheme()</ThemedText> hook lets you inspect
-          what the user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Animations">
-        <ThemedText>
-          This template includes an example of an animated component. The{' '}
-          <ThemedText type="defaultSemiBold">components/HelloWave.tsx</ThemedText> component uses
-          the powerful{' '}
-          <ThemedText type="defaultSemiBold" style={{ fontFamily: Fonts.mono }}>
-            react-native-reanimated
-          </ThemedText>{' '}
-          library to create a waving hand animation.
-        </ThemedText>
-        {Platform.select({
-          ios: (
-            <ThemedText>
-              The <ThemedText type="defaultSemiBold">components/ParallaxScrollView.tsx</ThemedText>{' '}
-              component provides a parallax effect for the header image.
-            </ThemedText>
-          ),
-        })}
-      </Collapsible>
-    </ParallaxScrollView>
+
+      <ThemedView
+        style={[
+          styles.card,
+          { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+        ]}>
+        <ThemedText type="subtitle">Status</ThemedText>
+        <ThemedText>{status}</ThemedText>
+        <Pressable
+          onPress={() => router.push('/create-session')}
+          style={[
+            styles.createButton,
+            { backgroundColor: palette.tint },
+          ]}>
+          <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
+            Create a Study Session
+          </ThemedText>
+        </Pressable>
+        <Pressable
+          onPress={loadLocations}
+          style={[
+            styles.refreshButton,
+            {
+              borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+              opacity: isLoading ? 0.6 : 1,
+            },
+          ]}>
+          {isLoading ? (
+            <ActivityIndicator color={palette.text} />
+          ) : (
+            <ThemedText type="defaultSemiBold">Refresh Locations</ThemedText>
+          )}
+        </Pressable>
+      </ThemedView>
+
+      {locations.length > 0 ? (
+        locations.map((location) => (
+          <ThemedView
+            key={location.locationId}
+            style={[
+              styles.card,
+              { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+            ]}>
+            <View style={styles.locationHeader}>
+              <ThemedText type="subtitle">{location.name}</ThemedText>
+              <ThemedText style={styles.locationArea}>{location.campusArea}</ThemedText>
+            </View>
+
+            <ThemedText>{location.building}</ThemedText>
+            <ThemedText style={styles.notesText}>{location.notes}</ThemedText>
+
+            <View style={styles.tagRow}>
+              {location.tags.map((tag) => (
+                <ThemedView
+                  key={`${location.locationId}-${tag}`}
+                  style={[
+                    styles.tag,
+                    {
+                      backgroundColor: colorScheme === 'dark' ? '#1b252a' : '#f4fafc',
+                      borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+                    },
+                  ]}>
+                  <ThemedText type="defaultSemiBold">{tag}</ThemedText>
+                </ThemedView>
+              ))}
+            </View>
+          </ThemedView>
+        ))
+      ) : (
+        <ThemedView
+          style={[
+            styles.card,
+            { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+          ]}>
+          <ThemedText type="subtitle">Seed Locations Next</ThemedText>
+          <ThemedText>
+            Add a few documents in your Firestore `locations` collection, then reload this tab.
+          </ThemedText>
+          <ThemedText>Suggested IDs: `college-library`, `memorial-library`, `grainger`.</ThemedText>
+        </ThemedView>
+      )}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  headerImage: {
-    color: '#808080',
-    bottom: -90,
-    left: -35,
-    position: 'absolute',
+  screen: {
+    flex: 1,
   },
-  titleContainer: {
+  content: {
+    gap: 16,
+    padding: 20,
+  },
+  hero: {
+    borderRadius: 24,
+    padding: 24,
+  },
+  heroText: {
+    maxWidth: 420,
+  },
+  heroTitle: {
+    marginBottom: 12,
+  },
+  card: {
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 12,
+    padding: 20,
+  },
+  createButton: {
+    alignItems: 'center',
+    borderRadius: 14,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 16,
+  },
+  locationArea: {
+    opacity: 0.75,
+  },
+  locationHeader: {
+    gap: 4,
+  },
+  notesText: {
+    opacity: 0.85,
+  },
+  refreshButton: {
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 16,
+  },
+  tag: {
+    borderRadius: 999,
+    borderWidth: 1,
+    minHeight: 36,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  tagRow: {
     flexDirection: 'row',
-    gap: 8,
+    flexWrap: 'wrap',
+    gap: 10,
   },
 });
