@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useRouter } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -8,6 +9,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getLocations, type StudyLocation } from '@/lib/firestore';
 
 export default function StudyLocationsScreen() {
+  const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const [locations, setLocations] = useState<StudyLocation[]>([]);
@@ -62,6 +64,16 @@ export default function StudyLocationsScreen() {
         ]}>
         <ThemedText type="subtitle">Status</ThemedText>
         <ThemedText>{status}</ThemedText>
+        <Pressable
+          onPress={() => router.push('/create-session')}
+          style={[
+            styles.createButton,
+            { backgroundColor: palette.tint },
+          ]}>
+          <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
+            Create a Study Session
+          </ThemedText>
+        </Pressable>
         <Pressable
           onPress={loadLocations}
           style={[
@@ -152,6 +164,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 12,
     padding: 20,
+  },
+  createButton: {
+    alignItems: 'center',
+    borderRadius: 14,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 16,
   },
   locationArea: {
     opacity: 0.75,
