@@ -65,6 +65,16 @@ export default function StudyLocationsScreen() {
         <ThemedText type="subtitle">Status</ThemedText>
         <ThemedText>{status}</ThemedText>
         <Pressable
+          onPress={() => router.push('/sessions')}
+          style={[
+            styles.secondaryButton,
+            {
+              borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+            },
+          ]}>
+          <ThemedText type="defaultSemiBold">Browse Available Sessions</ThemedText>
+        </Pressable>
+        <Pressable
           onPress={() => router.push('/create-session')}
           style={[
             styles.createButton,
@@ -164,6 +174,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 12,
     padding: 20,
+  },
+  secondaryButton: {
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 16,
   },
   createButton: {
     alignItems: 'center',
