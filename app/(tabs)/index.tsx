@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,
@@ -33,6 +34,7 @@ const SUGGESTED_AVAILABILITY: AvailabilitySlot[] = [
 ];
 
 export default function HomeScreen() {
+  const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const [email, setEmail] = useState('');
@@ -378,6 +380,17 @@ export default function HomeScreen() {
                 },
               ]}>
               <ThemedText type="defaultSemiBold">Sign Out</ThemedText>
+            </Pressable>
+
+            <Pressable
+              onPress={() => router.push('/matches')}
+              style={[
+                styles.secondaryButton,
+                {
+                  borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+                },
+              ]}>
+              <ThemedText type="defaultSemiBold">View Matches</ThemedText>
             </Pressable>
           </ThemedView>
 

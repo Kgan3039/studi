@@ -64,6 +64,12 @@ export type StudyLocation = {
   tags: string[];
 };
 
+export type PotentialMatch = {
+  availabilityOverlap: AvailabilitySlot[];
+  sharedClasses: string[];
+  user: UserProfile;
+};
+
 type UserProfileWrite = Partial<Omit<UserProfile, "uid" | "updatedAt">> & {
   email: string;
 };
@@ -111,6 +117,62 @@ export async function getUserProfile(userId: string) {
   }
 
   return snapshot.data() as UserProfile;
+}
+
+function isSameAvailabilitySlot(first: AvailabilitySlot, second: AvailabilitySlot) {
+  return (
+    first.day === second.day &&
+    first.startMinutes === second.startMinutes &&
+    first.endMinutes === second.endMinutes
+  );
+}
+
+function getAvailabilityOverlap(
+  currentAvailability: AvailabilitySlot[],
+  candidateAvailability: AvailabilitySlot[]
+) {
+  return currentAvailability.filter((currentSlot) =>
+    candidateAvailability.some((candidateSlot) => isSameAvailabilitySlot(currentSlot, candidateSlot))
+  );
+}
+
+export async function getPotentialMatches(currentUserId: string) {
+  const currentUser = await getUserProfile(currentUserId);
+
+  if (!currentUser) {
+    return [];
+  }
+
+  const usersSnapshot = await getDocs(collection(db, COLLECTIONS.users));
+
+  return usersSnapshot.docs
+    .map((userDoc) => userDoc.data() as UserProfile)
+    .filter((candidateUser) => candidateUser.uid !== currentUserId)
+    .map((candidateUser) => {
+      const sharedClasses = candidateUser.classes.filter((classCode) =>
+        currentUser.classes.includes(classCode)
+      );
+      const availabilityOverlap = getAvailabilityOverlap(
+        currentUser.availability,
+        candidateUser.availability
+      );
+
+      return {
+        availabilityOverlap,
+        sharedClasses,
+        user: candidateUser,
+      };
+    })
+    .filter(
+      (match) => match.sharedClasses.length > 0 && match.availabilityOverlap.length > 0
+    )
+    .sort((firstMatch, secondMatch) => {
+      if (secondMatch.sharedClasses.length !== firstMatch.sharedClasses.length) {
+        return secondMatch.sharedClasses.length - firstMatch.sharedClasses.length;
+      }
+
+      return secondMatch.availabilityOverlap.length - firstMatch.availabilityOverlap.length;
+    });
 }
 
 export async function updateUserClasses(userId: string, classes: string[]) {
