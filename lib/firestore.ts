@@ -1,4 +1,5 @@
 import {
+  arrayUnion,
   addDoc,
   collection,
   doc,
@@ -68,6 +69,11 @@ export type PotentialMatch = {
   availabilityOverlap: AvailabilitySlot[];
   sharedClasses: string[];
   user: UserProfile;
+};
+
+export type StudySessionListItem = StudySession & {
+  hostEmail?: string;
+  location?: StudyLocation | null;
 };
 
 type UserProfileWrite = Partial<Omit<UserProfile, "uid" | "updatedAt">> & {
@@ -203,6 +209,45 @@ export async function getLocations() {
     locationId: locationDoc.id,
     ...(locationDoc.data() as Omit<StudyLocation, "locationId">),
   }));
+}
+
+export async function getSessions() {
+  const sessionsQuery = query(
+    collection(db, COLLECTIONS.sessions),
+    orderBy("createdAt", "desc")
+  );
+  const [sessionsSnapshot, locations] = await Promise.all([
+    getDocs(sessionsQuery),
+    getLocations(),
+  ]);
+
+  const locationsById = new Map(
+    locations.map((location) => [location.locationId, location] as const)
+  );
+
+  const sessionDocs = sessionsSnapshot.docs.map((sessionDoc) => ({
+    sessionId: sessionDoc.id,
+    ...(sessionDoc.data() as Omit<StudySession, "sessionId">),
+  }));
+
+  const hostIds = [...new Set(sessionDocs.map((session) => session.hostId))];
+  const hostProfiles = await Promise.all(hostIds.map((hostId) => getUserProfile(hostId)));
+  const hostsById = new Map(
+    hostIds.map((hostId, index) => [hostId, hostProfiles[index]] as const)
+  );
+
+  return sessionDocs.map((session) => ({
+    ...session,
+    hostEmail: hostsById.get(session.hostId)?.email ?? '',
+    location: locationsById.get(session.locationId) ?? null,
+  }));
+}
+
+export async function joinSession(sessionId: string, userId: string) {
+  await updateDoc(doc(db, COLLECTIONS.sessions, sessionId), {
+    participantIds: arrayUnion(userId),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function createSession(input: CreateSessionInput) {

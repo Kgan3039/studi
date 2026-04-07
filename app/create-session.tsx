@@ -8,6 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -24,6 +25,7 @@ function combineDateAndTime(date: string, time: string) {
 export default function CreateSessionScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
+  const insets = useSafeAreaInsets();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [classes, setClasses] = useState<string[]>([]);
   const [locations, setLocations] = useState<StudyLocation[]>([]);
@@ -125,12 +127,13 @@ export default function CreateSessionScreen() {
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={styles.content}>
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
       <ThemedView
         style={[
           styles.hero,
-          { backgroundColor: colorScheme === 'dark' ? '#1f3035' : '#eef7fa' },
+          { backgroundColor: palette.hero },
         ]}>
+        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Sessions</ThemedText>
         <ThemedText type="title" style={styles.heroTitle}>
           Create Session
         </ThemedText>
@@ -142,18 +145,29 @@ export default function CreateSessionScreen() {
       <ThemedView
         style={[
           styles.card,
-          { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+          { backgroundColor: palette.surface, borderColor: palette.border },
         ]}>
-        <ThemedText type="subtitle">Session Status</ThemedText>
-        <ThemedText>{status}</ThemedText>
+        <View style={styles.sectionHeader}>
+          <ThemedText style={styles.sectionLabel}>Overview</ThemedText>
+          <View
+            style={[
+              styles.statusPill,
+              { backgroundColor: palette.surfaceMuted },
+            ]}>
+            <ThemedText type="defaultSemiBold">Host a session</ThemedText>
+          </View>
+        </View>
+        <ThemedText type="subtitle">Session status</ThemedText>
+        <ThemedText style={styles.statusText}>{status}</ThemedText>
       </ThemedView>
 
       <ThemedView
         style={[
           styles.card,
-          { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+          { backgroundColor: palette.surface, borderColor: palette.border },
         ]}>
-        <ThemedText type="subtitle">Choose a Class</ThemedText>
+        <ThemedText style={styles.sectionLabel}>Step 1</ThemedText>
+        <ThemedText type="subtitle">Choose a class</ThemedText>
         {isLoading ? (
           <ActivityIndicator color={palette.text} />
         ) : classes.length > 0 ? (
@@ -168,16 +182,12 @@ export default function CreateSessionScreen() {
                   style={[
                     styles.chip,
                     {
-                      backgroundColor: isSelected
-                        ? palette.tint
-                        : colorScheme === 'dark'
-                          ? '#1b252a'
-                          : '#f4fafc',
+                        backgroundColor: isSelected
+                          ? palette.tint
+                          : palette.surfaceMuted,
                       borderColor: isSelected
                         ? palette.tint
-                        : colorScheme === 'dark'
-                          ? '#35515b'
-                          : '#c8dbe2',
+                          : palette.outline,
                     },
                   ]}>
                   <ThemedText
@@ -198,9 +208,10 @@ export default function CreateSessionScreen() {
       <ThemedView
         style={[
           styles.card,
-          { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+          { backgroundColor: palette.surface, borderColor: palette.border },
         ]}>
-        <ThemedText type="subtitle">Choose a Location</ThemedText>
+        <ThemedText style={styles.sectionLabel}>Step 2</ThemedText>
+        <ThemedText type="subtitle">Choose a location</ThemedText>
         {isLoading ? (
           <ActivityIndicator color={palette.text} />
         ) : locations.length > 0 ? (
@@ -217,16 +228,12 @@ export default function CreateSessionScreen() {
                     {
                       backgroundColor: isSelected
                         ? colorScheme === 'dark'
-                          ? '#20404a'
-                          : '#e6f6fb'
-                        : colorScheme === 'dark'
-                          ? '#1b252a'
-                          : '#ffffff',
+                          ? palette.badge
+                          : palette.badge
+                        : palette.surface,
                       borderColor: isSelected
                         ? palette.tint
-                        : colorScheme === 'dark'
-                          ? '#35515b'
-                          : '#c8dbe2',
+                          : palette.outline,
                     },
                   ]}>
                   <ThemedText type="defaultSemiBold">{location.name}</ThemedText>
@@ -243,9 +250,10 @@ export default function CreateSessionScreen() {
       <ThemedView
         style={[
           styles.card,
-          { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+          { backgroundColor: palette.surface, borderColor: palette.border },
         ]}>
-        <ThemedText type="subtitle">Session Details</ThemedText>
+        <ThemedText style={styles.sectionLabel}>Step 3</ThemedText>
+        <ThemedText type="subtitle">Session details</ThemedText>
 
         <TextInput
           onChangeText={setTitle}
@@ -254,7 +262,7 @@ export default function CreateSessionScreen() {
           style={[
             styles.input,
             {
-              borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+              borderColor: palette.outline,
               color: palette.text,
             },
           ]}
@@ -269,7 +277,7 @@ export default function CreateSessionScreen() {
           style={[
             styles.input,
             {
-              borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+              borderColor: palette.outline,
               color: palette.text,
             },
           ]}
@@ -286,7 +294,7 @@ export default function CreateSessionScreen() {
               styles.input,
               styles.flexInput,
               {
-                borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+                borderColor: palette.outline,
                 color: palette.text,
               },
             ]}
@@ -302,7 +310,7 @@ export default function CreateSessionScreen() {
               styles.input,
               styles.flexInput,
               {
-                borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+                borderColor: palette.outline,
                 color: palette.text,
               },
             ]}
@@ -335,24 +343,55 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: 16,
+    gap: 18,
     padding: 20,
+    paddingBottom: 36,
   },
   hero: {
     borderRadius: 24,
+    gap: 10,
     padding: 24,
   },
+  eyebrow: {
+    fontSize: 12,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
   heroText: {
+    lineHeight: 30,
     maxWidth: 420,
   },
   heroTitle: {
-    marginBottom: 12,
+    marginBottom: 4,
   },
   card: {
     borderRadius: 20,
     borderWidth: 1,
     gap: 12,
     padding: 20,
+    shadowColor: '#082431',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 18,
+  },
+  sectionHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  sectionLabel: {
+    fontSize: 12,
+    letterSpacing: 1,
+    opacity: 0.72,
+    textTransform: 'uppercase',
+  },
+  statusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  statusText: {
+    opacity: 0.82,
   },
   chip: {
     borderRadius: 999,

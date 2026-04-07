@@ -9,9 +9,12 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { logOut, signInOrCreateAccount, subscribeToAuthState } from '../../lib/auth';
 import {
   getUserProfile,
@@ -20,8 +23,6 @@ import {
   type AvailabilityDay,
   type AvailabilitySlot,
 } from '../../lib/firestore';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { User } from 'firebase/auth';
 
 const SUGGESTED_CLASSES = ['CS400', 'CS300', 'MATH221', 'STAT240', 'CHEM103', 'ECON101'];
@@ -37,6 +38,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
+  const insets = useSafeAreaInsets();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [customClass, setCustomClass] = useState('');
@@ -250,19 +252,61 @@ export default function HomeScreen() {
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={styles.content}>
-      <ThemedView style={[styles.hero, { backgroundColor: colorScheme === 'dark' ? '#14323b' : '#e8f6fb' }]}>
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
+      <ThemedView
+        style={[
+          styles.hero,
+          { backgroundColor: palette.hero },
+        ]}>
+        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>UW-Madison study hub</ThemedText>
         <ThemedText type="title" style={styles.heroTitle}>
           Studi
         </ThemedText>
         <ThemedText style={styles.heroText}>
-          Find study partners at UW-Madison, compare availability, and start sessions faster.
+          Find study partners, compare availability, and lock in study sessions without bouncing
+          between five different group chats.
         </ThemedText>
+        <View style={styles.heroStatsRow}>
+          <View
+            style={[
+              styles.heroStat,
+              { backgroundColor: palette.badge },
+            ]}>
+            <ThemedText type="defaultSemiBold">
+              {isSignedIn ? 'Profile active' : 'Get started fast'}
+            </ThemedText>
+          </View>
+          <View
+            style={[
+              styles.heroStat,
+              { backgroundColor: palette.badge },
+            ]}>
+            <ThemedText type="defaultSemiBold">
+              {classes.length} class{classes.length === 1 ? '' : 'es'}
+            </ThemedText>
+          </View>
+        </View>
       </ThemedView>
 
-      <ThemedView style={[styles.card, { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' }]}>
-        <ThemedText type="subtitle">Firebase Status</ThemedText>
-        <ThemedText>Firestore rules are active for `users`, `sessions`, and `locations`.</ThemedText>
+      <ThemedView
+        style={[
+          styles.statusCard,
+          { backgroundColor: palette.surface, borderColor: palette.border },
+        ]}>
+        <View style={styles.sectionHeader}>
+          <ThemedText style={styles.sectionLabel}>System</ThemedText>
+          <View
+            style={[
+              styles.statusPill,
+              { backgroundColor: palette.surfaceMuted },
+            ]}>
+            <ThemedText type="defaultSemiBold">Firebase connected</ThemedText>
+          </View>
+        </View>
+        <ThemedText type="subtitle">Account status</ThemedText>
+        <ThemedText style={styles.mutedText}>
+          Auth, users, sessions, and locations are all active in Firestore.
+        </ThemedText>
         <ThemedText>{authStatus}</ThemedText>
       </ThemedView>
 
@@ -271,13 +315,23 @@ export default function HomeScreen() {
           <ThemedView
             style={[
               styles.card,
-              { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+              { backgroundColor: palette.surface, borderColor: palette.border },
             ]}>
-            <ThemedText type="subtitle">Profile Setup</ThemedText>
+            <View style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionLabel}>Onboarding</ThemedText>
+              <View
+                style={[
+                  styles.statusPill,
+                  { backgroundColor: palette.badge },
+                ]}>
+                <ThemedText type="defaultSemiBold">Step 1</ThemedText>
+              </View>
+            </View>
+            <ThemedText type="subtitle">Build your study profile</ThemedText>
             <ThemedText style={styles.helperText}>
-              You&apos;re signed in. Finish your setup here before moving on to matching and sessions.
+              Choose the courses Studi should use when matching you with potential partners.
             </ThemedText>
-            <ThemedText>{classesStatus}</ThemedText>
+            <ThemedText style={styles.statusCopy}>{classesStatus}</ThemedText>
 
             <View style={styles.chipRow}>
               {SUGGESTED_CLASSES.map((classCode) => {
@@ -293,14 +347,10 @@ export default function HomeScreen() {
                       {
                         backgroundColor: isSelected
                           ? palette.tint
-                          : colorScheme === 'dark'
-                            ? '#1b252a'
-                            : '#f4fafc',
+                          : palette.surfaceMuted,
                         borderColor: isSelected
                           ? palette.tint
-                          : colorScheme === 'dark'
-                            ? '#35515b'
-                            : '#c8dbe2',
+                          : palette.outline,
                         opacity: isProfileBusy ? 0.5 : 1,
                       },
                     ]}>
@@ -326,7 +376,7 @@ export default function HomeScreen() {
                   styles.input,
                   styles.flexInput,
                   {
-                    borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+                    borderColor: palette.outline,
                     color: palette.text,
                     opacity: isProfileBusy ? 0.5 : 1,
                   },
@@ -340,8 +390,8 @@ export default function HomeScreen() {
                 style={[
                   styles.inlineButton,
                   {
-                    backgroundColor: colorScheme === 'dark' ? '#1b252a' : '#f4fafc',
-                    borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+                    backgroundColor: palette.surfaceMuted,
+                    borderColor: palette.outline,
                     opacity: isProfileBusy ? 0.5 : 1,
                   },
                 ]}>
@@ -349,62 +399,78 @@ export default function HomeScreen() {
               </Pressable>
             </View>
 
-            <ThemedText>
+            <ThemedText style={styles.mutedText}>
               Selected classes: {classes.length > 0 ? classes.join(', ') : 'None yet'}
             </ThemedText>
 
-            <Pressable
-              disabled={isProfileBusy}
-              onPress={handleSaveClasses}
-              style={[
-                styles.primaryButton,
-                { backgroundColor: palette.tint, opacity: isProfileBusy ? 0.5 : 1 },
-              ]}>
-              {isProfileBusy ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-                  Save Classes
-                </ThemedText>
-              )}
-            </Pressable>
+            <View style={styles.buttonColumn}>
+              <Pressable
+                disabled={isProfileBusy}
+                onPress={handleSaveClasses}
+                style={[
+                  styles.primaryButton,
+                  { backgroundColor: palette.tint, opacity: isProfileBusy ? 0.5 : 1 },
+                ]}>
+                {isProfileBusy ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
+                    Save Classes
+                  </ThemedText>
+                )}
+              </Pressable>
 
-            <Pressable
-              disabled={isBusy}
-              onPress={handleSignOut}
-              style={[
-                styles.secondaryButton,
-                {
-                  borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
-                  opacity: isBusy ? 0.5 : 1,
-                },
-              ]}>
-              <ThemedText type="defaultSemiBold">Sign Out</ThemedText>
-            </Pressable>
+              <View style={styles.actionRow}>
+                <Pressable
+                  onPress={() => router.push('/matches')}
+                  style={[
+                    styles.secondaryButton,
+                    styles.flexButton,
+                    {
+                      borderColor: palette.outline,
+                    },
+                  ]}>
+                  <ThemedText type="defaultSemiBold">View Matches</ThemedText>
+                </Pressable>
 
-            <Pressable
-              onPress={() => router.push('/matches')}
-              style={[
-                styles.secondaryButton,
-                {
-                  borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
-                },
-              ]}>
-              <ThemedText type="defaultSemiBold">View Matches</ThemedText>
-            </Pressable>
+                <Pressable
+                  disabled={isBusy}
+                  onPress={handleSignOut}
+                  style={[
+                    styles.secondaryButton,
+                    styles.flexButton,
+                    {
+                      borderColor: palette.outline,
+                      opacity: isBusy ? 0.5 : 1,
+                    },
+                  ]}>
+                  <ThemedText type="defaultSemiBold">Sign Out</ThemedText>
+                </Pressable>
+              </View>
+            </View>
           </ThemedView>
 
           <ThemedView
             style={[
               styles.card,
-              { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+              { backgroundColor: palette.surface, borderColor: palette.border },
             ]}>
-            <ThemedText type="subtitle">Set Availability</ThemedText>
+            <View style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionLabel}>Onboarding</ThemedText>
+              <View
+                style={[
+                  styles.statusPill,
+                  { backgroundColor: palette.badge },
+                ]}>
+                <ThemedText type="defaultSemiBold">Step 2</ThemedText>
+              </View>
+            </View>
+            <ThemedText type="subtitle">Set your weekly windows</ThemedText>
             <ThemedText style={styles.helperText}>
-              Save a few common study windows so Studi can match you with classmates who are free
-              at the same time.
+              Save a few common study blocks so Studi can find classmates who are free at the same
+              time.
             </ThemedText>
-            <ThemedText>{availabilityStatus}</ThemedText>
+            <ThemedText style={styles.statusCopy}>{availabilityStatus}</ThemedText>
 
             <View style={styles.chipRow}>
               {SUGGESTED_AVAILABILITY.map((slot) => {
@@ -421,14 +487,10 @@ export default function HomeScreen() {
                       {
                         backgroundColor: isSelected
                           ? palette.tint
-                          : colorScheme === 'dark'
-                            ? '#1b252a'
-                            : '#f4fafc',
+                          : palette.surfaceMuted,
                         borderColor: isSelected
                           ? palette.tint
-                          : colorScheme === 'dark'
-                            ? '#35515b'
-                            : '#c8dbe2',
+                          : palette.outline,
                         opacity: isProfileBusy ? 0.5 : 1,
                       },
                     ]}>
@@ -443,7 +505,7 @@ export default function HomeScreen() {
               })}
             </View>
 
-            <ThemedText>
+            <ThemedText style={styles.mutedText}>
               Selected availability:{' '}
               {availability.length > 0
                 ? availability.map((slot) => formatAvailabilitySlot(slot)).join(', ')
@@ -470,16 +532,22 @@ export default function HomeScreen() {
           <ThemedView
             style={[
               styles.card,
-              { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+              { backgroundColor: palette.surface, borderColor: palette.border },
             ]}>
-            <ThemedText type="subtitle">What This Gives You</ThemedText>
-            <ThemedText>
-              Authenticated users persist across app restarts on native once AsyncStorage is
-              installed.
-            </ThemedText>
-            <ThemedText>
-              Each successful sign-in also creates or updates a Firestore profile in
-              `users/{'{uid}'}`.
+            <View style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionLabel}>Ready to use</ThemedText>
+              <View
+                style={[
+                  styles.statusPill,
+                  { backgroundColor: palette.surfaceMuted },
+                ]}>
+                <ThemedText type="defaultSemiBold">Next up</ThemedText>
+              </View>
+            </View>
+            <ThemedText type="subtitle">Once setup is saved, you can:</ThemedText>
+            <ThemedText style={styles.mutedText}>
+              Browse study locations, create sessions, join sessions, and check who else is free
+              for your classes.
             </ThemedText>
           </ThemedView>
         </>
@@ -488,11 +556,22 @@ export default function HomeScreen() {
           <ThemedView
             style={[
               styles.card,
-              { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+              { backgroundColor: palette.surface, borderColor: palette.border },
             ]}>
-            <ThemedText type="subtitle">UW Email Login</ThemedText>
+            <View style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionLabel}>Welcome</ThemedText>
+              <View
+                style={[
+                  styles.statusPill,
+                  { backgroundColor: palette.badge },
+                ]}>
+                <ThemedText type="defaultSemiBold">Start here</ThemedText>
+              </View>
+            </View>
+            <ThemedText type="subtitle">Sign in with your UW email</ThemedText>
             <ThemedText style={styles.helperText}>
-              Use a `@wisc.edu` email. If the account does not exist yet, the app will create it.
+              Use a `@wisc.edu` email. If the account does not exist yet, Studi will create it for
+              you automatically.
             </ThemedText>
 
             <TextInput
@@ -505,7 +584,7 @@ export default function HomeScreen() {
               style={[
                 styles.input,
                 {
-                  borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+                  borderColor: palette.outline,
                   color: palette.text,
                 },
               ]}
@@ -521,14 +600,14 @@ export default function HomeScreen() {
               style={[
                 styles.input,
                 {
-                  borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+                  borderColor: palette.outline,
                   color: palette.text,
                 },
               ]}
               value={password}
             />
 
-            <View style={styles.actions}>
+            <View style={styles.buttonColumn}>
               <Pressable
                 disabled={isBusy}
                 onPress={handleSignIn}
@@ -550,12 +629,15 @@ export default function HomeScreen() {
           <ThemedView
             style={[
               styles.card,
-              { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+              { backgroundColor: palette.surface, borderColor: palette.border },
             ]}>
-            <ThemedText type="subtitle">What Happens Next</ThemedText>
-            <ThemedText>
-              After sign-in, this same Home tab switches into setup mode so you can save classes
-              without navigating away from the screens your teammates are building.
+            <View style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionLabel}>What happens next</ThemedText>
+            </View>
+            <ThemedText type="subtitle">One screen, then setup</ThemedText>
+            <ThemedText style={styles.mutedText}>
+              After sign-in, this Home tab switches into setup mode so you can save classes and
+              availability without jumping into unfinished navigation.
             </ThemedText>
           </ThemedView>
         </>
@@ -569,38 +651,87 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
+    gap: 18,
     padding: 20,
-    gap: 16,
+    paddingBottom: 36,
   },
   hero: {
     borderRadius: 24,
+    gap: 10,
     padding: 24,
   },
+  eyebrow: {
+    fontSize: 12,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
   heroTitle: {
-    marginBottom: 12,
+    marginBottom: 2,
   },
   heroText: {
+    lineHeight: 32,
     maxWidth: 420,
+  },
+  heroStatsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 4,
+  },
+  heroStat: {
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
   card: {
     borderRadius: 20,
     borderWidth: 1,
-    padding: 20,
     gap: 12,
+    padding: 20,
+    shadowColor: '#082431',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 18,
+  },
+  statusCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    gap: 10,
+    padding: 20,
+  },
+  sectionHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  sectionLabel: {
+    fontSize: 12,
+    letterSpacing: 1,
+    opacity: 0.72,
+    textTransform: 'uppercase',
+  },
+  statusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   helperText: {
+    lineHeight: 30,
+    opacity: 0.82,
+  },
+  mutedText: {
+    opacity: 0.8,
+  },
+  statusCopy: {
     opacity: 0.8,
   },
   input: {
     borderRadius: 14,
     borderWidth: 1,
     fontSize: 16,
+    minHeight: 54,
     paddingHorizontal: 14,
     paddingVertical: 12,
-  },
-  actions: {
-    gap: 12,
-    marginTop: 4,
   },
   chip: {
     borderRadius: 999,
@@ -620,24 +751,35 @@ const styles = StyleSheet.create({
   flexInput: {
     flex: 1,
   },
-  inlineButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 52,
-    paddingHorizontal: 18,
-  },
   inlineRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: 10,
   },
+  inlineButton: {
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 54,
+    paddingHorizontal: 18,
+  },
+  buttonColumn: {
+    gap: 12,
+    marginTop: 4,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  flexButton: {
+    flex: 1,
+  },
   primaryButton: {
     alignItems: 'center',
     borderRadius: 14,
     justifyContent: 'center',
-    minHeight: 52,
+    minHeight: 54,
     paddingHorizontal: 16,
   },
   secondaryButton: {
@@ -645,7 +787,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     justifyContent: 'center',
-    minHeight: 52,
+    minHeight: 54,
     paddingHorizontal: 16,
   },
 });
