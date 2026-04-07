@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -26,6 +27,7 @@ function formatSessionTime(timestamp: string) {
 export default function SessionsScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
+  const insets = useSafeAreaInsets();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [sessions, setSessions] = useState<StudySessionListItem[]>([]);
   const [status, setStatus] = useState('Loading sessions...');
@@ -86,12 +88,13 @@ export default function SessionsScreen() {
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={styles.content}>
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
       <ThemedView
         style={[
           styles.hero,
-          { backgroundColor: colorScheme === 'dark' ? '#1f3035' : '#eef7fa' },
+          { backgroundColor: palette.hero },
         ]}>
+        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Sessions</ThemedText>
         <ThemedText type="title" style={styles.heroTitle}>
           Available Sessions
         </ThemedText>
@@ -103,16 +106,26 @@ export default function SessionsScreen() {
       <ThemedView
         style={[
           styles.card,
-          { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+          { backgroundColor: palette.surface, borderColor: palette.border },
         ]}>
-        <ThemedText type="subtitle">Status</ThemedText>
-        <ThemedText>{status}</ThemedText>
+        <View style={styles.sectionHeader}>
+          <ThemedText style={styles.sectionLabel}>Overview</ThemedText>
+          <View
+            style={[
+              styles.statusPill,
+              { backgroundColor: palette.surfaceMuted },
+            ]}>
+            <ThemedText type="defaultSemiBold">{sessions.length} open</ThemedText>
+          </View>
+        </View>
+        <ThemedText type="subtitle">Browse and join a session</ThemedText>
+        <ThemedText style={styles.statusText}>{status}</ThemedText>
         <Pressable
           onPress={loadSessions}
           style={[
             styles.refreshButton,
             {
-              borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+              borderColor: palette.outline,
               opacity: isLoading ? 0.6 : 1,
             },
           ]}>
@@ -134,16 +147,25 @@ export default function SessionsScreen() {
               key={session.sessionId}
               style={[
                 styles.card,
-                { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+                { backgroundColor: palette.surface, borderColor: palette.border },
               ]}>
+              <View style={styles.sectionHeader}>
+                <ThemedText style={styles.sectionLabel}>{session.classId}</ThemedText>
+                <View
+                  style={[
+                    styles.statusPill,
+                    { backgroundColor: palette.badge },
+                  ]}>
+                  <ThemedText type="defaultSemiBold">{session.status}</ThemedText>
+                </View>
+              </View>
               <ThemedText type="subtitle">{session.title}</ThemedText>
-              <ThemedText>{session.classId}</ThemedText>
-              <ThemedText>{session.location?.name ?? session.locationId}</ThemedText>
-              <ThemedText>
+              <ThemedText style={styles.metaText}>{session.location?.name ?? session.locationId}</ThemedText>
+              <ThemedText style={styles.metaText}>
                 {formatSessionTime(session.startTime)} to {formatSessionTime(session.endTime)}
               </ThemedText>
-              <ThemedText>Host: {session.hostEmail || session.hostId}</ThemedText>
-              <ThemedText>
+              <ThemedText style={styles.metaText}>Host: {session.hostEmail || session.hostId}</ThemedText>
+              <ThemedText style={styles.metaText}>
                 Participants: {session.participantIds.length}
               </ThemedText>
 
@@ -153,7 +175,7 @@ export default function SessionsScreen() {
                 style={[
                   styles.primaryButton,
                   {
-                    backgroundColor: isParticipant ? '#9aa6ab' : palette.tint,
+                    backgroundColor: isParticipant ? '#8F7D78' : palette.tint,
                     opacity: isJoining ? 0.6 : 1,
                   },
                 ]}>
@@ -172,7 +194,7 @@ export default function SessionsScreen() {
         <ThemedView
           style={[
             styles.card,
-            { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+            { backgroundColor: palette.surface, borderColor: palette.border },
           ]}>
           <ThemedText type="subtitle">No Sessions Yet</ThemedText>
           <ThemedText>Create a study session first, then come back here to join it.</ThemedText>
@@ -187,24 +209,58 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: 16,
+    gap: 18,
     padding: 20,
+    paddingBottom: 36,
   },
   hero: {
     borderRadius: 24,
+    gap: 10,
     padding: 24,
   },
+  eyebrow: {
+    fontSize: 12,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
   heroText: {
+    lineHeight: 30,
     maxWidth: 420,
   },
   heroTitle: {
-    marginBottom: 12,
+    marginBottom: 4,
   },
   card: {
     borderRadius: 20,
     borderWidth: 1,
     gap: 12,
     padding: 20,
+    shadowColor: '#082431',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 18,
+  },
+  sectionHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  sectionLabel: {
+    fontSize: 12,
+    letterSpacing: 1,
+    opacity: 0.72,
+    textTransform: 'uppercase',
+  },
+  statusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  statusText: {
+    opacity: 0.82,
+  },
+  metaText: {
+    opacity: 0.8,
   },
   primaryButton: {
     alignItems: 'center',

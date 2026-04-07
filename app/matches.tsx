@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -33,6 +34,7 @@ function formatAvailabilitySlot(slot: AvailabilitySlot) {
 export default function MatchesScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
+  const insets = useSafeAreaInsets();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [matches, setMatches] = useState<PotentialMatch[]>([]);
   const [status, setStatus] = useState('Sign in to load your matches.');
@@ -78,12 +80,13 @@ export default function MatchesScreen() {
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={styles.content}>
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
       <ThemedView
         style={[
           styles.hero,
-          { backgroundColor: colorScheme === 'dark' ? '#1f3035' : '#eef7fa' },
+          { backgroundColor: palette.hero },
         ]}>
+        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Matching</ThemedText>
         <ThemedText type="title" style={styles.heroTitle}>
           Matched Students
         </ThemedText>
@@ -95,17 +98,27 @@ export default function MatchesScreen() {
       <ThemedView
         style={[
           styles.card,
-          { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+          { backgroundColor: palette.surface, borderColor: palette.border },
         ]}>
-        <ThemedText type="subtitle">Status</ThemedText>
-        <ThemedText>{status}</ThemedText>
+        <View style={styles.sectionHeader}>
+          <ThemedText style={styles.sectionLabel}>Overview</ThemedText>
+          <View
+            style={[
+              styles.statusPill,
+              { backgroundColor: palette.surfaceMuted },
+            ]}>
+            <ThemedText type="defaultSemiBold">{matches.length} match{matches.length === 1 ? '' : 'es'}</ThemedText>
+          </View>
+        </View>
+        <ThemedText type="subtitle">Potential study partners</ThemedText>
+        <ThemedText style={styles.statusText}>{status}</ThemedText>
         {currentUser ? (
           <Pressable
             onPress={() => loadMatches(currentUser.uid)}
             style={[
               styles.refreshButton,
               {
-                borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2',
+                borderColor: palette.outline,
                 opacity: isLoading ? 0.6 : 1,
               },
             ]}>
@@ -124,10 +137,13 @@ export default function MatchesScreen() {
             key={match.user.uid}
             style={[
               styles.card,
-              { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+              { backgroundColor: palette.surface, borderColor: palette.border },
             ]}>
+            <View style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionLabel}>Potential match</ThemedText>
+            </View>
             <ThemedText type="subtitle">{match.user.displayName || match.user.email}</ThemedText>
-            <ThemedText>{match.user.email}</ThemedText>
+            <ThemedText style={styles.statusText}>{match.user.email}</ThemedText>
 
             <View style={styles.sectionBlock}>
               <ThemedText type="defaultSemiBold">Shared Classes</ThemedText>
@@ -137,7 +153,7 @@ export default function MatchesScreen() {
                     key={`${match.user.uid}-${classCode}`}
                     style={[
                       styles.chip,
-                      { backgroundColor: colorScheme === 'dark' ? '#1b252a' : '#f4fafc', borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2' },
+                      { backgroundColor: palette.surfaceMuted, borderColor: palette.outline },
                     ]}>
                     <ThemedText type="defaultSemiBold">{classCode}</ThemedText>
                   </ThemedView>
@@ -154,7 +170,7 @@ export default function MatchesScreen() {
                     style={[
                       styles.chip,
                       styles.wideChip,
-                      { backgroundColor: colorScheme === 'dark' ? '#1b252a' : '#f4fafc', borderColor: colorScheme === 'dark' ? '#35515b' : '#c8dbe2' },
+                      { backgroundColor: palette.surfaceMuted, borderColor: palette.outline },
                     ]}>
                     <ThemedText type="defaultSemiBold">{formatAvailabilitySlot(slot)}</ThemedText>
                   </ThemedView>
@@ -167,7 +183,7 @@ export default function MatchesScreen() {
         <ThemedView
           style={[
             styles.card,
-            { borderColor: colorScheme === 'dark' ? '#2c3b42' : '#d7e8ef' },
+            { backgroundColor: palette.surface, borderColor: palette.border },
           ]}>
           <ThemedText type="subtitle">No Matches Yet</ThemedText>
           <ThemedText>
@@ -184,24 +200,55 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: 16,
+    gap: 18,
     padding: 20,
+    paddingBottom: 36,
   },
   hero: {
     borderRadius: 24,
+    gap: 10,
     padding: 24,
   },
+  eyebrow: {
+    fontSize: 12,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
   heroText: {
+    lineHeight: 30,
     maxWidth: 420,
   },
   heroTitle: {
-    marginBottom: 12,
+    marginBottom: 4,
   },
   card: {
     borderRadius: 20,
     borderWidth: 1,
     gap: 12,
     padding: 20,
+    shadowColor: '#082431',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 18,
+  },
+  sectionHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  sectionLabel: {
+    fontSize: 12,
+    letterSpacing: 1,
+    opacity: 0.72,
+    textTransform: 'uppercase',
+  },
+  statusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  statusText: {
+    opacity: 0.82,
   },
   chip: {
     borderRadius: 999,
