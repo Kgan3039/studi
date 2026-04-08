@@ -72,7 +72,9 @@ export type PotentialMatch = {
 };
 
 export type StudySessionListItem = StudySession & {
+  attendeeProfiles: UserProfile[];
   hostEmail?: string;
+  hostProfile?: UserProfile | null;
   location?: StudyLocation | null;
 };
 
@@ -198,6 +200,13 @@ export async function updateUserAvailability(
   });
 }
 
+export async function updateUserDisplayName(userId: string, displayName: string) {
+  await updateDoc(doc(db, COLLECTIONS.users, userId), {
+    displayName,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function getLocations() {
   const locationsQuery = query(
     collection(db, COLLECTIONS.locations),
@@ -236,11 +245,57 @@ export async function getSessions() {
     hostIds.map((hostId, index) => [hostId, hostProfiles[index]] as const)
   );
 
+  const participantIds = [
+    ...new Set(sessionDocs.flatMap((session) => session.participantIds)),
+  ];
+  const participantProfiles = await Promise.all(
+    participantIds.map((participantId) => getUserProfile(participantId))
+  );
+  const participantsById = new Map(
+    participantIds.map((participantId, index) => [participantId, participantProfiles[index]] as const)
+  );
+
   return sessionDocs.map((session) => ({
     ...session,
+    attendeeProfiles: session.participantIds
+      .map((participantId) => participantsById.get(participantId))
+      .filter((participant): participant is UserProfile => !!participant),
     hostEmail: hostsById.get(session.hostId)?.email ?? '',
+    hostProfile: hostsById.get(session.hostId) ?? null,
     location: locationsById.get(session.locationId) ?? null,
   }));
+}
+
+export async function getSessionById(sessionId: string) {
+  const sessionSnapshot = await getDoc(doc(db, COLLECTIONS.sessions, sessionId));
+
+  if (!sessionSnapshot.exists()) {
+    return null;
+  }
+
+  const session = {
+    sessionId: sessionSnapshot.id,
+    ...(sessionSnapshot.data() as Omit<StudySession, "sessionId">),
+  };
+
+  const [location, hostProfile, attendeeProfiles] = await Promise.all([
+    getDoc(doc(db, COLLECTIONS.locations, session.locationId)),
+    getUserProfile(session.hostId),
+    Promise.all(session.participantIds.map((participantId) => getUserProfile(participantId))),
+  ]);
+
+  return {
+    ...session,
+    attendeeProfiles: attendeeProfiles.filter((participant): participant is UserProfile => !!participant),
+    hostEmail: hostProfile?.email ?? '',
+    hostProfile,
+    location: location.exists()
+      ? ({
+          locationId: location.id,
+          ...(location.data() as Omit<StudyLocation, "locationId">),
+        } satisfies StudyLocation)
+      : null,
+  } satisfies StudySessionListItem;
 }
 
 export async function joinSession(sessionId: string, userId: string) {

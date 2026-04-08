@@ -1,13 +1,24 @@
 import { Tabs } from 'expo-router';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { subscribeToAuthState } from '@/lib/auth';
+import type { User } from 'firebase/auth';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToAuthState((user) => {
+      setCurrentUser(user);
+    });
+
+    return unsubscribe;
+  }, []);
 
   return (
     <Tabs
@@ -26,6 +37,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="explore"
         options={{
+          href: currentUser ? undefined : null,
           title: 'Explore',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
         }}
