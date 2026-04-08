@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
@@ -15,9 +16,14 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { logOut, signInOrCreateAccount, subscribeToAuthState } from '../../lib/auth';
+import {
+  logOut,
+  signInOrPrepareAccountCreation,
+  subscribeToAuthState,
+} from '../../lib/auth';
 import {
   getUserProfile,
+  updateUserDisplayName,
   updateUserAvailability,
   updateUserClasses,
   type AvailabilityDay,
@@ -34,20 +40,36 @@ const SUGGESTED_AVAILABILITY: AvailabilitySlot[] = [
   { day: 'fri', startMinutes: 780, endMinutes: 900 },
 ];
 
+function splitDisplayName(displayName: string | undefined) {
+  const normalized = displayName?.trim() ?? '';
+
+  if (!normalized) {
+    return { firstName: '', lastName: '' };
+  }
+
+  const [firstName, ...rest] = normalized.split(/\s+/);
+  return {
+    firstName,
+    lastName: rest.join(' '),
+  };
+}
+
 export default function HomeScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [customClass, setCustomClass] = useState('');
-  const [authStatus, setAuthStatus] = useState('Checking session...');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isProfileBusy, setIsProfileBusy] = useState(false);
   const [classes, setClasses] = useState<string[]>([]);
   const [classesStatus, setClassesStatus] = useState('Sign in to start adding your classes.');
+  const [nameStatus, setNameStatus] = useState('Add your first and last name to personalize Studi.');
   const [availability, setAvailability] = useState<AvailabilitySlot[]>([]);
   const [availabilityStatus, setAvailabilityStatus] = useState(
     'Sign in to start adding your availability.'
@@ -60,15 +82,16 @@ export default function HomeScreen() {
 
       if (user?.email) {
         setEmail(user.email);
-        setAuthStatus(`Signed in as ${user.email}`);
         return;
       }
 
       setClasses([]);
       setClassesStatus('Sign in to start adding your classes.');
+      setNameStatus('Add your first and last name to personalize Studi.');
       setAvailability([]);
       setAvailabilityStatus('Sign in to start adding your availability.');
-      setAuthStatus('Not signed in');
+      setFirstName('');
+      setLastName('');
     });
 
     return unsubscribe;
@@ -85,8 +108,16 @@ export default function HomeScreen() {
         const profile = await getUserProfile(currentUser.uid);
         const savedClasses = profile?.classes ?? [];
         const savedAvailability = profile?.availability ?? [];
+        const savedName = splitDisplayName(profile?.displayName);
 
         setClasses(savedClasses);
+        setFirstName(savedName.firstName);
+        setLastName(savedName.lastName);
+        setNameStatus(
+          profile?.displayName
+            ? `Profile name saved as ${profile.displayName}.`
+            : 'Add your first and last name to personalize Studi.'
+        );
         setClassesStatus(
           savedClasses.length > 0
             ? `Saved ${savedClasses.length} class${savedClasses.length === 1 ? '' : 'es'} to your profile.`
@@ -102,6 +133,7 @@ export default function HomeScreen() {
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to load your profile.';
+        setNameStatus(message);
         setClassesStatus(message);
         setAvailabilityStatus(message);
       } finally {
@@ -190,6 +222,33 @@ export default function HomeScreen() {
     }
   }
 
+  async function handleSaveDisplayName() {
+    if (!currentUser) {
+      setNameStatus('Sign in before saving your name.');
+      return;
+    }
+
+    const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
+
+    if (!firstName.trim() || !lastName.trim()) {
+      setNameStatus('Enter both your first and last name.');
+      Alert.alert('Name Error', 'Please enter both your first and last name.');
+      return;
+    }
+
+    try {
+      setIsProfileBusy(true);
+      await updateUserDisplayName(currentUser.uid, fullName);
+      setNameStatus(`Profile name saved as ${fullName}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save your name right now.';
+      setNameStatus(message);
+      Alert.alert('Name Error', message);
+    } finally {
+      setIsProfileBusy(false);
+    }
+  }
+
   async function handleSaveAvailability() {
     if (!currentUser) {
       setAvailabilityStatus('Sign in before saving availability.');
@@ -219,15 +278,13 @@ export default function HomeScreen() {
   async function handleSignIn() {
     try {
       setIsBusy(true);
-      const result = await signInOrCreateAccount(email, password);
-      setAuthStatus(
-        result.mode === 'sign-in'
-          ? `Signed in as ${result.user.email}`
-          : `Created account for ${result.user.email}`
-      );
+      const result = await signInOrPrepareAccountCreation(email, password);
+
+      if (result.mode === 'needs-profile') {
+        router.push('/complete-profile');
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to sign in right now.';
-      setAuthStatus(message);
       Alert.alert('Auth Error', message);
     } finally {
       setIsBusy(false);
@@ -239,10 +296,8 @@ export default function HomeScreen() {
       setIsBusy(true);
       await logOut();
       setPassword('');
-      setAuthStatus('Signed out');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to sign out right now.';
-      setAuthStatus(message);
       Alert.alert('Sign Out Error', message);
     } finally {
       setIsBusy(false);
@@ -256,58 +311,20 @@ export default function HomeScreen() {
       <ThemedView
         style={[
           styles.hero,
-          { backgroundColor: palette.hero },
+          { backgroundColor: palette.surface },
         ]}>
-        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>UW-Madison study hub</ThemedText>
-        <ThemedText type="title" style={styles.heroTitle}>
-          Studi
+        <Image
+          contentFit="contain"
+          source={require('../../assets/images/studi-wordmark.png')}
+          style={styles.heroLogo}
+        />
+        <ThemedText style={[styles.eyebrow, styles.heroEyebrow, { color: palette.tint }]}>
+          UW-Madison Study Hub
         </ThemedText>
         <ThemedText style={styles.heroText}>
           Find study partners, compare availability, and lock in study sessions without bouncing
           between five different group chats.
         </ThemedText>
-        <View style={styles.heroStatsRow}>
-          <View
-            style={[
-              styles.heroStat,
-              { backgroundColor: palette.badge },
-            ]}>
-            <ThemedText type="defaultSemiBold">
-              {isSignedIn ? 'Profile active' : 'Get started fast'}
-            </ThemedText>
-          </View>
-          <View
-            style={[
-              styles.heroStat,
-              { backgroundColor: palette.badge },
-            ]}>
-            <ThemedText type="defaultSemiBold">
-              {classes.length} class{classes.length === 1 ? '' : 'es'}
-            </ThemedText>
-          </View>
-        </View>
-      </ThemedView>
-
-      <ThemedView
-        style={[
-          styles.statusCard,
-          { backgroundColor: palette.surface, borderColor: palette.border },
-        ]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>System</ThemedText>
-          <View
-            style={[
-              styles.statusPill,
-              { backgroundColor: palette.surfaceMuted },
-            ]}>
-            <ThemedText type="defaultSemiBold">Firebase connected</ThemedText>
-          </View>
-        </View>
-        <ThemedText type="subtitle">Account status</ThemedText>
-        <ThemedText style={styles.mutedText}>
-          Auth, users, sessions, and locations are all active in Firestore.
-        </ThemedText>
-        <ThemedText>{authStatus}</ThemedText>
       </ThemedView>
 
       {isSignedIn ? (
@@ -331,6 +348,55 @@ export default function HomeScreen() {
             <ThemedText style={styles.helperText}>
               Choose the courses Studi should use when matching you with potential partners.
             </ThemedText>
+            <ThemedText style={styles.statusCopy}>{nameStatus}</ThemedText>
+
+            <View style={styles.inlineRow}>
+              <TextInput
+                autoCapitalize="words"
+                editable={!isProfileBusy}
+                onChangeText={setFirstName}
+                placeholder="First name"
+                placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+                style={[
+                  styles.input,
+                  styles.flexInput,
+                  {
+                    borderColor: palette.outline,
+                    color: palette.text,
+                    opacity: isProfileBusy ? 0.5 : 1,
+                  },
+                ]}
+                value={firstName}
+              />
+
+              <TextInput
+                autoCapitalize="words"
+                editable={!isProfileBusy}
+                onChangeText={setLastName}
+                placeholder="Last name"
+                placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+                style={[
+                  styles.input,
+                  styles.flexInput,
+                  {
+                    borderColor: palette.outline,
+                    color: palette.text,
+                    opacity: isProfileBusy ? 0.5 : 1,
+                  },
+                ]}
+                value={lastName}
+              />
+            </View>
+
+            <Pressable
+              disabled={isProfileBusy}
+              onPress={handleSaveDisplayName}
+              style={[
+                styles.secondaryButton,
+                { borderColor: palette.outline, opacity: isProfileBusy ? 0.5 : 1 },
+              ]}>
+              <ThemedText type="defaultSemiBold">Save Name</ThemedText>
+            </Pressable>
             <ThemedText style={styles.statusCopy}>{classesStatus}</ThemedText>
 
             <View style={styles.chipRow}>
@@ -570,8 +636,8 @@ export default function HomeScreen() {
             </View>
             <ThemedText type="subtitle">Sign in with your UW email</ThemedText>
             <ThemedText style={styles.helperText}>
-              Use a `@wisc.edu` email. If the account does not exist yet, Studi will create it for
-              you automatically.
+              Use a `@wisc.edu` email. If the account does not exist yet, we&apos;ll take you to a
+              quick profile setup screen to finish creating it.
             </ThemedText>
 
             <TextInput
@@ -656,32 +722,27 @@ const styles = StyleSheet.create({
     paddingBottom: 36,
   },
   hero: {
+    alignItems: 'center',
     borderRadius: 24,
     gap: 10,
     padding: 24,
+  },
+  heroLogo: {
+    height: 110,
+    width: 320,
   },
   eyebrow: {
     fontSize: 12,
     letterSpacing: 1.2,
     textTransform: 'uppercase',
   },
-  heroTitle: {
-    marginBottom: 2,
+  heroEyebrow: {
+    textAlign: 'center',
   },
   heroText: {
     lineHeight: 32,
     maxWidth: 420,
-  },
-  heroStatsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 4,
-  },
-  heroStat: {
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    textAlign: 'center',
   },
   card: {
     borderRadius: 20,
@@ -692,12 +753,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.06,
     shadowRadius: 18,
-  },
-  statusCard: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 10,
-    padding: 20,
   },
   sectionHeader: {
     alignItems: 'center',

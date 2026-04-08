@@ -7,16 +7,29 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { subscribeToAuthState } from '@/lib/auth';
 import { getLocations, type StudyLocation } from '@/lib/firestore';
+import type { User } from 'firebase/auth';
 
 export default function StudyLocationsScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authResolved, setAuthResolved] = useState(false);
   const [locations, setLocations] = useState<StudyLocation[]>([]);
   const [status, setStatus] = useState('Loading study locations...');
   const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToAuthState((user) => {
+      setCurrentUser(user);
+      setAuthResolved(true);
+    });
+
+    return unsubscribe;
+  }, []);
 
   async function loadLocations() {
     try {
@@ -39,8 +52,26 @@ export default function StudyLocationsScreen() {
   }
 
   useEffect(() => {
+    if (!currentUser) {
+      return;
+    }
+
     loadLocations();
-  }, []);
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (authResolved && !currentUser) {
+      router.replace('/');
+    }
+  }, [authResolved, currentUser, router]);
+
+  if (!authResolved || !currentUser) {
+    return (
+      <View style={[styles.loadingScreen, { backgroundColor: palette.background }]}>
+        <ActivityIndicator color={palette.tint} />
+      </View>
+    );
+  }
 
   return (
     <ScrollView
@@ -165,6 +196,11 @@ export default function StudyLocationsScreen() {
 }
 
 const styles = StyleSheet.create({
+  loadingScreen: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+  },
   screen: {
     flex: 1,
   },

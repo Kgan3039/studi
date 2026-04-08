@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -25,6 +26,7 @@ function formatSessionTime(timestamp: string) {
 }
 
 export default function SessionsScreen() {
+  const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
@@ -185,7 +187,13 @@ export default function SessionsScreen() {
                   <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
                     {isParticipant ? 'Joined' : 'Join Session'}
                   </ThemedText>
-                )}
+                  )}
+                </Pressable>
+
+              <Pressable
+                onPress={() => router.push(`/session/${session.sessionId}`)}
+                style={[styles.secondaryButton, { borderColor: palette.outline }]}>
+                <ThemedText type="defaultSemiBold">View Details</ThemedText>
               </Pressable>
             </ThemedView>
           );

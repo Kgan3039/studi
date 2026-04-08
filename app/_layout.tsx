@@ -16,8 +16,10 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="complete-profile" options={{ title: 'Complete Profile' }} />
         <Stack.Screen name="create-session" options={{ title: 'Create Session' }} />
         <Stack.Screen name="matches" options={{ title: 'Matched Students' }} />
+        <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />
         <Stack.Screen name="sessions" options={{ title: 'Available Sessions' }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
