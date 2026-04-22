@@ -17,6 +17,7 @@ import {
 
 import { findStudyLocationById, UW_STUDY_LOCATIONS } from "@/lib/catalog";
 import { db } from "../firebaseConfig";
+import { validateSessionSchedule } from "./session-schedule";
 
 export const COLLECTIONS = {
   conversations: "conversations",
@@ -407,13 +408,43 @@ export async function joinSession(sessionId: string, userId: string) {
 }
 
 export async function createSession(input: CreateSessionInput) {
+  const startDate = new Date(input.startTime);
+  const endDate = new Date(input.endTime);
+
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    throw new Error("Session start and end times must be valid ISO timestamps.");
+  }
+
+  const scheduleDate = [
+    startDate.getFullYear(),
+    `${startDate.getMonth() + 1}`.padStart(2, "0"),
+    `${startDate.getDate()}`.padStart(2, "0"),
+  ].join("-");
+  const scheduleStart = [
+    `${startDate.getHours()}`.padStart(2, "0"),
+    `${startDate.getMinutes()}`.padStart(2, "0"),
+  ].join(":");
+  const scheduleEnd = [
+    `${endDate.getHours()}`.padStart(2, "0"),
+    `${endDate.getMinutes()}`.padStart(2, "0"),
+  ].join(":");
+  const validatedSchedule = validateSessionSchedule(
+    scheduleDate,
+    scheduleStart,
+    scheduleEnd
+  );
+
+  if ("error" in validatedSchedule) {
+    throw new Error(validatedSchedule.error);
+  }
+
   const sessionRef = await addDoc(collection(db, COLLECTIONS.sessions), {
     classId: input.classId,
     hostId: input.hostId,
     locationId: input.locationId,
     title: input.title,
-    startTime: input.startTime,
-    endTime: input.endTime,
+    startTime: validatedSchedule.startTimeIso,
+    endTime: validatedSchedule.endTimeIso,
     participantIds: input.participantIds ?? [input.hostId],
     status: input.status ?? "open",
     createdAt: serverTimestamp(),

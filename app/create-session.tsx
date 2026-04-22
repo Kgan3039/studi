@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
 import { useLocalSearchParams } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -17,11 +17,12 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import { createSession, getLocations, getUserProfile, type StudyLocation } from '@/lib/firestore';
+import {
+  MAX_DAYS_IN_FUTURE,
+  validateDateOnly,
+  validateSessionSchedule,
+} from '@/lib/session-schedule';
 import type { User } from 'firebase/auth';
-
-function combineDateAndTime(date: string, time: string) {
-  return new Date(`${date}T${time}:00`).toISOString();
-}
 
 export default function CreateSessionScreen() {
   const { classId: requestedClassId } = useLocalSearchParams<{ classId?: string }>();
@@ -39,8 +40,12 @@ export default function CreateSessionScreen() {
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [status, setStatus] = useState('Sign in to create a study session.');
+  const [scheduleHint, setScheduleHint] = useState(
+    `Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [dateError, setDateError] = useState<string | null>(null);
   const filteredLocations = useMemo(() => {
     const normalizedQuery = locationQuery.trim().toLowerCase();
 
@@ -130,6 +135,15 @@ export default function CreateSessionScreen() {
       return;
     }
 
+    const validatedSchedule = validateSessionSchedule(sessionDate, startTime, endTime);
+
+    if ('error' in validatedSchedule) {
+      setScheduleHint(validatedSchedule.error);
+      setStatus(validatedSchedule.error);
+      Alert.alert('Invalid Session Time', validatedSchedule.error);
+      return;
+    }
+
     try {
       setIsSaving(true);
       const sessionId = await createSession({
@@ -137,15 +151,17 @@ export default function CreateSessionScreen() {
         hostId: currentUser.uid,
         locationId: selectedLocationId,
         title: title.trim(),
-        startTime: combineDateAndTime(sessionDate, startTime),
-        endTime: combineDateAndTime(sessionDate, endTime),
+        startTime: validatedSchedule.startTimeIso,
+        endTime: validatedSchedule.endTimeIso,
       });
 
       setStatus(`Session created successfully. Session ID: ${sessionId}`);
+      setScheduleHint(`Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
       setTitle('');
       setSessionDate('');
       setStartTime('');
       setEndTime('');
+      setDateError(null);
       Alert.alert('Session Created', `Study session created with ID ${sessionId}.`);
     } catch (error) {
       const message =
@@ -320,23 +336,43 @@ export default function CreateSessionScreen() {
 
         <TextInput
           autoCapitalize="none"
-          onChangeText={setSessionDate}
+          keyboardType="numbers-and-punctuation"
+          maxLength={10}
+          onChangeText={(value) => {
+            setSessionDate(value);
+            const error = validateDateOnly(value);
+            setDateError(error);
+            setScheduleHint(error || `Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
+          }}
           placeholder="Date (YYYY-MM-DD)"
           placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
           style={[
             styles.input,
             {
-              borderColor: palette.outline,
+              borderColor: dateError ? '#ff6b6b' : palette.outline,
               color: palette.text,
             },
           ]}
           value={sessionDate}
         />
+        <ThemedText style={styles.helperText}>
+          Use `YYYY-MM-DD`, like `2026-04-22`. {scheduleHint}
+        </ThemedText>
+        {dateError && (
+          <ThemedText style={[styles.helperText, { color: '#ff6b6b' }]}>
+            {dateError}
+          </ThemedText>
+        )}
 
         <View style={styles.timeRow}>
           <TextInput
             autoCapitalize="none"
-            onChangeText={setStartTime}
+            keyboardType="numbers-and-punctuation"
+            maxLength={5}
+            onChangeText={(value) => {
+              setStartTime(value);
+              setScheduleHint(`Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
+            }}
             placeholder="Start (HH:MM)"
             placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
             style={[
@@ -352,7 +388,12 @@ export default function CreateSessionScreen() {
 
           <TextInput
             autoCapitalize="none"
-            onChangeText={setEndTime}
+            keyboardType="numbers-and-punctuation"
+            maxLength={5}
+            onChangeText={(value) => {
+              setEndTime(value);
+              setScheduleHint(`Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
+            }}
             placeholder="End (HH:MM)"
             placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
             style={[
@@ -441,6 +482,11 @@ const styles = StyleSheet.create({
   },
   statusText: {
     opacity: 0.82,
+  },
+  helperText: {
+    fontSize: 13,
+    lineHeight: 18,
+    opacity: 0.72,
   },
   chip: {
     borderRadius: 999,
