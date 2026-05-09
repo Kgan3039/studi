@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -27,6 +27,7 @@ function formatSessionTime(timestamp: string) {
 
 export default function SessionsScreen() {
   const router = useRouter();
+  const { classId: requestedClassId } = useLocalSearchParams<{ classId?: string }>();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
@@ -35,6 +36,13 @@ export default function SessionsScreen() {
   const [status, setStatus] = useState('Loading sessions...');
   const [isLoading, setIsLoading] = useState(true);
   const [joiningSessionId, setJoiningSessionId] = useState('');
+  const normalizedRequestedClass = requestedClassId?.trim().toUpperCase() ?? '';
+
+  const visibleSessions = normalizedRequestedClass
+    ? sessions.filter(
+        (session) => session.classId.trim().toUpperCase() === normalizedRequestedClass
+      )
+    : sessions;
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -44,14 +52,25 @@ export default function SessionsScreen() {
     return unsubscribe;
   }, []);
 
-  async function loadSessions() {
+  const loadSessions = useCallback(async () => {
     try {
       setIsLoading(true);
       const loadedSessions = await getSessions();
+      const filteredCount = normalizedRequestedClass
+        ? loadedSessions.filter(
+            (session) => session.classId.trim().toUpperCase() === normalizedRequestedClass
+          ).length
+        : loadedSessions.length;
       setSessions(loadedSessions);
       setStatus(
         loadedSessions.length > 0
-          ? `Loaded ${loadedSessions.length} available session${loadedSessions.length === 1 ? '' : 's'}.`
+          ? normalizedRequestedClass
+            ? `Loaded ${filteredCount} session${
+                filteredCount === 1
+                  ? ''
+                  : 's'
+              } for ${normalizedRequestedClass}.`
+            : `Loaded ${loadedSessions.length} available session${loadedSessions.length === 1 ? '' : 's'}.`
           : 'No sessions available yet.'
       );
     } catch (error) {
@@ -60,11 +79,11 @@ export default function SessionsScreen() {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [normalizedRequestedClass]);
 
   useEffect(() => {
     loadSessions();
-  }, []);
+  }, [loadSessions]);
 
   async function handleJoinSession(sessionId: string) {
     if (!currentUser) {
@@ -117,11 +136,22 @@ export default function SessionsScreen() {
               styles.statusPill,
               { backgroundColor: palette.surfaceMuted },
             ]}>
-            <ThemedText type="defaultSemiBold">{sessions.length} open</ThemedText>
+            <ThemedText type="defaultSemiBold">{visibleSessions.length} open</ThemedText>
           </View>
         </View>
-        <ThemedText type="subtitle">Browse and join a session</ThemedText>
+        <ThemedText type="subtitle">
+          {normalizedRequestedClass
+            ? `Browse ${normalizedRequestedClass} sessions`
+            : 'Browse and join a session'}
+        </ThemedText>
         <ThemedText style={styles.statusText}>{status}</ThemedText>
+        {normalizedRequestedClass ? (
+          <Pressable
+            onPress={() => router.replace('/sessions')}
+            style={[styles.secondaryButton, { borderColor: palette.outline }]}>
+            <ThemedText type="defaultSemiBold">Show All Sessions</ThemedText>
+          </Pressable>
+        ) : null}
         <Pressable
           onPress={loadSessions}
           style={[
@@ -139,8 +169,8 @@ export default function SessionsScreen() {
         </Pressable>
       </ThemedView>
 
-      {sessions.length > 0 ? (
-        sessions.map((session) => {
+      {visibleSessions.length > 0 ? (
+        visibleSessions.map((session) => {
           const isParticipant = currentUser ? session.participantIds.includes(currentUser.uid) : false;
           const isJoining = joiningSessionId === session.sessionId;
 
@@ -204,8 +234,28 @@ export default function SessionsScreen() {
             styles.card,
             { backgroundColor: palette.surface, borderColor: palette.border },
           ]}>
-          <ThemedText type="subtitle">No Sessions Yet</ThemedText>
-          <ThemedText>Create a study session first, then come back here to join it.</ThemedText>
+          <ThemedText type="subtitle">
+            {normalizedRequestedClass ? `No ${normalizedRequestedClass} sessions yet` : 'No Sessions Yet'}
+          </ThemedText>
+          <ThemedText>
+            {normalizedRequestedClass
+              ? `Create a ${normalizedRequestedClass} study session first, or come back later to join one.`
+              : 'Create a study session first, then come back here to join it.'}
+          </ThemedText>
+          {normalizedRequestedClass ? (
+            <Pressable
+              onPress={() =>
+                router.push({
+                  pathname: '/create-session',
+                  params: { classId: normalizedRequestedClass },
+                })
+              }
+              style={[styles.primaryButton, { backgroundColor: palette.tint }]}>
+              <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
+                Create {normalizedRequestedClass} Session
+              </ThemedText>
+            </Pressable>
+          ) : null}
         </ThemedView>
       )}
     </ScrollView>
@@ -275,6 +325,14 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     justifyContent: 'center',
     minHeight: 52,
+    paddingHorizontal: 16,
+  },
+  secondaryButton: {
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 48,
     paddingHorizontal: 16,
   },
   refreshButton: {

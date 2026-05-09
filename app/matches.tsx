@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -9,7 +10,6 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   getPotentialMatches,
-  type AvailabilityDay,
   type AvailabilitySlot,
   type PotentialMatch,
 } from '@/lib/firestore';
@@ -23,15 +23,22 @@ function formatTime(minutes: number) {
   return `${displayHour}:${mins.toString().padStart(2, '0')} ${period}`;
 }
 
-function formatDay(day: AvailabilityDay) {
-  return day.charAt(0).toUpperCase() + day.slice(1);
-}
-
 function formatAvailabilitySlot(slot: AvailabilitySlot) {
-  return `${formatDay(slot.day)} ${formatTime(slot.startMinutes)}-${formatTime(slot.endMinutes)}`;
+  if (slot.date) {
+    const date = new Date(`${slot.date}T12:00:00`);
+    return `${date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      weekday: 'short',
+    })} · ${formatTime(slot.startMinutes)}-${formatTime(slot.endMinutes)}`;
+  }
+
+  const formattedDay = slot.day.charAt(0).toUpperCase() + slot.day.slice(1);
+  return `${formattedDay} ${formatTime(slot.startMinutes)}-${formatTime(slot.endMinutes)}`;
 }
 
 export default function MatchesScreen() {
+  const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
@@ -177,6 +184,27 @@ export default function MatchesScreen() {
                 ))}
               </View>
             </View>
+
+            <View style={styles.actionRow}>
+              <Pressable
+                onPress={() => router.push(`/match/${match.user.uid}`)}
+                style={[styles.primaryButton, { backgroundColor: palette.tint }]}>
+                <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
+                  Plan a Session
+                </ThemedText>
+              </Pressable>
+
+              <Pressable
+                onPress={() =>
+                  router.push({
+                    pathname: '/sessions',
+                    params: { classId: match.sharedClasses[0] },
+                  })
+                }
+                style={[styles.secondaryButton, { borderColor: palette.outline }]}>
+                <ThemedText type="defaultSemiBold">See Sessions</ThemedText>
+              </Pressable>
+            </View>
           </ThemedView>
         ))
       ) : (
@@ -269,6 +297,27 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 48,
     paddingHorizontal: 16,
+  },
+  primaryButton: {
+    alignItems: 'center',
+    borderRadius: 14,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 50,
+    paddingHorizontal: 16,
+  },
+  secondaryButton: {
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 50,
+    paddingHorizontal: 16,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 10,
   },
   sectionBlock: {
     gap: 8,

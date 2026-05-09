@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import {
@@ -17,28 +17,11 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
-  logOut,
   signInOrPrepareAccountCreation,
   subscribeToAuthState,
-} from '../../lib/auth';
-import {
-  getUserProfile,
-  updateUserDisplayName,
-  updateUserAvailability,
-  updateUserClasses,
-  type AvailabilityDay,
-  type AvailabilitySlot,
-} from '../../lib/firestore';
+} from '@/lib/auth';
+import { getUserProfile, type UserProfile } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
-
-const SUGGESTED_CLASSES = ['CS400', 'CS300', 'MATH221', 'STAT240', 'CHEM103', 'ECON101'];
-const SUGGESTED_AVAILABILITY: AvailabilitySlot[] = [
-  { day: 'mon', startMinutes: 1080, endMinutes: 1200 },
-  { day: 'tue', startMinutes: 960, endMinutes: 1080 },
-  { day: 'wed', startMinutes: 1140, endMinutes: 1260 },
-  { day: 'thu', startMinutes: 900, endMinutes: 1020 },
-  { day: 'fri', startMinutes: 780, endMinutes: 900 },
-];
 
 function splitDisplayName(displayName: string | undefined) {
   const normalized = displayName?.trim() ?? '';
@@ -48,9 +31,23 @@ function splitDisplayName(displayName: string | undefined) {
   }
 
   const [firstName, ...rest] = normalized.split(/\s+/);
+
   return {
     firstName,
     lastName: rest.join(' '),
+  };
+}
+
+function getSetupSummary(profile: UserProfile | null) {
+  const hasName = !!profile?.displayName?.trim();
+  const hasClasses = (profile?.classes?.length ?? 0) > 0;
+  const hasAvailability = (profile?.availability?.length ?? 0) > 0;
+
+  return {
+    completed: [hasName, hasClasses, hasAvailability].filter(Boolean).length,
+    hasAvailability,
+    hasClasses,
+    hasName,
   };
 }
 
@@ -59,20 +56,14 @@ export default function HomeScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [customClass, setCustomClass] = useState('');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isBusy, setIsBusy] = useState(false);
-  const [isProfileBusy, setIsProfileBusy] = useState(false);
-  const [classes, setClasses] = useState<string[]>([]);
-  const [classesStatus, setClassesStatus] = useState('Sign in to start adding your classes.');
-  const [nameStatus, setNameStatus] = useState('Add your first and last name to personalize Studi.');
-  const [availability, setAvailability] = useState<AvailabilitySlot[]>([]);
-  const [availabilityStatus, setAvailabilityStatus] = useState(
-    'Sign in to start adding your availability.'
+  const [isProfileLoading, setIsProfileLoading] = useState(false);
+  const [dashboardStatus, setDashboardStatus] = useState(
+    'Sign in to start matching with classmates and exploring sessions.'
   );
   const isSignedIn = !!currentUser;
 
@@ -85,13 +76,8 @@ export default function HomeScreen() {
         return;
       }
 
-      setClasses([]);
-      setClassesStatus('Sign in to start adding your classes.');
-      setNameStatus('Add your first and last name to personalize Studi.');
-      setAvailability([]);
-      setAvailabilityStatus('Sign in to start adding your availability.');
-      setFirstName('');
-      setLastName('');
+      setProfile(null);
+      setDashboardStatus('Sign in to start matching with classmates and exploring sessions.');
     });
 
     return unsubscribe;
@@ -104,176 +90,31 @@ export default function HomeScreen() {
       }
 
       try {
-        setIsProfileBusy(true);
-        const profile = await getUserProfile(currentUser.uid);
-        const savedClasses = profile?.classes ?? [];
-        const savedAvailability = profile?.availability ?? [];
-        const savedName = splitDisplayName(profile?.displayName);
+        setIsProfileLoading(true);
+        const loadedProfile = await getUserProfile(currentUser.uid);
+        setProfile(loadedProfile);
 
-        setClasses(savedClasses);
-        setFirstName(savedName.firstName);
-        setLastName(savedName.lastName);
-        setNameStatus(
-          profile?.displayName
-            ? `Profile name saved as ${profile.displayName}.`
-            : 'Add your first and last name to personalize Studi.'
-        );
-        setClassesStatus(
-          savedClasses.length > 0
-            ? `Saved ${savedClasses.length} class${savedClasses.length === 1 ? '' : 'es'} to your profile.`
-            : 'No classes saved yet.'
-        );
-        setAvailability(savedAvailability);
-        setAvailabilityStatus(
-          savedAvailability.length > 0
-            ? `Saved ${savedAvailability.length} availability slot${
-                savedAvailability.length === 1 ? '' : 's'
-              } to your profile.`
-            : 'No availability saved yet.'
+        if (!loadedProfile) {
+          setDashboardStatus('Finish your profile so Studi can recommend the right people and sessions.');
+          return;
+        }
+
+        const setup = getSetupSummary(loadedProfile);
+        setDashboardStatus(
+          setup.completed === 3
+            ? 'Your profile is ready. Jump into matches, messages, or active study sessions.'
+            : `You are ${setup.completed}/3 of the way through setup. Finish the rest on Profile to get better matches.`
         );
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unable to load your profile.';
-        setNameStatus(message);
-        setClassesStatus(message);
-        setAvailabilityStatus(message);
+        const message = error instanceof Error ? error.message : 'Unable to load your dashboard right now.';
+        setDashboardStatus(message);
       } finally {
-        setIsProfileBusy(false);
+        setIsProfileLoading(false);
       }
     }
 
     loadUserProfile();
   }, [currentUser]);
-
-  function toggleClassSelection(classCode: string) {
-    setClasses((currentClasses) =>
-      currentClasses.includes(classCode)
-        ? currentClasses.filter((selectedClass) => selectedClass !== classCode)
-        : [...currentClasses, classCode]
-    );
-  }
-
-  function handleAddCustomClass() {
-    const normalizedClass = customClass.trim().toUpperCase();
-
-    if (!normalizedClass) {
-      return;
-    }
-
-    setClasses((currentClasses) =>
-      currentClasses.includes(normalizedClass)
-        ? currentClasses
-        : [...currentClasses, normalizedClass]
-    );
-    setCustomClass('');
-  }
-
-  function formatTime(minutes: number) {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    const period = hours >= 12 ? 'PM' : 'AM';
-    const displayHour = hours % 12 === 0 ? 12 : hours % 12;
-    return `${displayHour}:${mins.toString().padStart(2, '0')} ${period}`;
-  }
-
-  function formatDay(day: AvailabilityDay) {
-    return day.charAt(0).toUpperCase() + day.slice(1);
-  }
-
-  function formatAvailabilitySlot(slot: AvailabilitySlot) {
-    return `${formatDay(slot.day)} ${formatTime(slot.startMinutes)}-${formatTime(slot.endMinutes)}`;
-  }
-
-  function isSameSlot(first: AvailabilitySlot, second: AvailabilitySlot) {
-    return (
-      first.day === second.day &&
-      first.startMinutes === second.startMinutes &&
-      first.endMinutes === second.endMinutes
-    );
-  }
-
-  function toggleAvailabilitySlot(slot: AvailabilitySlot) {
-    setAvailability((currentAvailability) =>
-      currentAvailability.some((savedSlot) => isSameSlot(savedSlot, slot))
-        ? currentAvailability.filter((savedSlot) => !isSameSlot(savedSlot, slot))
-        : [...currentAvailability, slot]
-    );
-  }
-
-  async function handleSaveClasses() {
-    if (!currentUser) {
-      setClassesStatus('Sign in before saving classes.');
-      return;
-    }
-
-    try {
-      setIsProfileBusy(true);
-      await updateUserClasses(currentUser.uid, classes);
-      setClassesStatus(
-        classes.length > 0
-          ? `Saved ${classes.length} class${classes.length === 1 ? '' : 'es'} to your profile.`
-          : 'Cleared classes from your profile.'
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to save classes right now.';
-      setClassesStatus(message);
-      Alert.alert('Classes Error', message);
-    } finally {
-      setIsProfileBusy(false);
-    }
-  }
-
-  async function handleSaveDisplayName() {
-    if (!currentUser) {
-      setNameStatus('Sign in before saving your name.');
-      return;
-    }
-
-    const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
-
-    if (!firstName.trim() || !lastName.trim()) {
-      setNameStatus('Enter both your first and last name.');
-      Alert.alert('Name Error', 'Please enter both your first and last name.');
-      return;
-    }
-
-    try {
-      setIsProfileBusy(true);
-      await updateUserDisplayName(currentUser.uid, fullName);
-      setNameStatus(`Profile name saved as ${fullName}.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to save your name right now.';
-      setNameStatus(message);
-      Alert.alert('Name Error', message);
-    } finally {
-      setIsProfileBusy(false);
-    }
-  }
-
-  async function handleSaveAvailability() {
-    if (!currentUser) {
-      setAvailabilityStatus('Sign in before saving availability.');
-      return;
-    }
-
-    try {
-      setIsProfileBusy(true);
-      await updateUserAvailability(currentUser.uid, availability);
-      setAvailabilityStatus(
-        availability.length > 0
-          ? `Saved ${availability.length} availability slot${
-              availability.length === 1 ? '' : 's'
-            } to your profile.`
-          : 'Cleared availability from your profile.'
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to save availability right now.';
-      setAvailabilityStatus(message);
-      Alert.alert('Availability Error', message);
-    } finally {
-      setIsProfileBusy(false);
-    }
-  }
 
   async function handleSignIn() {
     try {
@@ -291,28 +132,17 @@ export default function HomeScreen() {
     }
   }
 
-  async function handleSignOut() {
-    try {
-      setIsBusy(true);
-      await logOut();
-      setPassword('');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to sign out right now.';
-      Alert.alert('Sign Out Error', message);
-    } finally {
-      setIsBusy(false);
-    }
-  }
+  const savedName = splitDisplayName(profile?.displayName);
+  const firstName = savedName.firstName || 'Study';
+  const setup = useMemo(() => getSetupSummary(profile), [profile]);
+  const classCount = profile?.classes.length ?? 0;
+  const availabilityCount = profile?.availability.length ?? 0;
 
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView
-        style={[
-          styles.hero,
-          { backgroundColor: palette.surface },
-        ]}>
+      <ThemedView style={[styles.hero, { backgroundColor: palette.surface }]}>
         <Image
           contentFit="contain"
           source={require('../../assets/images/studi-wordmark.png')}
@@ -329,315 +159,131 @@ export default function HomeScreen() {
 
       {isSignedIn ? (
         <>
-          <ThemedView
-            style={[
-              styles.card,
-              { backgroundColor: palette.surface, borderColor: palette.border },
-            ]}>
+          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
             <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Onboarding</ThemedText>
-              <View
-                style={[
-                  styles.statusPill,
-                  { backgroundColor: palette.badge },
-                ]}>
-                <ThemedText type="defaultSemiBold">Step 1</ThemedText>
-              </View>
-            </View>
-            <ThemedText type="subtitle">Build your study profile</ThemedText>
-            <ThemedText style={styles.helperText}>
-              Choose the courses Studi should use when matching you with potential partners.
-            </ThemedText>
-            <ThemedText style={styles.statusCopy}>{nameStatus}</ThemedText>
-
-            <View style={styles.inlineRow}>
-              <TextInput
-                autoCapitalize="words"
-                editable={!isProfileBusy}
-                onChangeText={setFirstName}
-                placeholder="First name"
-                placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-                style={[
-                  styles.input,
-                  styles.flexInput,
-                  {
-                    borderColor: palette.outline,
-                    color: palette.text,
-                    opacity: isProfileBusy ? 0.5 : 1,
-                  },
-                ]}
-                value={firstName}
-              />
-
-              <TextInput
-                autoCapitalize="words"
-                editable={!isProfileBusy}
-                onChangeText={setLastName}
-                placeholder="Last name"
-                placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-                style={[
-                  styles.input,
-                  styles.flexInput,
-                  {
-                    borderColor: palette.outline,
-                    color: palette.text,
-                    opacity: isProfileBusy ? 0.5 : 1,
-                  },
-                ]}
-                value={lastName}
-              />
-            </View>
-
-            <Pressable
-              disabled={isProfileBusy}
-              onPress={handleSaveDisplayName}
-              style={[
-                styles.secondaryButton,
-                { borderColor: palette.outline, opacity: isProfileBusy ? 0.5 : 1 },
-              ]}>
-              <ThemedText type="defaultSemiBold">Save Name</ThemedText>
-            </Pressable>
-            <ThemedText style={styles.statusCopy}>{classesStatus}</ThemedText>
-
-            <View style={styles.chipRow}>
-              {SUGGESTED_CLASSES.map((classCode) => {
-                const isSelected = classes.includes(classCode);
-
-                return (
-                  <Pressable
-                    key={classCode}
-                    disabled={isProfileBusy}
-                    onPress={() => toggleClassSelection(classCode)}
-                    style={[
-                      styles.chip,
-                      {
-                        backgroundColor: isSelected
-                          ? palette.tint
-                          : palette.surfaceMuted,
-                        borderColor: isSelected
-                          ? palette.tint
-                          : palette.outline,
-                        opacity: isProfileBusy ? 0.5 : 1,
-                      },
-                    ]}>
-                    <ThemedText
-                      type="defaultSemiBold"
-                      lightColor={isSelected ? '#ffffff' : undefined}
-                      darkColor={isSelected ? '#ffffff' : undefined}>
-                      {classCode}
-                    </ThemedText>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            <View style={styles.inlineRow}>
-              <TextInput
-                autoCapitalize="characters"
-                editable={!isProfileBusy}
-                onChangeText={setCustomClass}
-                placeholder="Add custom class"
-                placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-                style={[
-                  styles.input,
-                  styles.flexInput,
-                  {
-                    borderColor: palette.outline,
-                    color: palette.text,
-                    opacity: isProfileBusy ? 0.5 : 1,
-                  },
-                ]}
-                value={customClass}
-              />
-
-              <Pressable
-                disabled={isProfileBusy}
-                onPress={handleAddCustomClass}
-                style={[
-                  styles.inlineButton,
-                  {
-                    backgroundColor: palette.surfaceMuted,
-                    borderColor: palette.outline,
-                    opacity: isProfileBusy ? 0.5 : 1,
-                  },
-                ]}>
-                <ThemedText type="defaultSemiBold">Add</ThemedText>
-              </Pressable>
-            </View>
-
-            <ThemedText style={styles.mutedText}>
-              Selected classes: {classes.length > 0 ? classes.join(', ') : 'None yet'}
-            </ThemedText>
-
-            <View style={styles.buttonColumn}>
-              <Pressable
-                disabled={isProfileBusy}
-                onPress={handleSaveClasses}
-                style={[
-                  styles.primaryButton,
-                  { backgroundColor: palette.tint, opacity: isProfileBusy ? 0.5 : 1 },
-                ]}>
-                {isProfileBusy ? (
-                  <ActivityIndicator color="#ffffff" />
-                ) : (
-                  <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-                    Save Classes
-                  </ThemedText>
-                )}
-              </Pressable>
-
-              <View style={styles.actionRow}>
-                <Pressable
-                  onPress={() => router.push('/matches')}
-                  style={[
-                    styles.secondaryButton,
-                    styles.flexButton,
-                    {
-                      borderColor: palette.outline,
-                    },
-                  ]}>
-                  <ThemedText type="defaultSemiBold">View Matches</ThemedText>
-                </Pressable>
-
-                <Pressable
-                  disabled={isBusy}
-                  onPress={handleSignOut}
-                  style={[
-                    styles.secondaryButton,
-                    styles.flexButton,
-                    {
-                      borderColor: palette.outline,
-                      opacity: isBusy ? 0.5 : 1,
-                    },
-                  ]}>
-                  <ThemedText type="defaultSemiBold">Sign Out</ThemedText>
-                </Pressable>
-              </View>
-            </View>
-          </ThemedView>
-
-          <ThemedView
-            style={[
-              styles.card,
-              { backgroundColor: palette.surface, borderColor: palette.border },
-            ]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Onboarding</ThemedText>
-              <View
-                style={[
-                  styles.statusPill,
-                  { backgroundColor: palette.badge },
-                ]}>
-                <ThemedText type="defaultSemiBold">Step 2</ThemedText>
-              </View>
-            </View>
-            <ThemedText type="subtitle">Set your weekly windows</ThemedText>
-            <ThemedText style={styles.helperText}>
-              Save a few common study blocks so Studi can find classmates who are free at the same
-              time.
-            </ThemedText>
-            <ThemedText style={styles.statusCopy}>{availabilityStatus}</ThemedText>
-
-            <View style={styles.chipRow}>
-              {SUGGESTED_AVAILABILITY.map((slot) => {
-                const isSelected = availability.some((savedSlot) => isSameSlot(savedSlot, slot));
-
-                return (
-                  <Pressable
-                    key={`${slot.day}-${slot.startMinutes}-${slot.endMinutes}`}
-                    disabled={isProfileBusy}
-                    onPress={() => toggleAvailabilitySlot(slot)}
-                    style={[
-                      styles.chip,
-                      styles.wideChip,
-                      {
-                        backgroundColor: isSelected
-                          ? palette.tint
-                          : palette.surfaceMuted,
-                        borderColor: isSelected
-                          ? palette.tint
-                          : palette.outline,
-                        opacity: isProfileBusy ? 0.5 : 1,
-                      },
-                    ]}>
-                    <ThemedText
-                      type="defaultSemiBold"
-                      lightColor={isSelected ? '#ffffff' : undefined}
-                      darkColor={isSelected ? '#ffffff' : undefined}>
-                      {formatAvailabilitySlot(slot)}
-                    </ThemedText>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            <ThemedText style={styles.mutedText}>
-              Selected availability:{' '}
-              {availability.length > 0
-                ? availability.map((slot) => formatAvailabilitySlot(slot)).join(', ')
-                : 'None yet'}
-            </ThemedText>
-
-            <Pressable
-              disabled={isProfileBusy}
-              onPress={handleSaveAvailability}
-              style={[
-                styles.primaryButton,
-                { backgroundColor: palette.tint, opacity: isProfileBusy ? 0.5 : 1 },
-              ]}>
-              {isProfileBusy ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-                  Save Availability
+              <ThemedText style={styles.sectionLabel}>Dashboard</ThemedText>
+              <View style={[styles.statusPill, { backgroundColor: palette.badge }]}>
+                <ThemedText type="defaultSemiBold">
+                  {setup.completed}/3 ready
                 </ThemedText>
-              )}
+              </View>
+            </View>
+            <ThemedText type="subtitle">Welcome back, {firstName}</ThemedText>
+            <ThemedText style={styles.helperText}>{dashboardStatus}</ThemedText>
+            <View style={styles.metricsRow}>
+              <View style={[styles.metricCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
+                <ThemedText style={styles.metricValue}>{classCount}</ThemedText>
+                <ThemedText style={styles.metricLabel}>
+                  class{classCount === 1 ? '' : 'es'}
+                </ThemedText>
+              </View>
+              <View style={[styles.metricCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
+                <ThemedText style={styles.metricValue}>{availabilityCount}</ThemedText>
+                <ThemedText style={styles.metricLabel}>
+                  time block{availabilityCount === 1 ? '' : 's'}
+                </ThemedText>
+              </View>
+              <View style={[styles.metricCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
+                <ThemedText style={styles.metricValue}>{profile ? 'On' : 'Off'}</ThemedText>
+                <ThemedText style={styles.metricLabel}>matching</ThemedText>
+              </View>
+            </View>
+          </ThemedView>
+
+          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+            <View style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionLabel}>Quick actions</ThemedText>
+            </View>
+            <ThemedText type="subtitle">Start from what you need right now</ThemedText>
+            <View style={styles.actionGrid}>
+              <Pressable
+                onPress={() => router.push('/matches')}
+                style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
+                <ThemedText type="defaultSemiBold">View Matches</ThemedText>
+                <ThemedText style={styles.actionCopy}>See who overlaps with your classes and free time.</ThemedText>
+              </Pressable>
+              <Pressable
+                onPress={() => router.push('/messages')}
+                style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
+                <ThemedText type="defaultSemiBold">Open Messages</ThemedText>
+                <ThemedText style={styles.actionCopy}>Keep session plans and coordination in one place.</ThemedText>
+              </Pressable>
+              <Pressable
+                onPress={() => router.push('/explore')}
+                style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
+                <ThemedText type="defaultSemiBold">Browse Spots</ThemedText>
+                <ThemedText style={styles.actionCopy}>Search campus libraries, commons, and other study areas.</ThemedText>
+              </Pressable>
+              <Pressable
+                onPress={() => router.push('/sessions')}
+                style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
+                <ThemedText type="defaultSemiBold">Join Sessions</ThemedText>
+                <ThemedText style={styles.actionCopy}>Find sessions already happening for your classes.</ThemedText>
+              </Pressable>
+            </View>
+            <Pressable
+              onPress={() => router.push('/create-session')}
+              style={[styles.primaryButton, { backgroundColor: palette.tint }]}>
+              <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
+                Create a Study Session
+              </ThemedText>
             </Pressable>
           </ThemedView>
 
-          <ThemedView
-            style={[
-              styles.card,
-              { backgroundColor: palette.surface, borderColor: palette.border },
-            ]}>
+          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
             <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Ready to use</ThemedText>
-              <View
-                style={[
-                  styles.statusPill,
-                  { backgroundColor: palette.surfaceMuted },
-                ]}>
-                <ThemedText type="defaultSemiBold">Next up</ThemedText>
+              <ThemedText style={styles.sectionLabel}>Profile completion</ThemedText>
+              <View style={[styles.statusPill, { backgroundColor: palette.surfaceMuted }]}>
+                <ThemedText type="defaultSemiBold">Edit on Profile</ThemedText>
               </View>
             </View>
-            <ThemedText type="subtitle">Once setup is saved, you can:</ThemedText>
-            <ThemedText style={styles.mutedText}>
-              Browse study locations, create sessions, join sessions, and check who else is free
-              for your classes.
-            </ThemedText>
+            <ThemedText type="subtitle">Keep matching data accurate</ThemedText>
+            <View style={styles.checklist}>
+              <View style={styles.checklistItem}>
+                <ThemedText type="defaultSemiBold">{setup.hasName ? 'Done' : 'Next'}</ThemedText>
+                <ThemedText style={styles.checklistCopy}>
+                  {setup.hasName
+                    ? `Name saved as ${profile?.displayName || currentUser.email}.`
+                    : 'Add your first and last name so people see you clearly in sessions and chat.'}
+                </ThemedText>
+              </View>
+              <View style={styles.checklistItem}>
+                <ThemedText type="defaultSemiBold">{setup.hasClasses ? 'Done' : 'Next'}</ThemedText>
+                <ThemedText style={styles.checklistCopy}>
+                  {setup.hasClasses
+                    ? `${classCount} class${classCount === 1 ? '' : 'es'} selected for matching.`
+                    : 'Choose classes on your Profile so Studi can find the right classmates.'}
+                </ThemedText>
+              </View>
+              <View style={styles.checklistItem}>
+                <ThemedText type="defaultSemiBold">{setup.hasAvailability ? 'Done' : 'Next'}</ThemedText>
+                <ThemedText style={styles.checklistCopy}>
+                  {setup.hasAvailability
+                    ? `${availabilityCount} availability block${availabilityCount === 1 ? '' : 's'} saved.`
+                    : 'Save weekly windows on your Profile so matches happen at the right time.'}
+                </ThemedText>
+              </View>
+            </View>
+            <Pressable
+              onPress={() => router.push('/profile')}
+              style={[styles.secondaryButton, { borderColor: palette.outline }]}>
+              <ThemedText type="defaultSemiBold">Open Profile</ThemedText>
+            </Pressable>
           </ThemedView>
         </>
       ) : (
         <>
-          <ThemedView
-            style={[
-              styles.card,
-              { backgroundColor: palette.surface, borderColor: palette.border },
-            ]}>
+          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
             <View style={styles.sectionHeader}>
               <ThemedText style={styles.sectionLabel}>Welcome</ThemedText>
-              <View
-                style={[
-                  styles.statusPill,
-                  { backgroundColor: palette.badge },
-                ]}>
+              <View style={[styles.statusPill, { backgroundColor: palette.badge }]}>
                 <ThemedText type="defaultSemiBold">Start here</ThemedText>
               </View>
             </View>
             <ThemedText type="subtitle">Sign in with your UW email</ThemedText>
             <ThemedText style={styles.helperText}>
-              Use a `@wisc.edu` email. If the account does not exist yet, we&apos;ll take you to a
-              quick profile setup screen to finish creating it.
+              Use a `@wisc.edu` email. If the account does not exist yet, we&apos;ll send you to a
+              quick profile screen to finish setting up your name before you enter the app.
             </ThemedText>
 
             <TextInput
@@ -647,13 +293,7 @@ export default function HomeScreen() {
               onChangeText={setEmail}
               placeholder="netid@wisc.edu"
               placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-              style={[
-                styles.input,
-                {
-                  borderColor: palette.outline,
-                  color: palette.text,
-                },
-              ]}
+              style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
               value={email}
             />
 
@@ -663,51 +303,42 @@ export default function HomeScreen() {
               placeholder="Password"
               placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
               secureTextEntry
-              style={[
-                styles.input,
-                {
-                  borderColor: palette.outline,
-                  color: palette.text,
-                },
-              ]}
+              style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
               value={password}
             />
 
-            <View style={styles.buttonColumn}>
-              <Pressable
-                disabled={isBusy}
-                onPress={handleSignIn}
-                style={[
-                  styles.primaryButton,
-                  { backgroundColor: palette.tint, opacity: isBusy ? 0.7 : 1 },
-                ]}>
-                {isBusy ? (
-                  <ActivityIndicator color="#ffffff" />
-                ) : (
-                  <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-                    Sign In / Create Account
-                  </ThemedText>
-                )}
-              </Pressable>
-            </View>
+            <Pressable
+              disabled={isBusy}
+              onPress={handleSignIn}
+              style={[styles.primaryButton, { backgroundColor: palette.tint, opacity: isBusy ? 0.7 : 1 }]}>
+              {isBusy ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
+                  Sign In / Create Account
+                </ThemedText>
+              )}
+            </Pressable>
           </ThemedView>
 
-          <ThemedView
-            style={[
-              styles.card,
-              { backgroundColor: palette.surface, borderColor: palette.border },
-            ]}>
+          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
             <View style={styles.sectionHeader}>
               <ThemedText style={styles.sectionLabel}>What happens next</ThemedText>
             </View>
-            <ThemedText type="subtitle">One screen, then setup</ThemedText>
+            <ThemedText type="subtitle">One login, then a personalized dashboard</ThemedText>
             <ThemedText style={styles.mutedText}>
-              After sign-in, this Home tab switches into setup mode so you can save classes and
-              availability without jumping into unfinished navigation.
+              New users finish their name on a separate setup screen, then land inside Studi with
+              access to profile editing, matches, study spots, messages, and sessions.
             </ThemedText>
           </ThemedView>
         </>
       )}
+
+      {isProfileLoading && isSignedIn ? (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator color={palette.tint} />
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -771,78 +402,82 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   helperText: {
-    lineHeight: 30,
-    opacity: 0.82,
+    lineHeight: 28,
+    opacity: 0.86,
   },
   mutedText: {
-    opacity: 0.8,
-  },
-  statusCopy: {
-    opacity: 0.8,
+    lineHeight: 28,
+    opacity: 0.82,
   },
   input: {
     borderRadius: 14,
     borderWidth: 1,
     fontSize: 16,
-    minHeight: 54,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  chip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    minHeight: 40,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  wideChip: {
-    minHeight: 48,
-  },
-  flexInput: {
-    flex: 1,
-  },
-  inlineRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 10,
-  },
-  inlineButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 18,
-  },
-  buttonColumn: {
-    gap: 12,
-    marginTop: 4,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  flexButton: {
-    flex: 1,
+    minHeight: 56,
+    paddingHorizontal: 16,
   },
   primaryButton: {
     alignItems: 'center',
-    borderRadius: 14,
+    borderRadius: 16,
     justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
+    minHeight: 56,
+    paddingHorizontal: 18,
   },
   secondaryButton: {
     alignItems: 'center',
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
+    minHeight: 52,
+    paddingHorizontal: 18,
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  metricCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    flex: 1,
+    gap: 4,
+    minHeight: 96,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  metricValue: {
+    fontSize: 24,
+    fontWeight: '700',
+  },
+  metricLabel: {
+    opacity: 0.75,
+  },
+  actionGrid: {
+    gap: 12,
+  },
+  actionTile: {
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 6,
+    padding: 16,
+  },
+  actionCopy: {
+    lineHeight: 24,
+    opacity: 0.8,
+  },
+  checklist: {
+    gap: 14,
+  },
+  checklistItem: {
+    gap: 4,
+  },
+  checklistCopy: {
+    lineHeight: 24,
+    opacity: 0.82,
+  },
+  loadingOverlay: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 8,
   },
 });

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocalSearchParams } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,
@@ -23,12 +24,14 @@ function combineDateAndTime(date: string, time: string) {
 }
 
 export default function CreateSessionScreen() {
+  const { classId: requestedClassId } = useLocalSearchParams<{ classId?: string }>();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [classes, setClasses] = useState<string[]>([]);
   const [locations, setLocations] = useState<StudyLocation[]>([]);
+  const [locationQuery, setLocationQuery] = useState('');
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedLocationId, setSelectedLocationId] = useState('');
   const [title, setTitle] = useState('');
@@ -38,6 +41,26 @@ export default function CreateSessionScreen() {
   const [status, setStatus] = useState('Sign in to create a study session.');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const filteredLocations = useMemo(() => {
+    const normalizedQuery = locationQuery.trim().toLowerCase();
+
+    if (!normalizedQuery) {
+      return locations;
+    }
+
+    return locations.filter((location) =>
+      [
+        location.name,
+        location.building,
+        location.campusArea,
+        location.notes,
+        ...location.tags,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedQuery)
+    );
+  }, [locationQuery, locations]);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -65,14 +88,24 @@ export default function CreateSessionScreen() {
         ]);
 
         const profileClasses = profile?.classes ?? [];
+        const normalizedRequestedClass = requestedClassId?.trim().toUpperCase() ?? '';
         setClasses(profileClasses);
         setLocations(loadedLocations);
-        setSelectedClass(profileClasses[0] ?? '');
+        setSelectedClass(
+          normalizedRequestedClass && profileClasses.includes(normalizedRequestedClass)
+            ? normalizedRequestedClass
+            : profileClasses[0] ?? ''
+        );
         setSelectedLocationId(loadedLocations[0]?.locationId ?? '');
+        setTitle(
+          normalizedRequestedClass && profileClasses.includes(normalizedRequestedClass)
+            ? `${normalizedRequestedClass} Study Session`
+            : ''
+        );
         setStatus(
           profileClasses.length > 0 && loadedLocations.length > 0
             ? 'Pick a class, location, and time to create a session.'
-            : 'Add classes on Home and seed locations before creating sessions.'
+            : 'Add classes on your Profile and make sure study spots are available before creating sessions.'
         );
       } catch (error) {
         const message =
@@ -84,7 +117,7 @@ export default function CreateSessionScreen() {
     }
 
     loadSetupData();
-  }, [currentUser]);
+  }, [currentUser, requestedClassId]);
 
   async function handleCreateSession() {
     if (!currentUser) {
@@ -201,7 +234,7 @@ export default function CreateSessionScreen() {
             })}
           </View>
         ) : (
-          <ThemedText>Add classes on the Home tab first.</ThemedText>
+          <ThemedText>Add classes on your Profile tab first.</ThemedText>
         )}
       </ThemedView>
 
@@ -212,11 +245,25 @@ export default function CreateSessionScreen() {
         ]}>
         <ThemedText style={styles.sectionLabel}>Step 2</ThemedText>
         <ThemedText type="subtitle">Choose a location</ThemedText>
+        <TextInput
+          autoCapitalize="words"
+          onChangeText={setLocationQuery}
+          placeholder="Search study spots by name, building, area, or tag"
+          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+          style={[
+            styles.input,
+            {
+              borderColor: palette.outline,
+              color: palette.text,
+            },
+          ]}
+          value={locationQuery}
+        />
         {isLoading ? (
           <ActivityIndicator color={palette.text} />
-        ) : locations.length > 0 ? (
+        ) : filteredLocations.length > 0 ? (
           <View style={styles.locationColumn}>
-            {locations.map((location) => {
+            {filteredLocations.map((location) => {
               const isSelected = selectedLocationId === location.locationId;
 
               return (
@@ -242,8 +289,10 @@ export default function CreateSessionScreen() {
               );
             })}
           </View>
+        ) : locationQuery.trim() ? (
+          <ThemedText>No saved study spots match that search yet.</ThemedText>
         ) : (
-          <ThemedText>Add locations in Firestore first.</ThemedText>
+          <ThemedText>No study spots are available right now.</ThemedText>
         )}
       </ThemedView>
 

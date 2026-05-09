@@ -116,7 +116,7 @@ export default function CompleteProfileScreen() {
         <ThemedText type="subtitle">After this, you can:</ThemedText>
         <ThemedText style={styles.helperText}>
           Pick classes, save availability, browse sessions, and start exploring the rest of the
-          app from your signed-in Home flow.
+          app from your signed-in dashboard and Profile tab.
         </ThemedText>
       </ThemedView>
     </ScrollView>
