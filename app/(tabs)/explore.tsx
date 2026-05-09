@@ -1,5 +1,12 @@
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -19,8 +26,29 @@ export default function StudyLocationsScreen() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authResolved, setAuthResolved] = useState(false);
   const [locations, setLocations] = useState<StudyLocation[]>([]);
+  const [locationQuery, setLocationQuery] = useState('');
   const [status, setStatus] = useState('Loading study locations...');
   const [isLoading, setIsLoading] = useState(true);
+  const filteredLocations = useMemo(() => {
+    const normalizedQuery = locationQuery.trim().toLowerCase();
+
+    if (!normalizedQuery) {
+      return locations;
+    }
+
+    return locations.filter((location) =>
+      [
+        location.name,
+        location.building,
+        location.campusArea,
+        location.notes,
+        ...location.tags,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedQuery)
+    );
+  }, [locationQuery, locations]);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -108,6 +136,14 @@ export default function StudyLocationsScreen() {
         </View>
         <ThemedText type="subtitle">Find your next study spot</ThemedText>
         <ThemedText style={styles.statusText}>{status}</ThemedText>
+        <TextInput
+          autoCapitalize="words"
+          onChangeText={setLocationQuery}
+          placeholder="Search by library, building, area, or tag"
+          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+          style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
+          value={locationQuery}
+        />
         <Pressable
           onPress={() => router.push('/sessions')}
           style={[
@@ -144,8 +180,8 @@ export default function StudyLocationsScreen() {
         </Pressable>
       </ThemedView>
 
-      {locations.length > 0 ? (
-        locations.map((location) => (
+      {filteredLocations.length > 0 ? (
+        filteredLocations.map((location) => (
           <ThemedView
             key={location.locationId}
             style={[
@@ -178,17 +214,29 @@ export default function StudyLocationsScreen() {
             </View>
           </ThemedView>
         ))
+      ) : locationQuery.trim() ? (
+        <ThemedView
+          style={[
+            styles.card,
+            { backgroundColor: palette.surface, borderColor: palette.border },
+          ]}>
+          <ThemedText type="subtitle">No spots match that search</ThemedText>
+          <ThemedText>
+            Try a building name, campus area, or search terms like `quiet`, `late-night`, or
+            `group`.
+          </ThemedText>
+        </ThemedView>
       ) : (
         <ThemedView
           style={[
             styles.card,
             { backgroundColor: palette.surface, borderColor: palette.border },
           ]}>
-          <ThemedText type="subtitle">Seed Locations Next</ThemedText>
+          <ThemedText type="subtitle">No study spots available right now</ThemedText>
           <ThemedText>
-            Add a few documents in your Firestore `locations` collection, then reload this tab.
+            Studi could not load any official or saved study locations yet. Refresh once more or
+            check your Firestore connection.
           </ThemedText>
-          <ThemedText>Suggested IDs: `college-library`, `memorial-library`, `grainger`.</ThemedText>
         </ThemedView>
       )}
     </ScrollView>
@@ -287,6 +335,13 @@ const styles = StyleSheet.create({
   },
   statusText: {
     opacity: 0.82,
+  },
+  input: {
+    borderRadius: 14,
+    borderWidth: 1,
+    fontSize: 16,
+    minHeight: 54,
+    paddingHorizontal: 14,
   },
   refreshButton: {
     alignItems: 'center',

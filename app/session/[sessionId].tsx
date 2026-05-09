@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -8,7 +8,12 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
-import { getSessionById, joinSession, type StudySessionListItem } from '@/lib/firestore';
+import {
+  getOrCreateDirectConversation,
+  getSessionById,
+  joinSession,
+  type StudySessionListItem,
+} from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
 function formatSessionTime(timestamp: string) {
@@ -46,6 +51,7 @@ function formatDisplayName(name: string | undefined, email: string) {
 }
 
 export default function SessionDetailScreen() {
+  const router = useRouter();
   const { sessionId } = useLocalSearchParams<{ sessionId: string }>();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
@@ -55,6 +61,7 @@ export default function SessionDetailScreen() {
   const [status, setStatus] = useState('Loading session details...');
   const [isLoading, setIsLoading] = useState(true);
   const [isJoining, setIsJoining] = useState(false);
+  const [isOpeningHostChat, setIsOpeningHostChat] = useState(false);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -118,6 +125,31 @@ export default function SessionDetailScreen() {
       Alert.alert('Join Session Error', message);
     } finally {
       setIsJoining(false);
+    }
+  }
+
+  async function handleOpenHostChat() {
+    if (!currentUser || !session) {
+      return;
+    }
+
+    try {
+      setIsOpeningHostChat(true);
+      const conversationId = await getOrCreateDirectConversation(currentUser.uid, session.hostId);
+      router.push({
+        pathname: '/conversation/[conversationId]',
+        params: {
+          conversationId,
+          otherUserId: session.hostId,
+          otherUserName: session.hostProfile?.displayName || '',
+          otherUserEmail: session.hostEmail || '',
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to open chat right now.';
+      Alert.alert('Chat Error', message);
+    } finally {
+      setIsOpeningHostChat(false);
     }
   }
 
@@ -185,6 +217,19 @@ export default function SessionDetailScreen() {
             {session.location?.notes ? (
               <ThemedText style={styles.notesText}>{session.location.notes}</ThemedText>
             ) : null}
+            <Pressable
+              disabled={isOpeningHostChat}
+              onPress={handleOpenHostChat}
+              style={[
+                styles.secondaryButton,
+                { borderColor: palette.outline, opacity: isOpeningHostChat ? 0.65 : 1 },
+              ]}>
+              {isOpeningHostChat ? (
+                <ActivityIndicator color={palette.text} />
+              ) : (
+                <ThemedText type="defaultSemiBold">Message Host</ThemedText>
+              )}
+            </Pressable>
             <Pressable
               disabled={!!isParticipant || isJoining}
               onPress={handleJoinSession}

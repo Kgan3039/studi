@@ -5,24 +5,32 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
+  where,
 } from "firebase/firestore";
 
+import { findStudyLocationById, UW_STUDY_LOCATIONS } from "@/lib/catalog";
 import { db } from "../firebaseConfig";
 
 export const COLLECTIONS = {
+  conversations: "conversations",
   locations: "locations",
+  reports: "reports",
   sessions: "sessions",
+  userBlocks: "userBlocks",
   users: "users",
 } as const;
 
 export type AvailabilityDay = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 
 export type AvailabilitySlot = {
+  date?: string;
   day: AvailabilityDay;
   endMinutes: number;
   startMinutes: number;
@@ -78,6 +86,34 @@ export type StudySessionListItem = StudySession & {
   location?: StudyLocation | null;
 };
 
+export type DirectConversation = {
+  conversationId: string;
+  createdAt?: unknown;
+  lastMessageAt?: unknown;
+  lastMessagePreview: string;
+  participantIds: string[];
+  participantKey: string;
+  updatedAt?: unknown;
+};
+
+export type ConversationMessage = {
+  conversationId: string;
+  createdAt?: unknown;
+  messageId: string;
+  senderId: string;
+  text: string;
+};
+
+export type ConversationListItem = DirectConversation & {
+  otherParticipant: UserProfile | null;
+};
+
+export type UserBlock = {
+  blockedUserId: string;
+  blockerUserId: string;
+  createdAt?: unknown;
+};
+
 type UserProfileWrite = Partial<Omit<UserProfile, "uid" | "updatedAt">> & {
   email: string;
 };
@@ -89,6 +125,23 @@ type CreateSessionInput = Omit<
   participantIds?: string[];
   status?: StudySessionStatus;
 };
+
+function buildDirectConversationKey(firstUserId: string, secondUserId: string) {
+  return [firstUserId, secondUserId].sort().join("__");
+}
+
+function withBuiltInLocationFallback(location: StudyLocation): StudyLocation {
+  const fallback = findStudyLocationById(location.locationId);
+
+  if (!fallback) {
+    return location;
+  }
+
+  return {
+    ...fallback,
+    ...location,
+  };
+}
 
 export async function createOrUpdateUserProfile(
   userId: string,
@@ -128,11 +181,21 @@ export async function getUserProfile(userId: string) {
 }
 
 function isSameAvailabilitySlot(first: AvailabilitySlot, second: AvailabilitySlot) {
+  const firstDay = first.date ? getAvailabilityDayFromDate(first.date) : first.day;
+  const secondDay = second.date ? getAvailabilityDayFromDate(second.date) : second.day;
+
   return (
-    first.day === second.day &&
+    (first.date && second.date ? first.date === second.date : firstDay === secondDay) &&
     first.startMinutes === second.startMinutes &&
     first.endMinutes === second.endMinutes
   );
+}
+
+function getAvailabilityDayFromDate(date: string): AvailabilityDay {
+  const parsedDate = new Date(`${date}T12:00:00`);
+  const day = parsedDate.getDay();
+
+  return (["sun", "mon", "tue", "wed", "thu", "fri", "sat"][day] ?? "mon") as AvailabilityDay;
 }
 
 function getAvailabilityOverlap(
@@ -146,6 +209,7 @@ function getAvailabilityOverlap(
 
 export async function getPotentialMatches(currentUserId: string) {
   const currentUser = await getUserProfile(currentUserId);
+  const blockedUserIds = await getBlockedUserIds(currentUserId);
 
   if (!currentUser) {
     return [];
@@ -156,6 +220,7 @@ export async function getPotentialMatches(currentUserId: string) {
   return usersSnapshot.docs
     .map((userDoc) => userDoc.data() as UserProfile)
     .filter((candidateUser) => candidateUser.uid !== currentUserId)
+    .filter((candidateUser) => !blockedUserIds.includes(candidateUser.uid))
     .map((candidateUser) => {
       const sharedClasses = candidateUser.classes.filter((classCode) =>
         currentUser.classes.includes(classCode)
@@ -181,6 +246,12 @@ export async function getPotentialMatches(currentUserId: string) {
 
       return secondMatch.availabilityOverlap.length - firstMatch.availabilityOverlap.length;
     });
+}
+
+export async function getPotentialMatch(currentUserId: string, matchUserId: string) {
+  const matches = await getPotentialMatches(currentUserId);
+
+  return matches.find((match) => match.user.uid === matchUserId) ?? null;
 }
 
 export async function updateUserClasses(userId: string, classes: string[]) {
@@ -214,10 +285,24 @@ export async function getLocations() {
   );
   const snapshot = await getDocs(locationsQuery);
 
-  return snapshot.docs.map((locationDoc) => ({
+  const storedLocations = snapshot.docs.map((locationDoc) => ({
     locationId: locationDoc.id,
     ...(locationDoc.data() as Omit<StudyLocation, "locationId">),
   }));
+
+  const mergedLocations = new Map<string, StudyLocation>();
+
+  for (const location of UW_STUDY_LOCATIONS) {
+    mergedLocations.set(location.locationId, location);
+  }
+
+  for (const location of storedLocations) {
+    mergedLocations.set(location.locationId, withBuiltInLocationFallback(location));
+  }
+
+  return [...mergedLocations.values()].sort((firstLocation, secondLocation) =>
+    firstLocation.name.localeCompare(secondLocation.name)
+  );
 }
 
 export async function getSessions() {
@@ -262,8 +347,24 @@ export async function getSessions() {
       .filter((participant): participant is UserProfile => !!participant),
     hostEmail: hostsById.get(session.hostId)?.email ?? '',
     hostProfile: hostsById.get(session.hostId) ?? null,
-    location: locationsById.get(session.locationId) ?? null,
+    location: locationsById.get(session.locationId) ?? findStudyLocationById(session.locationId),
   }));
+}
+
+export async function getSessionsForClassIds(classIds: string[]) {
+  const normalizedClassIds = classIds
+    .map((classId) => classId.trim().toUpperCase())
+    .filter(Boolean);
+
+  if (normalizedClassIds.length === 0) {
+    return [];
+  }
+
+  const allSessions = await getSessions();
+
+  return allSessions.filter((session) =>
+    normalizedClassIds.includes(session.classId.trim().toUpperCase())
+  );
 }
 
 export async function getSessionById(sessionId: string) {
@@ -294,7 +395,7 @@ export async function getSessionById(sessionId: string) {
           locationId: location.id,
           ...(location.data() as Omit<StudyLocation, "locationId">),
         } satisfies StudyLocation)
-      : null,
+      : findStudyLocationById(session.locationId),
   } satisfies StudySessionListItem;
 }
 
@@ -320,4 +421,167 @@ export async function createSession(input: CreateSessionInput) {
   });
 
   return sessionRef.id;
+}
+
+export async function getOrCreateDirectConversation(firstUserId: string, secondUserId: string) {
+  const participantKey = buildDirectConversationKey(firstUserId, secondUserId);
+  const conversationsSnapshot = await getDocs(
+    query(
+      collection(db, COLLECTIONS.conversations),
+      where("participantIds", "array-contains", firstUserId)
+    )
+  );
+  const existingConversation = conversationsSnapshot.docs.find((conversationDoc) => {
+    const data = conversationDoc.data() as Omit<DirectConversation, "conversationId">;
+    return data.participantKey === participantKey;
+  });
+
+  if (existingConversation) {
+    return existingConversation.id;
+  }
+
+  const conversationRef = await addDoc(collection(db, COLLECTIONS.conversations), {
+    participantIds: [firstUserId, secondUserId].sort(),
+    participantKey,
+    lastMessagePreview: "",
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    lastMessageAt: serverTimestamp(),
+  });
+
+  return conversationRef.id;
+}
+
+export async function sendDirectMessage(
+  conversationId: string,
+  senderId: string,
+  text: string
+) {
+  const trimmedText = text.trim();
+
+  if (!trimmedText) {
+    throw new Error("Write a message before sending.");
+  }
+
+  await addDoc(collection(db, COLLECTIONS.conversations, conversationId, "messages"), {
+    senderId,
+    text: trimmedText,
+    createdAt: serverTimestamp(),
+  });
+
+  await updateDoc(doc(db, COLLECTIONS.conversations, conversationId), {
+    lastMessagePreview: trimmedText,
+    lastMessageAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export function subscribeToConversationMessages(
+  conversationId: string,
+  listener: (messages: ConversationMessage[]) => void
+) {
+  const messagesQuery = query(
+    collection(db, COLLECTIONS.conversations, conversationId, "messages"),
+    orderBy("createdAt", "asc")
+  );
+
+  return onSnapshot(messagesQuery, (snapshot) => {
+    const messages = snapshot.docs.map((messageDoc) => ({
+      conversationId,
+      messageId: messageDoc.id,
+      ...(messageDoc.data() as Omit<ConversationMessage, "conversationId" | "messageId">),
+    }));
+
+    listener(messages);
+  });
+}
+
+export function subscribeToUserConversations(
+  userId: string,
+  listener: (conversations: ConversationListItem[]) => void
+) {
+  const conversationsQuery = query(
+    collection(db, COLLECTIONS.conversations),
+    where("participantIds", "array-contains", userId)
+  );
+
+  return onSnapshot(conversationsQuery, async (snapshot) => {
+    const rawConversations = snapshot.docs
+      .map((conversationDoc) => ({
+        conversationId: conversationDoc.id,
+        ...(conversationDoc.data() as Omit<DirectConversation, "conversationId">),
+      }))
+
+    const otherUserIds = [
+      ...new Set(
+        rawConversations.flatMap((conversation) =>
+          conversation.participantIds.filter((participantId) => participantId !== userId)
+        )
+      ),
+    ];
+    const profiles = await Promise.all(otherUserIds.map((participantId) => getUserProfile(participantId)));
+    const profilesById = new Map(
+      otherUserIds.map((participantId, index) => [participantId, profiles[index]] as const)
+    );
+
+    const conversations = rawConversations
+      .map((conversation) => {
+        const otherParticipantId =
+          conversation.participantIds.find((participantId) => participantId !== userId) ?? "";
+
+        return {
+          ...conversation,
+          otherParticipant: profilesById.get(otherParticipantId) ?? null,
+        } satisfies ConversationListItem;
+      })
+      .sort((firstConversation, secondConversation) => {
+        const firstTimestamp = firstConversation.updatedAt instanceof Timestamp
+          ? firstConversation.updatedAt.toMillis()
+          : 0;
+        const secondTimestamp = secondConversation.updatedAt instanceof Timestamp
+          ? secondConversation.updatedAt.toMillis()
+          : 0;
+
+        return secondTimestamp - firstTimestamp;
+      });
+
+    listener(conversations);
+  });
+}
+
+export async function blockUser(blockerUserId: string, blockedUserId: string) {
+  const blockId = `${blockerUserId}__${blockedUserId}`;
+
+  await setDoc(doc(db, COLLECTIONS.userBlocks, blockId), {
+    blockerUserId,
+    blockedUserId,
+    createdAt: serverTimestamp(),
+  } satisfies UserBlock);
+}
+
+export async function getBlockedUserIds(blockerUserId: string) {
+  const blocksQuery = query(
+    collection(db, COLLECTIONS.userBlocks),
+    where("blockerUserId", "==", blockerUserId)
+  );
+  const snapshot = await getDocs(blocksQuery);
+
+  return snapshot.docs.map((blockDoc) => (blockDoc.data() as UserBlock).blockedUserId);
+}
+
+export async function reportUser(
+  reporterUserId: string,
+  reportedUserId: string,
+  reason: string,
+  details: string,
+  context: string
+) {
+  await addDoc(collection(db, COLLECTIONS.reports), {
+    reporterUserId,
+    reportedUserId,
+    reason: reason.trim(),
+    details: details.trim(),
+    context,
+    createdAt: serverTimestamp(),
+  });
 }

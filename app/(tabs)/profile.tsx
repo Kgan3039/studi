@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Image } from 'expo-image';
 import {
   ActivityIndicator,
@@ -16,24 +16,15 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { logOut, subscribeToAuthState } from '@/lib/auth';
+import { UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
 import {
   getUserProfile,
   updateUserAvailability,
   updateUserClasses,
   updateUserDisplayName,
-  type AvailabilityDay,
   type AvailabilitySlot,
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
-
-const SUGGESTED_CLASSES = ['CS400', 'CS300', 'MATH221', 'STAT240', 'CHEM103', 'ECON101'];
-const SUGGESTED_AVAILABILITY: AvailabilitySlot[] = [
-  { day: 'mon', startMinutes: 1080, endMinutes: 1200 },
-  { day: 'tue', startMinutes: 960, endMinutes: 1080 },
-  { day: 'wed', startMinutes: 1140, endMinutes: 1260 },
-  { day: 'thu', startMinutes: 900, endMinutes: 1020 },
-  { day: 'fri', startMinutes: 780, endMinutes: 900 },
-];
 
 function splitDisplayName(displayName: string | undefined) {
   const normalized = displayName?.trim() ?? '';
@@ -57,20 +48,116 @@ function formatTime(minutes: number) {
   return `${displayHour}:${mins.toString().padStart(2, '0')} ${period}`;
 }
 
-function formatDay(day: AvailabilityDay) {
+function formatDay(day: string) {
   return day.charAt(0).toUpperCase() + day.slice(1);
 }
 
 function formatAvailabilitySlot(slot: AvailabilitySlot) {
+  if (slot.date) {
+    const date = new Date(`${slot.date}T12:00:00`);
+    const formattedDate = date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      weekday: 'short',
+    });
+
+    return `${formattedDate} · ${formatTime(slot.startMinutes)}-${formatTime(slot.endMinutes)}`;
+  }
+
   return `${formatDay(slot.day)} ${formatTime(slot.startMinutes)}-${formatTime(slot.endMinutes)}`;
 }
 
 function isSameSlot(first: AvailabilitySlot, second: AvailabilitySlot) {
   return (
-    first.day === second.day &&
+    (first.date && second.date ? first.date === second.date : first.day === second.day) &&
     first.startMinutes === second.startMinutes &&
     first.endMinutes === second.endMinutes
   );
+}
+
+function formatDateLabel(date: string) {
+  return new Date(`${date}T12:00:00`).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    weekday: 'short',
+  });
+}
+
+function getAvailabilityDayFromDate(date: string) {
+  const day = new Date(`${date}T12:00:00`).getDay();
+  return (['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][day] ?? 'mon') as AvailabilitySlot['day'];
+}
+
+function buildUpcomingDates(days = 21) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  return Array.from({ length: days }, (_, index) => {
+    const nextDate = new Date(today);
+    nextDate.setDate(today.getDate() + index);
+    return nextDate.toISOString().slice(0, 10);
+  });
+}
+
+function parseTimeInput(value: string) {
+  const normalizedValue = value.trim();
+  const match = normalizedValue.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  return hours * 60 + minutes;
+}
+
+const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(date: Date, monthOffset: number) {
+  return new Date(date.getFullYear(), date.getMonth() + monthOffset, 1);
+}
+
+function toIsoDate(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function buildMonthGrid(monthStart: Date) {
+  const firstDayOfMonth = startOfMonth(monthStart);
+  const gridStart = new Date(firstDayOfMonth);
+  gridStart.setDate(firstDayOfMonth.getDate() - firstDayOfMonth.getDay());
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const cellDate = new Date(gridStart);
+    cellDate.setDate(gridStart.getDate() + index);
+
+    return {
+      date: cellDate,
+      inCurrentMonth: cellDate.getMonth() === monthStart.getMonth(),
+      isoDate: toIsoDate(cellDate),
+    };
+  });
+}
+
+function formatMonthLabel(date: Date) {
+  return date.toLocaleDateString('en-US', {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function isPastCalendarDate(isoDate: string) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const parsedDate = new Date(`${isoDate}T12:00:00`);
+  return parsedDate < today;
 }
 
 export default function ProfileScreen() {
@@ -82,14 +169,30 @@ export default function ProfileScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [customClass, setCustomClass] = useState('');
+  const [courseQuery, setCourseQuery] = useState('');
   const [classes, setClasses] = useState<string[]>([]);
   const [availability, setAvailability] = useState<AvailabilitySlot[]>([]);
+  const [selectedAvailabilityDate, setSelectedAvailabilityDate] = useState(buildUpcomingDates(21)[0]);
+  const [selectedCalendarMonth, setSelectedCalendarMonth] = useState(() => startOfMonth(new Date()));
+  const [availabilityStartTime, setAvailabilityStartTime] = useState('');
+  const [availabilityEndTime, setAvailabilityEndTime] = useState('');
   const [nameStatus, setNameStatus] = useState('Save your name so Studi looks more personal.');
   const [classesStatus, setClassesStatus] = useState('Update the classes you want to match on.');
   const [availabilityStatus, setAvailabilityStatus] = useState(
-    'Update the time blocks when you are usually free.'
+    'Choose a day, then add a time block when you are free.'
   );
+  const courseResults = useMemo(() => {
+    if (courseQuery.trim().length < 2) {
+      return [];
+    }
+
+    return searchCourses(courseQuery, classes, 14);
+  }, [classes, courseQuery]);
+  const calendarDays = useMemo(() => buildMonthGrid(selectedCalendarMonth), [selectedCalendarMonth]);
+  const canGoToPreviousMonth = useMemo(() => {
+    const currentMonthStart = startOfMonth(new Date());
+    return selectedCalendarMonth > currentMonthStart;
+  }, [selectedCalendarMonth]);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -157,27 +260,77 @@ export default function ProfileScreen() {
     );
   }
 
-  function handleAddCustomClass() {
-    const normalizedClass = customClass.trim().toUpperCase();
+  function handleAddCourse(classCode: string) {
+    setClasses((currentClasses) =>
+      currentClasses.includes(classCode) ? currentClasses : [...currentClasses, classCode]
+    );
+    setCourseQuery('');
+  }
 
-    if (!normalizedClass) {
+  function removeAvailabilitySlot(slot: AvailabilitySlot) {
+    setAvailability((currentAvailability) =>
+      currentAvailability.filter((savedSlot) => !isSameSlot(savedSlot, slot))
+    );
+  }
+
+  function handleAddAvailabilitySlot() {
+    const startMinutes = parseTimeInput(availabilityStartTime);
+    const endMinutes = parseTimeInput(availabilityEndTime);
+
+    if (!selectedAvailabilityDate) {
+      setAvailabilityStatus('Choose a date before adding a time slot.');
+      Alert.alert('Availability Error', 'Please choose a date first.');
       return;
     }
 
-    setClasses((currentClasses) =>
-      currentClasses.includes(normalizedClass)
-        ? currentClasses
-        : [...currentClasses, normalizedClass]
-    );
-    setCustomClass('');
-  }
+    if (startMinutes === null || endMinutes === null) {
+      setAvailabilityStatus('Enter start and end times in HH:MM format.');
+      Alert.alert('Availability Error', 'Use HH:MM for both start and end time.');
+      return;
+    }
 
-  function toggleAvailabilitySlot(slot: AvailabilitySlot) {
+    if (endMinutes <= startMinutes) {
+      setAvailabilityStatus('Your availability must end after it starts.');
+      Alert.alert('Availability Error', 'End time must be later than start time.');
+      return;
+    }
+
+    const selectedStart = new Date(`${selectedAvailabilityDate}T00:00:00`);
+    selectedStart.setMinutes(startMinutes);
+    const selectedEnd = new Date(`${selectedAvailabilityDate}T00:00:00`);
+    selectedEnd.setMinutes(endMinutes);
+    const now = new Date();
+
+    if (selectedStart <= now) {
+      setAvailabilityStatus('Choose a future day/time for your availability.');
+      Alert.alert('Availability Error', 'Availability cannot be in the past.');
+      return;
+    }
+
+    const newSlot: AvailabilitySlot = {
+      date: selectedAvailabilityDate,
+      day: getAvailabilityDayFromDate(selectedAvailabilityDate),
+      startMinutes,
+      endMinutes,
+    };
+
     setAvailability((currentAvailability) =>
-      currentAvailability.some((savedSlot) => isSameSlot(savedSlot, slot))
-        ? currentAvailability.filter((savedSlot) => !isSameSlot(savedSlot, slot))
-        : [...currentAvailability, slot]
+      currentAvailability.some((savedSlot) => isSameSlot(savedSlot, newSlot))
+        ? currentAvailability
+        : [...currentAvailability, newSlot].sort((firstSlot, secondSlot) => {
+            const firstDate = firstSlot.date ?? '';
+            const secondDate = secondSlot.date ?? '';
+
+            if (firstDate !== secondDate) {
+              return firstDate.localeCompare(secondDate);
+            }
+
+            return firstSlot.startMinutes - secondSlot.startMinutes;
+          })
     );
+    setAvailabilityStartTime('');
+    setAvailabilityEndTime('');
+    setAvailabilityStatus(`Added ${formatAvailabilitySlot(newSlot)} to your pending availability.`);
   }
 
   async function handleSaveName() {
@@ -343,56 +496,72 @@ export default function ProfileScreen() {
         <ThemedText style={styles.sectionLabel}>Classes</ThemedText>
         <ThemedText type="subtitle">Courses you want to match on</ThemedText>
         <ThemedText style={styles.statusCopy}>{classesStatus}</ThemedText>
+        <ThemedText style={styles.mutedText}>
+          Search across {UW_COURSE_COUNT.toLocaleString()} official UW-Madison courses.
+        </ThemedText>
+        <TextInput
+          autoCapitalize="characters"
+          editable={!isSaving}
+          onChangeText={setCourseQuery}
+          placeholder="Search by course code or title"
+          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+          style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
+          value={courseQuery}
+        />
+        {courseQuery.trim().length >= 2 ? (
+          <View style={styles.searchResults}>
+            {courseResults.length > 0 ? (
+              courseResults.map((course) => (
+                <Pressable
+                  key={course.code}
+                  disabled={isSaving}
+                  onPress={() => handleAddCourse(course.code)}
+                  style={[
+                    styles.searchResultCard,
+                    {
+                      backgroundColor: palette.surfaceMuted,
+                      borderColor: palette.outline,
+                      opacity: isSaving ? 0.5 : 1,
+                    },
+                  ]}>
+                  <ThemedText type="defaultSemiBold">{course.code}</ThemedText>
+                  <ThemedText>{course.title}</ThemedText>
+                  <ThemedText style={styles.searchMeta}>
+                    {course.subjectName} · {course.credits}
+                  </ThemedText>
+                </Pressable>
+              ))
+            ) : (
+              <ThemedText style={styles.mutedText}>No courses matched that search yet.</ThemedText>
+            )}
+          </View>
+        ) : (
+          <ThemedText style={styles.mutedText}>
+            Start typing at least 2 characters to search the course catalog.
+          </ThemedText>
+        )}
         <View style={styles.chipRow}>
-          {SUGGESTED_CLASSES.map((classCode) => {
-            const isSelected = classes.includes(classCode);
-
-            return (
-              <Pressable
-                key={classCode}
-                disabled={isSaving}
-                onPress={() => toggleClassSelection(classCode)}
-                style={[
-                  styles.chip,
-                  {
-                    backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
-                    borderColor: isSelected ? palette.tint : palette.outline,
-                    opacity: isSaving ? 0.5 : 1,
-                  },
-                ]}>
-                <ThemedText
-                  type="defaultSemiBold"
-                  lightColor={isSelected ? '#ffffff' : undefined}
-                  darkColor={isSelected ? '#ffffff' : undefined}>
-                  {classCode}
-                </ThemedText>
-              </Pressable>
-            );
-          })}
-        </View>
-        <View style={styles.inlineRow}>
-          <TextInput
-            autoCapitalize="characters"
-            editable={!isSaving}
-            onChangeText={setCustomClass}
-            placeholder="Add custom class"
-            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-            style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
-            value={customClass}
-          />
-          <Pressable
-            disabled={isSaving}
-            onPress={handleAddCustomClass}
-            style={[
-              styles.inlineButton,
-              {
-                backgroundColor: palette.surfaceMuted,
-                borderColor: palette.outline,
-                opacity: isSaving ? 0.5 : 1,
-              },
-            ]}>
-            <ThemedText type="defaultSemiBold">Add</ThemedText>
-          </Pressable>
+          {classes.map((classCode) => (
+            <Pressable
+              key={classCode}
+              disabled={isSaving}
+              onPress={() => toggleClassSelection(classCode)}
+              style={[
+                styles.chip,
+                {
+                  backgroundColor: palette.tint,
+                  borderColor: palette.tint,
+                  opacity: isSaving ? 0.5 : 1,
+                },
+              ]}>
+              <ThemedText
+                type="defaultSemiBold"
+                lightColor="#ffffff"
+                darkColor="#ffffff">
+                {classCode} ×
+              </ThemedText>
+            </Pressable>
+          ))}
         </View>
         <Pressable
           disabled={isSaving}
@@ -406,35 +575,126 @@ export default function ProfileScreen() {
 
       <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
         <ThemedText style={styles.sectionLabel}>Availability</ThemedText>
-        <ThemedText type="subtitle">When you are usually free</ThemedText>
+        <ThemedText type="subtitle">Choose real days and time blocks</ThemedText>
         <ThemedText style={styles.statusCopy}>{availabilityStatus}</ThemedText>
-        <View style={styles.chipRow}>
-          {SUGGESTED_AVAILABILITY.map((slot) => {
-            const isSelected = availability.some((savedSlot) => isSameSlot(savedSlot, slot));
-
-            return (
+        <ThemedText style={styles.mutedText}>
+          Pick a real day from the calendar, then add a start and end time in `HH:MM` format.
+          Studi will block dates in the past and time slots that have already passed.
+        </ThemedText>
+        <View style={[styles.calendarCard, { borderColor: palette.outline, backgroundColor: palette.background }]}>
+          <View style={styles.calendarHeader}>
+            <ThemedText type="subtitle">{formatMonthLabel(selectedCalendarMonth)}</ThemedText>
+            <View style={styles.calendarNav}>
               <Pressable
-                key={`${slot.day}-${slot.startMinutes}-${slot.endMinutes}`}
+                disabled={!canGoToPreviousMonth || isSaving}
+                onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, -1))}
+                style={[
+                  styles.calendarNavButton,
+                  {
+                    borderColor: palette.outline,
+                    opacity: !canGoToPreviousMonth || isSaving ? 0.35 : 1,
+                  },
+                ]}>
+                <ThemedText type="defaultSemiBold">‹</ThemedText>
+              </Pressable>
+              <Pressable
                 disabled={isSaving}
-                onPress={() => toggleAvailabilitySlot(slot)}
+                onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, 1))}
+                style={[styles.calendarNavButton, { borderColor: palette.outline, opacity: isSaving ? 0.35 : 1 }]}>
+                <ThemedText type="defaultSemiBold">›</ThemedText>
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={styles.calendarWeekRow}>
+            {CALENDAR_WEEKDAYS.map((weekday) => (
+              <View key={weekday} style={styles.calendarWeekCell}>
+                <ThemedText style={styles.calendarWeekday}>{weekday}</ThemedText>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.calendarGrid}>
+            {calendarDays.map((dayCell) => {
+              const isSelected = selectedAvailabilityDate === dayCell.isoDate;
+              const isPast = isPastCalendarDate(dayCell.isoDate);
+              const isDisabled = isSaving || isPast;
+
+              return (
+                <Pressable
+                  key={dayCell.isoDate}
+                  disabled={isDisabled}
+                  onPress={() => setSelectedAvailabilityDate(dayCell.isoDate)}
+                  style={[
+                    styles.calendarDay,
+                    {
+                      backgroundColor: isSelected ? palette.tint : 'transparent',
+                      borderColor: isSelected ? palette.tint : 'transparent',
+                      opacity: dayCell.inCurrentMonth ? (isPast ? 0.35 : 1) : 0.2,
+                    },
+                  ]}>
+                  <ThemedText
+                    type={isSelected ? 'defaultSemiBold' : 'default'}
+                    lightColor={isSelected ? '#ffffff' : undefined}
+                    darkColor={isSelected ? '#ffffff' : undefined}>
+                    {dayCell.date.getDate()}
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+        <ThemedText style={styles.selectedDateText}>
+          Selected day: {formatDateLabel(selectedAvailabilityDate)}
+        </ThemedText>
+        <View style={styles.inlineRow}>
+          <TextInput
+            autoCapitalize="none"
+            editable={!isSaving}
+            onChangeText={setAvailabilityStartTime}
+            placeholder="Start (HH:MM)"
+            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+            style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
+            value={availabilityStartTime}
+          />
+          <TextInput
+            autoCapitalize="none"
+            editable={!isSaving}
+            onChangeText={setAvailabilityEndTime}
+            placeholder="End (HH:MM)"
+            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+            style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
+            value={availabilityEndTime}
+          />
+        </View>
+        <Pressable
+          disabled={isSaving}
+          onPress={handleAddAvailabilitySlot}
+          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isSaving ? 0.6 : 1 }]}>
+          <ThemedText type="defaultSemiBold">Add Time Slot</ThemedText>
+        </Pressable>
+        <View style={styles.slotList}>
+          {availability.length > 0 ? (
+            availability.map((slot) => (
+              <Pressable
+                key={`${slot.date ?? slot.day}-${slot.startMinutes}-${slot.endMinutes}`}
+                disabled={isSaving}
+                onPress={() => removeAvailabilitySlot(slot)}
                 style={[
                   styles.chip,
                   styles.wideChip,
                   {
-                    backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
-                    borderColor: isSelected ? palette.tint : palette.outline,
+                    backgroundColor: palette.surfaceMuted,
+                    borderColor: palette.outline,
                     opacity: isSaving ? 0.5 : 1,
                   },
                 ]}>
-                <ThemedText
-                  type="defaultSemiBold"
-                  lightColor={isSelected ? '#ffffff' : undefined}
-                  darkColor={isSelected ? '#ffffff' : undefined}>
-                  {formatAvailabilitySlot(slot)}
-                </ThemedText>
+                <ThemedText type="defaultSemiBold">{formatAvailabilitySlot(slot)} ×</ThemedText>
               </Pressable>
-            );
-          })}
+            ))
+          ) : (
+            <ThemedText style={styles.mutedText}>No availability slots saved yet.</ThemedText>
+          )}
         </View>
         <Pressable
           disabled={isSaving}
@@ -572,6 +832,72 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 54,
     paddingHorizontal: 18,
+  },
+  searchResults: {
+    gap: 10,
+  },
+  searchResultCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 4,
+    padding: 14,
+  },
+  searchMeta: {
+    fontSize: 13,
+    opacity: 0.7,
+  },
+  calendarCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 14,
+    padding: 16,
+  },
+  calendarHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  calendarNav: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  calendarNavButton: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  calendarWeekRow: {
+    flexDirection: 'row',
+  },
+  calendarWeekCell: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  calendarWeekday: {
+    fontSize: 13,
+    opacity: 0.65,
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: 8,
+  },
+  calendarDay: {
+    alignItems: 'center',
+    borderRadius: 18,
+    borderWidth: 1,
+    height: 40,
+    justifyContent: 'center',
+    width: '14.2857%',
+  },
+  selectedDateText: {
+    opacity: 0.82,
+  },
+  slotList: {
+    gap: 10,
   },
   primaryButton: {
     alignItems: 'center',

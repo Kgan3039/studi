@@ -18,7 +18,10 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="complete-profile" options={{ title: 'Complete Profile' }} />
         <Stack.Screen name="create-session" options={{ title: 'Create Session' }} />
+        <Stack.Screen name="conversation/[conversationId]" options={{ title: 'Conversation' }} />
+        <Stack.Screen name="match/[userId]" options={{ title: 'Match Details' }} />
         <Stack.Screen name="matches" options={{ title: 'Matched Students' }} />
+        <Stack.Screen name="report-user" options={{ title: 'Report User' }} />
         <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />
         <Stack.Screen name="sessions" options={{ title: 'Available Sessions' }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
