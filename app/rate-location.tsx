@@ -259,7 +259,8 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   starChar: {
-    fontSize: 42,
+    fontSize: 40,
+    lineHeight: 50,
   },
   hintText: {
     opacity: 0.65,
