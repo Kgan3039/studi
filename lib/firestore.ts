@@ -15,12 +15,14 @@ import {
   where,
 } from "firebase/firestore";
 
-import { findStudyLocationById, UW_STUDY_LOCATIONS } from "@/lib/catalog";
+import { findStudyLocationById } from "@/lib/catalog";
+import { UW_STUDY_LOCATIONS } from "@/data/uw-study-locations";
 import { db } from "../firebaseConfig";
 import { validateSessionSchedule } from "./session-schedule";
 
 export const COLLECTIONS = {
   conversations: "conversations",
+  locationRatings: "locationRatings",
   locations: "locations",
   reports: "reports",
   sessions: "sessions",
@@ -113,6 +115,22 @@ export type UserBlock = {
   blockedUserId: string;
   blockerUserId: string;
   createdAt?: unknown;
+};
+
+export type LocationRating = {
+  createdAt?: unknown;
+  locationId: string;
+  stars: number;
+  tags: string[];
+  updatedAt?: unknown;
+  userId: string;
+};
+
+export type LocationRatingAggregate = {
+  averageStars: number;
+  locationId: string;
+  topTags: string[];
+  totalRatings: number;
 };
 
 type UserProfileWrite = Partial<Omit<UserProfile, "uid" | "updatedAt">> & {
@@ -615,4 +633,78 @@ export async function reportUser(
     context,
     createdAt: serverTimestamp(),
   });
+}
+
+export async function submitLocationRating(
+  locationId: string,
+  userId: string,
+  stars: number,
+  tags: string[]
+) {
+  const ratingRef = doc(db, COLLECTIONS.locationRatings, `${locationId}__${userId}`);
+  const existing = await getDoc(ratingRef);
+
+  await setDoc(ratingRef, {
+    locationId,
+    userId,
+    stars,
+    tags,
+    createdAt: existing.exists() ? existing.data()?.createdAt : serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function getUserLocationRating(locationId: string, userId: string) {
+  const snapshot = await getDoc(
+    doc(db, COLLECTIONS.locationRatings, `${locationId}__${userId}`)
+  );
+
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  return snapshot.data() as LocationRating;
+}
+
+export async function getLocationRatingAggregates() {
+  const snapshot = await getDocs(collection(db, COLLECTIONS.locationRatings));
+  const ratings = snapshot.docs.map((ratingDoc) => ratingDoc.data() as LocationRating);
+
+  const byLocation = new Map<string, LocationRating[]>();
+
+  for (const rating of ratings) {
+    const existing = byLocation.get(rating.locationId) ?? [];
+    existing.push(rating);
+    byLocation.set(rating.locationId, existing);
+  }
+
+  const aggregates = new Map<string, LocationRatingAggregate>();
+
+  for (const [locationId, locationRatings] of byLocation.entries()) {
+    const totalRatings = locationRatings.length;
+    const averageStars =
+      locationRatings.reduce((sum, r) => sum + r.stars, 0) / totalRatings;
+
+    const tagCounts = new Map<string, number>();
+    for (const rating of locationRatings) {
+      for (const tag of rating.tags) {
+        tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+      }
+    }
+
+    const topTags = [...tagCounts.entries()]
+      .filter(([, count]) => count >= 2)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5)
+      .map(([tag]) => tag);
+
+    aggregates.set(locationId, {
+      averageStars: Math.round(averageStars * 10) / 10,
+      locationId,
+      topTags,
+      totalRatings,
+    });
+  }
+
+  return aggregates;
 }

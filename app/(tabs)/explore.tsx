@@ -15,7 +15,12 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
-import { getLocations, type StudyLocation } from '@/lib/firestore';
+import {
+  getLocationRatingAggregates,
+  getLocations,
+  type LocationRatingAggregate,
+  type StudyLocation,
+} from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
 export default function StudyLocationsScreen() {
@@ -26,6 +31,9 @@ export default function StudyLocationsScreen() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authResolved, setAuthResolved] = useState(false);
   const [locations, setLocations] = useState<StudyLocation[]>([]);
+  const [ratingAggregates, setRatingAggregates] = useState<Map<string, LocationRatingAggregate>>(
+    new Map()
+  );
   const [locationQuery, setLocationQuery] = useState('');
   const [status, setStatus] = useState('Loading study locations...');
   const [isLoading, setIsLoading] = useState(true);
@@ -64,11 +72,10 @@ export default function StudyLocationsScreen() {
       setIsLoading(true);
       const loadedLocations = await getLocations();
       setLocations(loadedLocations);
+      const suffix = loadedLocations.length === 1 ? '' : 's';
       setStatus(
         loadedLocations.length > 0
-          ? `Loaded ${loadedLocations.length} study location${
-              loadedLocations.length === 1 ? '' : 's'
-            }.`
+          ? `Loaded ${loadedLocations.length} study location${suffix}.`
           : 'No study locations found yet.'
       );
     } catch (error) {
@@ -76,6 +83,13 @@ export default function StudyLocationsScreen() {
       setStatus(message);
     } finally {
       setIsLoading(false);
+    }
+
+    try {
+      const aggregates = await getLocationRatingAggregates();
+      setRatingAggregates(aggregates);
+    } catch {
+      // Ratings unavailable — locations still show
     }
   }
 
@@ -181,39 +195,95 @@ export default function StudyLocationsScreen() {
       </ThemedView>
 
       {filteredLocations.length > 0 ? (
-        filteredLocations.map((location) => (
-          <ThemedView
-            key={location.locationId}
-            style={[
-              styles.card,
-              { backgroundColor: palette.surface, borderColor: palette.border },
-            ]}>
-            <View style={styles.locationHeader}>
-              <ThemedText style={styles.cardLabel}>Study Spot</ThemedText>
-              <ThemedText type="subtitle">{location.name}</ThemedText>
-              <ThemedText style={styles.locationArea}>{location.campusArea}</ThemedText>
-            </View>
+        filteredLocations.map((location) => {
+          const agg = ratingAggregates.get(location.locationId);
+          return (
+            <ThemedView
+              key={location.locationId}
+              style={[
+                styles.card,
+                { backgroundColor: palette.surface, borderColor: palette.border },
+              ]}>
+              <View style={styles.locationHeader}>
+                <ThemedText style={styles.cardLabel}>Study Spot</ThemedText>
+                <ThemedText type="subtitle">{location.name}</ThemedText>
+                <ThemedText style={styles.locationArea}>{location.campusArea}</ThemedText>
+              </View>
 
-            <ThemedText>{location.building}</ThemedText>
-            <ThemedText style={styles.notesText}>{location.notes}</ThemedText>
+              <ThemedText>{location.building}</ThemedText>
+              <ThemedText style={styles.notesText}>{location.notes}</ThemedText>
 
-            <View style={styles.tagRow}>
-              {location.tags.map((tag) => (
-                <ThemedView
-                  key={`${location.locationId}-${tag}`}
-                  style={[
-                    styles.tag,
-                    {
-                      backgroundColor: palette.surfaceMuted,
-                      borderColor: palette.outline,
-                    },
-                  ]}>
-                  <ThemedText type="defaultSemiBold">{tag}</ThemedText>
-                </ThemedView>
-              ))}
-            </View>
-          </ThemedView>
-        ))
+              {agg ? (
+                <View style={styles.ratingRow}>
+                  <View style={styles.starRow}>
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <ThemedText
+                        key={star}
+                        style={{
+                          color: star <= Math.round(agg.averageStars) ? '#F5A623' : palette.outline,
+                          fontSize: 18,
+                        }}>
+                        ★
+                      </ThemedText>
+                    ))}
+                  </View>
+                  <ThemedText type="defaultSemiBold">{agg.averageStars}</ThemedText>
+                  <ThemedText style={styles.ratingCount}>({agg.totalRatings})</ThemedText>
+                </View>
+              ) : (
+                <ThemedText style={styles.ratingEmpty}>No ratings yet — be the first!</ThemedText>
+              )}
+
+              <View style={styles.tagRow}>
+                {location.tags.map((tag) => (
+                  <ThemedView
+                    key={`${location.locationId}-${tag}`}
+                    style={[
+                      styles.tag,
+                      {
+                        backgroundColor: palette.surfaceMuted,
+                        borderColor: palette.outline,
+                      },
+                    ]}>
+                    <ThemedText type="defaultSemiBold">{tag}</ThemedText>
+                  </ThemedView>
+                ))}
+              </View>
+
+              {agg && agg.topTags.length > 0 && (
+                <View style={styles.communityTagsSection}>
+                  <ThemedText style={styles.communityTagsLabel}>Community tags</ThemedText>
+                  <View style={styles.tagRow}>
+                    {agg.topTags.map((tag) => (
+                      <ThemedView
+                        key={`${location.locationId}-community-${tag}`}
+                        style={[
+                          styles.tag,
+                          {
+                            backgroundColor: palette.badge,
+                            borderColor: palette.outline,
+                          },
+                        ]}>
+                        <ThemedText type="defaultSemiBold">{tag}</ThemedText>
+                      </ThemedView>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              <Pressable
+                onPress={() =>
+                  router.push({
+                    pathname: '/rate-location',
+                    params: { locationId: location.locationId, locationName: location.name },
+                  })
+                }
+                style={[styles.rateButton, { borderColor: palette.outline }]}>
+                <ThemedText type="defaultSemiBold">Rate This Spot</ThemedText>
+              </Pressable>
+            </ThemedView>
+          );
+        })
       ) : locationQuery.trim() ? (
         <ThemedView
           style={[
@@ -362,5 +432,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  ratingRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  starRow: {
+    flexDirection: 'row',
+    gap: 2,
+  },
+  ratingCount: {
+    opacity: 0.65,
+  },
+  ratingEmpty: {
+    opacity: 0.6,
+  },
+  communityTagsSection: {
+    gap: 8,
+  },
+  communityTagsLabel: {
+    fontSize: 11,
+    letterSpacing: 0.8,
+    opacity: 0.6,
+    textTransform: 'uppercase',
+  },
+  rateButton: {
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 16,
   },
 });
