@@ -5,8 +5,11 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ThemedText } from './themed-text';
 
-export const TIME_OPTIONS = Array.from({ length: 33 }, (_, index) => {
-  const totalMinutes = 7 * 60 + index * 30;
+const MINUTES_IN_DAY = 24 * 60;
+const TIME_STEP_MINUTES = 30;
+
+export const TIME_OPTIONS = Array.from({ length: MINUTES_IN_DAY / TIME_STEP_MINUTES }, (_, index) => {
+  const totalMinutes = index * TIME_STEP_MINUTES;
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
@@ -67,6 +70,8 @@ export function TimeDropdown({
       {isOpen ? (
         <ScrollView
           nestedScrollEnabled
+          showsVerticalScrollIndicator
+          contentContainerStyle={styles.menuContent}
           style={[
             styles.menu,
             {
@@ -122,7 +127,10 @@ const styles = StyleSheet.create({
   menu: {
     borderRadius: 14,
     borderWidth: 1,
-    maxHeight: 220,
+    maxHeight: 320,
+  },
+  menuContent: {
+    paddingVertical: 4,
   },
   option: {
     borderRadius: 12,
