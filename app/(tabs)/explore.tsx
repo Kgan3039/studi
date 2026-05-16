@@ -29,6 +29,7 @@ export default function StudyLocationsScreen() {
   const [locationQuery, setLocationQuery] = useState('');
   const [status, setStatus] = useState('Loading study locations...');
   const [isLoading, setIsLoading] = useState(true);
+  const hasLocationSearch = locationQuery.trim().length > 0;
   const filteredLocations = useMemo(() => {
     const normalizedQuery = locationQuery.trim().toLowerCase();
 
@@ -42,7 +43,7 @@ export default function StudyLocationsScreen() {
         location.building,
         location.campusArea,
         location.notes,
-        ...location.tags,
+        ...(Array.isArray(location.tags) ? location.tags : []),
       ]
         .join(' ')
         .toLowerCase()
@@ -144,6 +145,36 @@ export default function StudyLocationsScreen() {
           style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
           value={locationQuery}
         />
+        {hasLocationSearch ? (
+          <View style={styles.searchResults}>
+            <ThemedText style={styles.searchHint}>
+              {filteredLocations.length > 0
+                ? `${filteredLocations.length} matching study spot${
+                    filteredLocations.length === 1 ? '' : 's'
+                  }`
+                : 'No matching study spots yet'}
+            </ThemedText>
+            {filteredLocations.slice(0, 4).map((location) => (
+              <Pressable
+                key={`suggestion-${location.locationId}`}
+                onPress={() => setLocationQuery(location.name)}
+                style={[
+                  styles.searchSuggestion,
+                  {
+                    backgroundColor: palette.surfaceMuted,
+                    borderColor: palette.outline,
+                  },
+                ]}>
+                <View style={styles.searchSuggestionText}>
+                  <ThemedText type="defaultSemiBold">{location.name}</ThemedText>
+                  <ThemedText style={styles.locationArea}>
+                    {location.building} • {location.campusArea}
+                  </ThemedText>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
         <Pressable
           onPress={() => router.push('/sessions')}
           style={[
@@ -198,7 +229,7 @@ export default function StudyLocationsScreen() {
             <ThemedText style={styles.notesText}>{location.notes}</ThemedText>
 
             <View style={styles.tagRow}>
-              {location.tags.map((tag) => (
+              {(Array.isArray(location.tags) ? location.tags : []).map((tag) => (
                 <ThemedView
                   key={`${location.locationId}-${tag}`}
                   style={[
@@ -214,7 +245,7 @@ export default function StudyLocationsScreen() {
             </View>
           </ThemedView>
         ))
-      ) : locationQuery.trim() ? (
+      ) : hasLocationSearch ? (
         <ThemedView
           style={[
             styles.card,
@@ -350,6 +381,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 48,
     paddingHorizontal: 16,
+  },
+  searchHint: {
+    fontSize: 14,
+    opacity: 0.7,
+  },
+  searchResults: {
+    gap: 8,
+  },
+  searchSuggestion: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 12,
+  },
+  searchSuggestionText: {
+    gap: 2,
   },
   tag: {
     borderRadius: 999,

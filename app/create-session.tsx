@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -54,7 +56,7 @@ export default function CreateSessionScreen() {
         location.building,
         location.campusArea,
         location.notes,
-        ...location.tags,
+        ...(Array.isArray(location.tags) ? location.tags : []),
       ]
         .join(' ')
         .toLowerCase()
@@ -70,54 +72,75 @@ export default function CreateSessionScreen() {
     return unsubscribe;
   }, []);
 
-  useEffect(() => {
-    async function loadSetupData() {
-      if (!currentUser) {
-        setClasses([]);
-        setLocations([]);
-        setStatus('Sign in to create a study session.');
-        setIsLoading(false);
-        return;
-      }
-
-      try {
-        setIsLoading(true);
-        const [profile, loadedLocations] = await Promise.all([
-          getUserProfile(currentUser.uid),
-          getLocations(),
-        ]);
-
-        const profileClasses = profile?.classes ?? [];
-        const normalizedRequestedClass = requestedClassId?.trim().toUpperCase() ?? '';
-        setClasses(profileClasses);
-        setLocations(loadedLocations);
-        setSelectedClass(
-          normalizedRequestedClass && profileClasses.includes(normalizedRequestedClass)
-            ? normalizedRequestedClass
-            : profileClasses[0] ?? ''
-        );
-        setSelectedLocationId(loadedLocations[0]?.locationId ?? '');
-        setTitle(
-          normalizedRequestedClass && profileClasses.includes(normalizedRequestedClass)
-            ? `${normalizedRequestedClass} Study Session`
-            : ''
-        );
-        setStatus(
-          profileClasses.length > 0 && loadedLocations.length > 0
-            ? 'Pick a class, location, and time to create a session.'
-            : 'Add classes on your Profile and make sure study spots are available before creating sessions.'
-        );
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'Unable to load session setup right now.';
-        setStatus(message);
-      } finally {
-        setIsLoading(false);
-      }
+  const loadSetupData = useCallback(async () => {
+    if (!currentUser) {
+      setClasses([]);
+      setLocations([]);
+      setStatus('Sign in to create a study session.');
+      setIsLoading(false);
+      return;
     }
 
-    loadSetupData();
+    try {
+      setIsLoading(true);
+      const [profile, loadedLocations] = await Promise.all([
+        getUserProfile(currentUser.uid),
+        getLocations(),
+      ]);
+
+      const profileClasses = [
+        ...new Set(
+          (profile?.classes ?? [])
+            .map((classCode) => classCode.trim().toUpperCase())
+            .filter(Boolean)
+        ),
+      ];
+      const normalizedRequestedClass = requestedClassId?.trim().toUpperCase() ?? '';
+      const defaultClass =
+        normalizedRequestedClass && profileClasses.includes(normalizedRequestedClass)
+          ? normalizedRequestedClass
+          : profileClasses[0] ?? '';
+
+      setClasses(profileClasses);
+      setLocations(loadedLocations);
+      setSelectedClass((currentSelectedClass) =>
+        currentSelectedClass && profileClasses.includes(currentSelectedClass)
+          ? currentSelectedClass
+          : defaultClass
+      );
+      setSelectedLocationId((currentSelectedLocationId) =>
+        currentSelectedLocationId &&
+        loadedLocations.some((location) => location.locationId === currentSelectedLocationId)
+          ? currentSelectedLocationId
+          : loadedLocations[0]?.locationId ?? ''
+      );
+      setTitle((currentTitle) =>
+        currentTitle ||
+        (defaultClass ? `${defaultClass} Study Session` : '')
+      );
+      setStatus(
+        profileClasses.length > 0 && loadedLocations.length > 0
+          ? 'Pick a class, location, and time to create a session.'
+          : 'Add classes on your Profile and make sure study spots are available before creating sessions.'
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to load session setup right now.';
+      setStatus(message);
+    } finally {
+      setIsLoading(false);
+    }
   }, [currentUser, requestedClassId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadSetupData();
+    }, [loadSetupData])
+  );
+
+  useEffect(() => {
+    loadSetupData();
+  }, [loadSetupData]);
 
   async function handleCreateSession() {
     if (!currentUser) {
@@ -158,9 +181,17 @@ export default function CreateSessionScreen() {
   }
 
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+      style={[styles.screen, { backgroundColor: palette.background }]}>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        style={styles.screen}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: insets.bottom + 56, paddingTop: insets.top + 12 },
+        ]}>
       <ThemedView
         style={[
           styles.hero,
@@ -383,7 +414,8 @@ export default function CreateSessionScreen() {
           )}
         </Pressable>
       </ThemedView>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
