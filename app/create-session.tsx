@@ -25,6 +25,80 @@ function combineDateAndTime(date: string, time: string) {
   return new Date(`${date}T${time}:00`).toISOString();
 }
 
+const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+const TIME_OPTIONS = Array.from({ length: 33 }, (_, index) => {
+  const totalMinutes = 7 * 60 + index * 30;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+});
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(date: Date, monthOffset: number) {
+  return new Date(date.getFullYear(), date.getMonth() + monthOffset, 1);
+}
+
+function toIsoDate(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function buildMonthGrid(monthStart: Date) {
+  const firstDayOfMonth = startOfMonth(monthStart);
+  const gridStart = new Date(firstDayOfMonth);
+  gridStart.setDate(firstDayOfMonth.getDate() - firstDayOfMonth.getDay());
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const cellDate = new Date(gridStart);
+    cellDate.setDate(gridStart.getDate() + index);
+
+    return {
+      inCurrentMonth: cellDate.getMonth() === monthStart.getMonth(),
+      isoDate: toIsoDate(cellDate),
+      label: cellDate.getDate().toString(),
+    };
+  });
+}
+
+function formatMonthLabel(date: Date) {
+  return date.toLocaleDateString('en-US', {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function formatDateLabel(date: string) {
+  return new Date(`${date}T12:00:00`).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    weekday: 'short',
+  });
+}
+
+function formatTimeLabel(time: string) {
+  const [hourValue, minuteValue] = time.split(':').map(Number);
+  const period = hourValue >= 12 ? 'PM' : 'AM';
+  const displayHour = hourValue % 12 === 0 ? 12 : hourValue % 12;
+  return `${displayHour}:${minuteValue.toString().padStart(2, '0')} ${period}`;
+}
+
+function isPastCalendarDate(isoDate: string) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const parsedDate = new Date(`${isoDate}T12:00:00`);
+  return parsedDate < today;
+}
+
+function isSessionStartInPast(date: string, time: string) {
+  return new Date(`${date}T${time}:00`) <= new Date();
+}
+
 export default function CreateSessionScreen() {
   const { classId: requestedClassId } = useLocalSearchParams<{ classId?: string }>();
   const colorScheme = useColorScheme() ?? 'light';
@@ -36,8 +110,8 @@ export default function CreateSessionScreen() {
   const [locationQuery, setLocationQuery] = useState('');
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedLocationId, setSelectedLocationId] = useState('');
-  const [title, setTitle] = useState('');
   const [sessionDate, setSessionDate] = useState('');
+  const [selectedCalendarMonth, setSelectedCalendarMonth] = useState(() => startOfMonth(new Date()));
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [status, setStatus] = useState('Sign in to create a study session.');
@@ -63,6 +137,11 @@ export default function CreateSessionScreen() {
         .includes(normalizedQuery)
     );
   }, [locationQuery, locations]);
+  const calendarDays = useMemo(() => buildMonthGrid(selectedCalendarMonth), [selectedCalendarMonth]);
+  const canGoToPreviousMonth = useMemo(() => {
+    const currentMonthStart = startOfMonth(new Date());
+    return selectedCalendarMonth > currentMonthStart;
+  }, [selectedCalendarMonth]);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -114,10 +193,6 @@ export default function CreateSessionScreen() {
           ? currentSelectedLocationId
           : loadedLocations[0]?.locationId ?? ''
       );
-      setTitle((currentTitle) =>
-        currentTitle ||
-        (defaultClass ? `${defaultClass} Study Session` : '')
-      );
       setStatus(
         profileClasses.length > 0 && loadedLocations.length > 0
           ? 'Pick a class, location, and time to create a session.'
@@ -148,8 +223,18 @@ export default function CreateSessionScreen() {
       return;
     }
 
-    if (!selectedClass || !selectedLocationId || !title.trim() || !sessionDate || !startTime || !endTime) {
-      Alert.alert('Missing Info', 'Fill out class, location, title, date, and start/end times.');
+    if (!selectedClass || !selectedLocationId || !sessionDate || !startTime || !endTime) {
+      Alert.alert('Missing Info', 'Fill out class, location, date, and start/end times.');
+      return;
+    }
+
+    if (endTime <= startTime) {
+      Alert.alert('Time Error', 'Choose an end time later than the start time.');
+      return;
+    }
+
+    if (isSessionStartInPast(sessionDate, startTime)) {
+      Alert.alert('Date Error', 'Choose a future date and start time for your session.');
       return;
     }
 
@@ -159,13 +244,12 @@ export default function CreateSessionScreen() {
         classId: selectedClass,
         hostId: currentUser.uid,
         locationId: selectedLocationId,
-        title: title.trim(),
+        title: `${selectedClass} Study Session`,
         startTime: combineDateAndTime(sessionDate, startTime),
         endTime: combineDateAndTime(sessionDate, endTime),
       });
 
       setStatus(`Session created successfully. Session ID: ${sessionId}`);
-      setTitle('');
       setSessionDate('');
       setStartTime('');
       setEndTime('');
@@ -333,70 +417,141 @@ export default function CreateSessionScreen() {
           { backgroundColor: palette.surface, borderColor: palette.border },
         ]}>
         <ThemedText style={styles.sectionLabel}>Step 3</ThemedText>
-        <ThemedText type="subtitle">Session details</ThemedText>
+        <ThemedText type="subtitle">Pick date and time</ThemedText>
+        <ThemedText style={styles.statusText}>
+          Studi will name the session from your selected class.
+        </ThemedText>
 
-        <TextInput
-          onChangeText={setTitle}
-          placeholder="Session title"
-          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-          style={[
-            styles.input,
-            {
-              borderColor: palette.outline,
-              color: palette.text,
-            },
-          ]}
-          value={title}
-        />
+        <View style={[styles.calendar, { borderColor: palette.outline }]}>
+          <View style={styles.calendarHeader}>
+            <Pressable
+              disabled={!canGoToPreviousMonth}
+              onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, -1))}
+              style={[
+                styles.monthButton,
+                {
+                  borderColor: palette.outline,
+                  opacity: canGoToPreviousMonth ? 1 : 0.35,
+                },
+              ]}>
+              <ThemedText type="defaultSemiBold">{'<'}</ThemedText>
+            </Pressable>
+            <ThemedText type="defaultSemiBold">{formatMonthLabel(selectedCalendarMonth)}</ThemedText>
+            <Pressable
+              onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, 1))}
+              style={[styles.monthButton, { borderColor: palette.outline }]}>
+              <ThemedText type="defaultSemiBold">{'>'}</ThemedText>
+            </Pressable>
+          </View>
 
-        <TextInput
-          autoCapitalize="none"
-          onChangeText={setSessionDate}
-          placeholder="Date (YYYY-MM-DD)"
-          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-          style={[
-            styles.input,
-            {
-              borderColor: palette.outline,
-              color: palette.text,
-            },
-          ]}
-          value={sessionDate}
-        />
+          <View style={styles.weekdayRow}>
+            {CALENDAR_WEEKDAYS.map((weekday) => (
+              <ThemedText key={weekday} style={styles.weekday}>
+                {weekday}
+              </ThemedText>
+            ))}
+          </View>
 
-        <View style={styles.timeRow}>
-          <TextInput
-            autoCapitalize="none"
-            onChangeText={setStartTime}
-            placeholder="Start (HH:MM)"
-            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-            style={[
-              styles.input,
-              styles.flexInput,
-              {
-                borderColor: palette.outline,
-                color: palette.text,
-              },
-            ]}
-            value={startTime}
-          />
+          <View style={styles.calendarGrid}>
+            {calendarDays.map((calendarDay) => {
+              const isSelected = sessionDate === calendarDay.isoDate;
+              const isPast = isPastCalendarDate(calendarDay.isoDate);
 
-          <TextInput
-            autoCapitalize="none"
-            onChangeText={setEndTime}
-            placeholder="End (HH:MM)"
-            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-            style={[
-              styles.input,
-              styles.flexInput,
-              {
-                borderColor: palette.outline,
-                color: palette.text,
-              },
-            ]}
-            value={endTime}
-          />
+              return (
+                <Pressable
+                  disabled={isPast}
+                  key={calendarDay.isoDate}
+                  onPress={() => setSessionDate(calendarDay.isoDate)}
+                  style={[
+                    styles.dateCell,
+                    {
+                      backgroundColor: isSelected ? palette.tint : 'transparent',
+                      opacity: calendarDay.inCurrentMonth && !isPast ? 1 : 0.34,
+                    },
+                  ]}>
+                  <ThemedText
+                    type={isSelected ? 'defaultSemiBold' : 'default'}
+                    lightColor={isSelected ? '#ffffff' : undefined}
+                    darkColor={isSelected ? '#ffffff' : undefined}>
+                    {calendarDay.label}
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
+
+        <ThemedText type="defaultSemiBold">
+          Selected date: {sessionDate ? formatDateLabel(sessionDate) : 'Choose a date'}
+        </ThemedText>
+
+        <ThemedText style={styles.sectionLabel}>Start time</ThemedText>
+        <View style={styles.timeChipRow}>
+          {TIME_OPTIONS.map((time) => {
+            const isSelected = startTime === time;
+
+            return (
+              <Pressable
+                key={`start-${time}`}
+                onPress={() => {
+                  setStartTime(time);
+                  setEndTime((currentEndTime) =>
+                    currentEndTime && currentEndTime <= time ? '' : currentEndTime
+                  );
+                }}
+                style={[
+                  styles.timeChip,
+                  {
+                    backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
+                    borderColor: isSelected ? palette.tint : palette.outline,
+                  },
+                ]}>
+                <ThemedText
+                  type="defaultSemiBold"
+                  lightColor={isSelected ? '#ffffff' : undefined}
+                  darkColor={isSelected ? '#ffffff' : undefined}>
+                  {formatTimeLabel(time)}
+                </ThemedText>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <ThemedText style={styles.sectionLabel}>End time</ThemedText>
+        <View style={styles.timeChipRow}>
+          {TIME_OPTIONS.map((time) => {
+            const isSelected = endTime === time;
+            const isBeforeStart = !!startTime && time <= startTime;
+
+            return (
+              <Pressable
+                disabled={isBeforeStart}
+                key={`end-${time}`}
+                onPress={() => setEndTime(time)}
+                style={[
+                  styles.timeChip,
+                  {
+                    backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
+                    borderColor: isSelected ? palette.tint : palette.outline,
+                    opacity: isBeforeStart ? 0.35 : 1,
+                  },
+                ]}>
+                <ThemedText
+                  type="defaultSemiBold"
+                  lightColor={isSelected ? '#ffffff' : undefined}
+                  darkColor={isSelected ? '#ffffff' : undefined}>
+                  {formatTimeLabel(time)}
+                </ThemedText>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <ThemedText style={styles.statusText}>
+          {startTime && endTime
+            ? `Selected time: ${formatTimeLabel(startTime)}-${formatTimeLabel(endTime)}`
+            : 'Choose a start and end time.'}
+        </ThemedText>
 
         <Pressable
           disabled={isSaving || isLoading}
@@ -486,8 +641,28 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 10,
   },
-  flexInput: {
-    flex: 1,
+  calendar: {
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 12,
+    padding: 14,
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: 8,
+  },
+  calendarHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  dateCell: {
+    alignItems: 'center',
+    borderRadius: 999,
+    height: 40,
+    justifyContent: 'center',
+    width: `${100 / 7}%`,
   },
   input: {
     borderRadius: 14,
@@ -513,8 +688,32 @@ const styles = StyleSheet.create({
     minHeight: 52,
     paddingHorizontal: 16,
   },
-  timeRow: {
+  monthButton: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  timeChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    minHeight: 40,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  timeChipRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
+  },
+  weekday: {
+    opacity: 0.65,
+    textAlign: 'center',
+    width: `${100 / 7}%`,
+  },
+  weekdayRow: {
+    flexDirection: 'row',
   },
 });
