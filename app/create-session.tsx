@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { formatTimeLabel, TimeDropdown } from '@/components/time-dropdown';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -26,13 +27,6 @@ function combineDateAndTime(date: string, time: string) {
 }
 
 const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-
-const TIME_OPTIONS = Array.from({ length: 33 }, (_, index) => {
-  const totalMinutes = 7 * 60 + index * 30;
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-});
 
 function startOfMonth(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), 1);
@@ -79,13 +73,6 @@ function formatDateLabel(date: string) {
     day: 'numeric',
     weekday: 'short',
   });
-}
-
-function formatTimeLabel(time: string) {
-  const [hourValue, minuteValue] = time.split(':').map(Number);
-  const period = hourValue >= 12 ? 'PM' : 'AM';
-  const displayHour = hourValue % 12 === 0 ? 12 : hourValue % 12;
-  return `${displayHour}:${minuteValue.toString().padStart(2, '0')} ${period}`;
 }
 
 function isPastCalendarDate(isoDate: string) {
@@ -485,66 +472,27 @@ export default function CreateSessionScreen() {
           Selected date: {sessionDate ? formatDateLabel(sessionDate) : 'Choose a date'}
         </ThemedText>
 
-        <ThemedText style={styles.sectionLabel}>Start time</ThemedText>
-        <View style={styles.timeChipRow}>
-          {TIME_OPTIONS.map((time) => {
-            const isSelected = startTime === time;
-
-            return (
-              <Pressable
-                key={`start-${time}`}
-                onPress={() => {
-                  setStartTime(time);
-                  setEndTime((currentEndTime) =>
-                    currentEndTime && currentEndTime <= time ? '' : currentEndTime
-                  );
-                }}
-                style={[
-                  styles.timeChip,
-                  {
-                    backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
-                    borderColor: isSelected ? palette.tint : palette.outline,
-                  },
-                ]}>
-                <ThemedText
-                  type="defaultSemiBold"
-                  lightColor={isSelected ? '#ffffff' : undefined}
-                  darkColor={isSelected ? '#ffffff' : undefined}>
-                  {formatTimeLabel(time)}
-                </ThemedText>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <ThemedText style={styles.sectionLabel}>End time</ThemedText>
-        <View style={styles.timeChipRow}>
-          {TIME_OPTIONS.map((time) => {
-            const isSelected = endTime === time;
-            const isBeforeStart = !!startTime && time <= startTime;
-
-            return (
-              <Pressable
-                disabled={isBeforeStart}
-                key={`end-${time}`}
-                onPress={() => setEndTime(time)}
-                style={[
-                  styles.timeChip,
-                  {
-                    backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
-                    borderColor: isSelected ? palette.tint : palette.outline,
-                    opacity: isBeforeStart ? 0.35 : 1,
-                  },
-                ]}>
-                <ThemedText
-                  type="defaultSemiBold"
-                  lightColor={isSelected ? '#ffffff' : undefined}
-                  darkColor={isSelected ? '#ffffff' : undefined}>
-                  {formatTimeLabel(time)}
-                </ThemedText>
-              </Pressable>
-            );
-          })}
+        <View style={styles.timeDropdownRow}>
+          <View style={styles.flexInput}>
+            <TimeDropdown
+              label="Start time"
+              onChange={(time) => {
+                setStartTime(time);
+                setEndTime((currentEndTime) =>
+                  currentEndTime && currentEndTime <= time ? '' : currentEndTime
+                );
+              }}
+              value={startTime}
+            />
+          </View>
+          <View style={styles.flexInput}>
+            <TimeDropdown
+              disabledOption={(time) => !!startTime && time <= startTime}
+              label="End time"
+              onChange={setEndTime}
+              value={endTime}
+            />
+          </View>
         </View>
 
         <ThemedText style={styles.statusText}>
@@ -696,16 +644,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 40,
   },
-  timeChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    minHeight: 40,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  flexInput: {
+    flex: 1,
   },
-  timeChipRow: {
+  timeDropdownRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 10,
   },
   weekday: {
