@@ -1,15 +1,18 @@
 import {
-  createUserWithEmailAndPassword,
-  type AuthError,
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signOut,
-  updateProfile,
-  type User,
+    createUserWithEmailAndPassword,
+    deleteUser,
+    EmailAuthProvider,
+    onAuthStateChanged,
+    reauthenticateWithCredential,
+    signInWithEmailAndPassword,
+    signOut,
+    updateProfile,
+    type AuthError,
+    type User,
 } from "firebase/auth";
 
 import { auth } from "../firebaseConfig";
-import { createOrUpdateUserProfile } from "./firestore";
+import { createOrUpdateUserProfile, deleteUserAccountData } from "./firestore";
 
 const UW_EMAIL_DOMAIN = "@wisc.edu";
 let pendingAccountCreation:
@@ -125,3 +128,172 @@ export function subscribeToAuthState(listener: (user: User | null) => void) {
 export async function logOut() {
   await signOut(auth);
 }
+
+const RECENT_LOGIN_WINDOW_MS = 4 * 60 * 1000;
+
+type DeleteAccountMethod = "password" | "apple" | "unknown";
+
+export type DeleteAccountResult =
+  | { status: "deleted" }
+  | {
+      status: "requires-recent-login";
+      method: DeleteAccountMethod;
+      email: string;
+    };
+
+type DeleteAccountOptions = {
+  password?: string;
+  appleAccessToken?: string;
+  appleRefreshToken?: string;
+};
+
+function isRecentLoginRequiredError(error: unknown) {
+  const authError = error as AuthError;
+  return authError?.code === "auth/requires-recent-login";
+}
+
+function getDeleteAccountMethod(user: User): DeleteAccountMethod {
+  const providerIds = user.providerData.map((provider) => provider.providerId);
+
+  if (providerIds.includes("password")) {
+    return "password";
+  }
+
+  if (providerIds.includes("apple.com")) {
+    return "apple";
+  }
+
+  return "unknown";
+}
+
+function hasRecentLogin(user: User) {
+  const lastSignInTime = user.metadata.lastSignInTime;
+
+  if (!lastSignInTime) {
+    return false;
+  }
+
+  const parsed = new Date(lastSignInTime).getTime();
+
+  if (Number.isNaN(parsed)) {
+    return false;
+  }
+
+  return Date.now() - parsed <= RECENT_LOGIN_WINDOW_MS;
+}
+
+async function revokeAppleAccessTokenWithRestApi(options: DeleteAccountOptions) {
+  const token = options.appleRefreshToken ?? options.appleAccessToken;
+
+  if (!token) {
+    throw new Error("Apple re-authentication is required before deleting your account.");
+  }
+
+  const clientId = process.env.EXPO_PUBLIC_APPLE_CLIENT_ID;
+  const clientSecret = process.env.EXPO_PUBLIC_APPLE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      "Missing Apple revoke configuration. Set EXPO_PUBLIC_APPLE_CLIENT_ID and EXPO_PUBLIC_APPLE_CLIENT_SECRET."
+    );
+  }
+
+  const body = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    token,
+    token_type_hint: options.appleRefreshToken ? "refresh_token" : "access_token",
+  });
+
+  const response = await fetch("https://appleid.apple.com/auth/revoke", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw new Error(responseText || "Unable to revoke Apple authorization token.");
+  }
+}
+
+// NOTE: `revokeAppleAccessTokenWithRestApi` calls Apple's token revoke endpoint.
+// It requires `EXPO_PUBLIC_APPLE_CLIENT_ID` and `EXPO_PUBLIC_APPLE_CLIENT_SECRET` to be
+// present in the environment. Tokens should be stored securely if you need to revoke them.
+
+async function reauthenticateForDelete(user: User, method: DeleteAccountMethod, options: DeleteAccountOptions) {
+  if (method === "password") {
+    if (!user.email) {
+      throw new Error("Unable to verify your account email for re-authentication.");
+    }
+
+    if (!options.password) {
+      throw new Error("Please enter your password to confirm account deletion.");
+    }
+
+    const credential = EmailAuthProvider.credential(user.email, options.password);
+    await reauthenticateWithCredential(user, credential);
+    return;
+  }
+
+  if (method === "apple") {
+    await revokeAppleAccessTokenWithRestApi(options);
+    return;
+  }
+
+  throw new Error("Please sign in again before deleting your account.");
+}
+
+export async function deleteCurrentUserAccount(
+  options: DeleteAccountOptions = {}
+): Promise<DeleteAccountResult> {
+  const currentUser = auth.currentUser;
+
+  if (!currentUser) {
+    throw new Error("You must be signed in to delete your account.");
+  }
+
+  const method = getDeleteAccountMethod(currentUser);
+  const email = currentUser.email ?? "";
+
+  if (!hasRecentLogin(currentUser)) {
+    if (!options.password && !options.appleAccessToken && !options.appleRefreshToken) {
+      return {
+        status: "requires-recent-login",
+        method,
+        email,
+      };
+    }
+
+    await reauthenticateForDelete(currentUser, method, options);
+  }
+
+  if (method === "apple") {
+    await revokeAppleAccessTokenWithRestApi(options);
+  }
+
+  const userId = currentUser.uid;
+
+  try {
+    await deleteUserAccountData(userId);
+    await deleteUser(currentUser);
+    return { status: "deleted" };
+  } catch (error) {
+    if (isRecentLoginRequiredError(error)) {
+      return {
+        status: "requires-recent-login",
+        method,
+        email,
+      };
+    }
+
+    throw error;
+  }
+}
+
+// `deleteCurrentUserAccount` performs client-side cleanup and deletes the Auth user.
+// For large-scale or admin-only deletions, prefer calling a server-side Admin function
+// (Cloud Function) which can atomically remove related Firestore documents without
+// relaxing client-side security rules.

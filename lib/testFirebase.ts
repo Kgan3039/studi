@@ -1,6 +1,8 @@
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 
+// Debug helper: used to verify Firestore connectivity during development.
+// Not used in production flows; safe to remove if no longer needed.
 export async function testFirestoreWrite() {
   console.log("testFirestoreWrite started");
 

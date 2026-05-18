@@ -1,22 +1,26 @@
 import {
-  arrayUnion,
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
-  Timestamp,
-  updateDoc,
-  where,
+    addDoc,
+    arrayRemove,
+    arrayUnion,
+    collection,
+    deleteDoc,
+    doc,
+    getDoc,
+    getDocs,
+    onSnapshot,
+    orderBy,
+    query,
+    serverTimestamp,
+    setDoc,
+    Timestamp,
+    updateDoc,
+    where,
+    writeBatch,
+    type DocumentReference,
 } from "firebase/firestore";
 
-import { findStudyLocationById } from "@/lib/catalog";
 import { UW_STUDY_LOCATIONS } from "@/data/uw-study-locations";
+import { findStudyLocationById } from "@/lib/catalog";
 import { db } from "../firebaseConfig";
 import { validateSessionSchedule } from "./session-schedule";
 
@@ -162,6 +166,20 @@ function withBuiltInLocationFallback(location: StudyLocation): StudyLocation {
   };
 }
 
+async function deleteDocumentRefs(documentRefs: DocumentReference[]) {
+  const batchSize = 400;
+
+  for (let index = 0; index < documentRefs.length; index += batchSize) {
+    const batch = writeBatch(db);
+
+    for (const documentRef of documentRefs.slice(index, index + batchSize)) {
+      batch.delete(documentRef);
+    }
+
+    await batch.commit();
+  }
+}
+
 export async function createOrUpdateUserProfile(
   userId: string,
   profile: UserProfileWrite
@@ -295,6 +313,59 @@ export async function updateUserDisplayName(userId: string, displayName: string)
     displayName,
     updatedAt: serverTimestamp(),
   });
+}
+
+export async function deleteUserAccountData(userId: string) {
+  const locationRatingsSnapshot = await getDocs(
+    query(collection(db, COLLECTIONS.locationRatings), where("userId", "==", userId))
+  );
+  await deleteDocumentRefs(locationRatingsSnapshot.docs.map((ratingDoc) => ratingDoc.ref));
+
+  const userBlocksSnapshot = await getDocs(
+    query(collection(db, COLLECTIONS.userBlocks), where("blockerUserId", "==", userId))
+  );
+  await deleteDocumentRefs(userBlocksSnapshot.docs.map((blockDoc) => blockDoc.ref));
+
+  const reportsSnapshot = await getDocs(
+    query(collection(db, COLLECTIONS.reports), where("reporterUserId", "==", userId))
+  );
+  await deleteDocumentRefs(reportsSnapshot.docs.map((reportDoc) => reportDoc.ref));
+
+  const hostedSessionsSnapshot = await getDocs(
+    query(collection(db, COLLECTIONS.sessions), where("hostId", "==", userId))
+  );
+  await deleteDocumentRefs(hostedSessionsSnapshot.docs.map((sessionDoc) => sessionDoc.ref));
+
+  const joinedSessionsSnapshot = await getDocs(
+    query(collection(db, COLLECTIONS.sessions), where("participantIds", "array-contains", userId))
+  );
+
+  await Promise.all(
+    joinedSessionsSnapshot.docs
+      .filter((sessionDoc) => (sessionDoc.data() as StudySession).hostId !== userId)
+      .map((sessionDoc) =>
+        updateDoc(sessionDoc.ref, {
+          participantIds: arrayRemove(userId),
+          updatedAt: serverTimestamp(),
+        })
+      )
+  );
+
+  const conversationsSnapshot = await getDocs(
+    query(collection(db, COLLECTIONS.conversations), where("participantIds", "array-contains", userId))
+  );
+
+  for (const conversationDoc of conversationsSnapshot.docs) {
+    const messagesSnapshot = await getDocs(
+      collection(db, COLLECTIONS.conversations, conversationDoc.id, "messages")
+    );
+
+    await deleteDocumentRefs(messagesSnapshot.docs.map((messageDoc) => messageDoc.ref));
+  }
+
+  await deleteDocumentRefs(conversationsSnapshot.docs.map((conversationDoc) => conversationDoc.ref));
+
+  await deleteDoc(doc(db, COLLECTIONS.users, userId));
 }
 
 export async function getLocations() {

@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
 import { Image } from 'expo-image';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  View,
+    ActivityIndicator,
+    Alert,
+    Modal,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    TextInput,
+    View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -15,14 +16,14 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { logOut, subscribeToAuthState } from '@/lib/auth';
+import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
 import { UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
 import {
-  getUserProfile,
-  updateUserAvailability,
-  updateUserClasses,
-  updateUserDisplayName,
-  type AvailabilitySlot,
+    getUserProfile,
+    updateUserAvailability,
+    updateUserClasses,
+    updateUserDisplayName,
+    type AvailabilitySlot,
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
@@ -167,6 +168,11 @@ export default function ProfileScreen() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [isReauthenticatingDelete, setIsReauthenticatingDelete] = useState(false);
+  const [showDeleteReauthModal, setShowDeleteReauthModal] = useState(false);
+  const [deleteReauthPassword, setDeleteReauthPassword] = useState('');
+  const [deleteReauthEmail, setDeleteReauthEmail] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [courseQuery, setCourseQuery] = useState('');
@@ -417,6 +423,87 @@ export default function ProfileScreen() {
       setIsSaving(false);
     }
   }
+
+  function confirmDeleteAccount() {
+    Alert.alert(
+      'Delete Account',
+      'This will permanently delete your Studi profile and account data. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: handleDeleteAccount,
+        },
+      ]
+    );
+  }
+
+  async function handleDeleteAccount() {
+    try {
+      setIsDeletingAccount(true);
+      const result = await deleteCurrentUserAccount();
+
+      if (result.status === 'requires-recent-login') {
+        if (result.method === 'password') {
+          setDeleteReauthPassword('');
+          setDeleteReauthEmail(result.email);
+          setShowDeleteReauthModal(true);
+          return;
+        }
+
+        Alert.alert(
+          'Please Sign In Again',
+          'For security, Firebase requires a recent login before deleting this account. Please sign out, sign back in, and try again.'
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to delete your account right now.';
+      Alert.alert('Delete Account Error', message);
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  }
+
+  function closeDeleteReauthModal() {
+    if (isReauthenticatingDelete) {
+      return;
+    }
+
+    setShowDeleteReauthModal(false);
+    setDeleteReauthPassword('');
+  }
+
+  async function handleDeleteWithReauthPassword() {
+    if (!deleteReauthPassword.trim()) {
+      Alert.alert('Password Required', 'Enter your password to continue deleting your account.');
+      return;
+    }
+
+    try {
+      setIsReauthenticatingDelete(true);
+      const result = await deleteCurrentUserAccount({ password: deleteReauthPassword });
+
+      if (result.status === 'requires-recent-login') {
+        Alert.alert(
+          'Re-authentication Needed',
+          'Your session is still not recent enough. Please sign out, sign back in, then try again.'
+        );
+        return;
+      }
+
+      setShowDeleteReauthModal(false);
+      setDeleteReauthPassword('');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to verify your password right now.';
+      Alert.alert('Delete Account Error', message);
+    } finally {
+      setIsReauthenticatingDelete(false);
+    }
+  }
+
+  const isBusy = isSaving || isDeletingAccount || isReauthenticatingDelete;
 
   if (!currentUser && !isLoading) {
     return (
@@ -710,16 +797,86 @@ export default function ProfileScreen() {
         <ThemedText style={styles.sectionLabel}>Account actions</ThemedText>
         <ThemedText type="subtitle">Manage your session</ThemedText>
         <Pressable
-          disabled={isSaving}
+          disabled={isBusy}
           onPress={handleSignOut}
-          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isSaving ? 0.6 : 1 }]}>
-          {isSaving ? (
+          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isBusy ? 0.6 : 1 }] }>
+          {isBusy ? (
             <ActivityIndicator color={palette.text} />
           ) : (
             <ThemedText type="defaultSemiBold">Sign Out</ThemedText>
           )}
         </Pressable>
+        <Pressable
+          disabled={isBusy}
+          onPress={confirmDeleteAccount}
+          style={[
+            styles.destructiveButton,
+            {
+              borderColor: palette.tint,
+              opacity: isBusy ? 0.6 : 1,
+            },
+          ]}>
+          {isDeletingAccount ? (
+            <ActivityIndicator color={palette.tint} />
+          ) : (
+            <ThemedText style={[styles.destructiveButtonText, { color: palette.tint }]}>
+              Delete Account
+            </ThemedText>
+          )}
+        </Pressable>
       </ThemedView>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={closeDeleteReauthModal}
+        transparent
+        visible={showDeleteReauthModal}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+            <ThemedText type="subtitle">Confirm with Password</ThemedText>
+            <ThemedText style={styles.mutedText}>
+              For security, please re-enter your password for {deleteReauthEmail || 'your account'}.
+            </ThemedText>
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!isReauthenticatingDelete}
+              onChangeText={setDeleteReauthPassword}
+              placeholder="Password"
+              placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+              secureTextEntry
+              style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
+              value={deleteReauthPassword}
+            />
+            <View style={styles.modalActions}>
+              <Pressable
+                disabled={isReauthenticatingDelete}
+                onPress={closeDeleteReauthModal}
+                style={[
+                  styles.modalButton,
+                  { borderColor: palette.outline, opacity: isReauthenticatingDelete ? 0.6 : 1 },
+                ]}>
+                <ThemedText type="defaultSemiBold">Cancel</ThemedText>
+              </Pressable>
+              <Pressable
+                disabled={isReauthenticatingDelete}
+                onPress={handleDeleteWithReauthPassword}
+                style={[
+                  styles.modalButton,
+                  { borderColor: palette.tint, opacity: isReauthenticatingDelete ? 0.6 : 1 },
+                ]}>
+                {isReauthenticatingDelete ? (
+                  <ActivityIndicator color={palette.tint} />
+                ) : (
+                  <ThemedText style={{ color: palette.tint }} type="defaultSemiBold">
+                    Delete Account
+                  </ThemedText>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -825,6 +982,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
+  destructiveButton: {
+    alignSelf: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 38,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  destructiveButtonText: {
+    fontSize: 13,
+    letterSpacing: 0.2,
+  },
   inlineButton: {
     alignItems: 'center',
     borderRadius: 14,
@@ -913,5 +1083,34 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 54,
     paddingHorizontal: 16,
+  },
+  modalBackdrop: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    flex: 1,
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 12,
+    maxWidth: 420,
+    padding: 18,
+    width: '100%',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'flex-end',
+  },
+  modalButton: {
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 42,
+    minWidth: 128,
+    paddingHorizontal: 12,
   },
 });
