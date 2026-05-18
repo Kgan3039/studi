@@ -1,8 +1,10 @@
-import { useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,16 +15,76 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { formatTimeLabel, TimeDropdown } from '@/components/time-dropdown';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import { createSession, getLocations, getUserProfile, type StudyLocation } from '@/lib/firestore';
 import {
   MAX_DAYS_IN_FUTURE,
-  validateDateOnly,
   validateSessionSchedule,
 } from '@/lib/session-schedule';
 import type { User } from 'firebase/auth';
+
+const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(date: Date, monthOffset: number) {
+  return new Date(date.getFullYear(), date.getMonth() + monthOffset, 1);
+}
+
+function toIsoDate(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function buildMonthGrid(monthStart: Date) {
+  const firstDayOfMonth = startOfMonth(monthStart);
+  const gridStart = new Date(firstDayOfMonth);
+  gridStart.setDate(firstDayOfMonth.getDate() - firstDayOfMonth.getDay());
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const cellDate = new Date(gridStart);
+    cellDate.setDate(gridStart.getDate() + index);
+
+    return {
+      inCurrentMonth: cellDate.getMonth() === monthStart.getMonth(),
+      isoDate: toIsoDate(cellDate),
+      label: cellDate.getDate().toString(),
+    };
+  });
+}
+
+function formatMonthLabel(date: Date) {
+  return date.toLocaleDateString('en-US', {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function formatDateLabel(date: string) {
+  return new Date(`${date}T12:00:00`).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    weekday: 'short',
+  });
+}
+
+function isPastCalendarDate(isoDate: string) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const parsedDate = new Date(`${isoDate}T12:00:00`);
+  return parsedDate < today;
+}
+
+function isSessionStartInPast(date: string, time: string) {
+  return new Date(`${date}T${time}:00`) <= new Date();
+}
 
 export default function CreateSessionScreen() {
   const { classId: requestedClassId } = useLocalSearchParams<{ classId?: string }>();
@@ -35,8 +97,8 @@ export default function CreateSessionScreen() {
   const [locationQuery, setLocationQuery] = useState('');
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedLocationId, setSelectedLocationId] = useState('');
-  const [title, setTitle] = useState('');
   const [sessionDate, setSessionDate] = useState('');
+  const [selectedCalendarMonth, setSelectedCalendarMonth] = useState(() => startOfMonth(new Date()));
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [status, setStatus] = useState('Sign in to create a study session.');
@@ -45,7 +107,6 @@ export default function CreateSessionScreen() {
   );
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [dateError, setDateError] = useState<string | null>(null);
   const filteredLocations = useMemo(() => {
     const normalizedQuery = locationQuery.trim().toLowerCase();
 
@@ -59,13 +120,18 @@ export default function CreateSessionScreen() {
         location.building,
         location.campusArea,
         location.notes,
-        ...location.tags,
+        ...(Array.isArray(location.tags) ? location.tags : []),
       ]
         .join(' ')
         .toLowerCase()
         .includes(normalizedQuery)
     );
   }, [locationQuery, locations]);
+  const calendarDays = useMemo(() => buildMonthGrid(selectedCalendarMonth), [selectedCalendarMonth]);
+  const canGoToPreviousMonth = useMemo(() => {
+    const currentMonthStart = startOfMonth(new Date());
+    return selectedCalendarMonth > currentMonthStart;
+  }, [selectedCalendarMonth]);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -75,54 +141,71 @@ export default function CreateSessionScreen() {
     return unsubscribe;
   }, []);
 
-  useEffect(() => {
-    async function loadSetupData() {
-      if (!currentUser) {
-        setClasses([]);
-        setLocations([]);
-        setStatus('Sign in to create a study session.');
-        setIsLoading(false);
-        return;
-      }
-
-      try {
-        setIsLoading(true);
-        const [profile, loadedLocations] = await Promise.all([
-          getUserProfile(currentUser.uid),
-          getLocations(),
-        ]);
-
-        const profileClasses = profile?.classes ?? [];
-        const normalizedRequestedClass = requestedClassId?.trim().toUpperCase() ?? '';
-        setClasses(profileClasses);
-        setLocations(loadedLocations);
-        setSelectedClass(
-          normalizedRequestedClass && profileClasses.includes(normalizedRequestedClass)
-            ? normalizedRequestedClass
-            : profileClasses[0] ?? ''
-        );
-        setSelectedLocationId(loadedLocations[0]?.locationId ?? '');
-        setTitle(
-          normalizedRequestedClass && profileClasses.includes(normalizedRequestedClass)
-            ? `${normalizedRequestedClass} Study Session`
-            : ''
-        );
-        setStatus(
-          profileClasses.length > 0 && loadedLocations.length > 0
-            ? 'Pick a class, location, and time to create a session.'
-            : 'Add classes on your Profile and make sure study spots are available before creating sessions.'
-        );
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'Unable to load session setup right now.';
-        setStatus(message);
-      } finally {
-        setIsLoading(false);
-      }
+  const loadSetupData = useCallback(async () => {
+    if (!currentUser) {
+      setClasses([]);
+      setLocations([]);
+      setStatus('Sign in to create a study session.');
+      setIsLoading(false);
+      return;
     }
 
-    loadSetupData();
+    try {
+      setIsLoading(true);
+      const [profile, loadedLocations] = await Promise.all([
+        getUserProfile(currentUser.uid),
+        getLocations(),
+      ]);
+
+      const profileClasses = [
+        ...new Set(
+          (profile?.classes ?? [])
+            .map((classCode) => classCode.trim().toUpperCase())
+            .filter(Boolean)
+        ),
+      ];
+      const normalizedRequestedClass = requestedClassId?.trim().toUpperCase() ?? '';
+      const defaultClass =
+        normalizedRequestedClass && profileClasses.includes(normalizedRequestedClass)
+          ? normalizedRequestedClass
+          : profileClasses[0] ?? '';
+
+      setClasses(profileClasses);
+      setLocations(loadedLocations);
+      setSelectedClass((currentSelectedClass) =>
+        currentSelectedClass && profileClasses.includes(currentSelectedClass)
+          ? currentSelectedClass
+          : defaultClass
+      );
+      setSelectedLocationId((currentSelectedLocationId) =>
+        currentSelectedLocationId &&
+        loadedLocations.some((location) => location.locationId === currentSelectedLocationId)
+          ? currentSelectedLocationId
+          : loadedLocations[0]?.locationId ?? ''
+      );
+      setStatus(
+        profileClasses.length > 0 && loadedLocations.length > 0
+          ? 'Pick a class, location, and time to create a session.'
+          : 'Add classes on your Profile and make sure study spots are available before creating sessions.'
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to load session setup right now.';
+      setStatus(message);
+    } finally {
+      setIsLoading(false);
+    }
   }, [currentUser, requestedClassId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadSetupData();
+    }, [loadSetupData])
+  );
+
+  useEffect(() => {
+    loadSetupData();
+  }, [loadSetupData]);
 
   async function handleCreateSession() {
     if (!currentUser) {
@@ -130,8 +213,18 @@ export default function CreateSessionScreen() {
       return;
     }
 
-    if (!selectedClass || !selectedLocationId || !title.trim() || !sessionDate || !startTime || !endTime) {
-      Alert.alert('Missing Info', 'Fill out class, location, title, date, and start/end times.');
+    if (!selectedClass || !selectedLocationId || !sessionDate || !startTime || !endTime) {
+      Alert.alert('Missing Info', 'Fill out class, location, date, and start/end times.');
+      return;
+    }
+
+    if (endTime <= startTime) {
+      Alert.alert('Time Error', 'Choose an end time later than the start time.');
+      return;
+    }
+
+    if (isSessionStartInPast(sessionDate, startTime)) {
+      Alert.alert('Date Error', 'Choose a future date and start time for your session.');
       return;
     }
 
@@ -150,18 +243,16 @@ export default function CreateSessionScreen() {
         classId: selectedClass,
         hostId: currentUser.uid,
         locationId: selectedLocationId,
-        title: title.trim(),
+        title: `${selectedClass} Study Session`,
         startTime: validatedSchedule.startTimeIso,
         endTime: validatedSchedule.endTimeIso,
       });
 
       setStatus(`Session created successfully. Session ID: ${sessionId}`);
       setScheduleHint(`Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
-      setTitle('');
       setSessionDate('');
       setStartTime('');
       setEndTime('');
-      setDateError(null);
       Alert.alert('Session Created', `Study session created with ID ${sessionId}.`);
     } catch (error) {
       const message =
@@ -174,9 +265,17 @@ export default function CreateSessionScreen() {
   }
 
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+      style={[styles.screen, { backgroundColor: palette.background }]}>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        style={styles.screen}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: insets.bottom + 56, paddingTop: insets.top + 12 },
+        ]}>
       <ThemedView
         style={[
           styles.hero,
@@ -318,95 +417,108 @@ export default function CreateSessionScreen() {
           { backgroundColor: palette.surface, borderColor: palette.border },
         ]}>
         <ThemedText style={styles.sectionLabel}>Step 3</ThemedText>
-        <ThemedText type="subtitle">Session details</ThemedText>
-
-        <TextInput
-          onChangeText={setTitle}
-          placeholder="Session title"
-          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-          style={[
-            styles.input,
-            {
-              borderColor: palette.outline,
-              color: palette.text,
-            },
-          ]}
-          value={title}
-        />
-
-        <TextInput
-          autoCapitalize="none"
-          keyboardType="numbers-and-punctuation"
-          maxLength={10}
-          onChangeText={(value) => {
-            setSessionDate(value);
-            const error = validateDateOnly(value);
-            setDateError(error);
-            setScheduleHint(error || `Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
-          }}
-          placeholder="Date (YYYY-MM-DD)"
-          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-          style={[
-            styles.input,
-            {
-              borderColor: dateError ? '#ff6b6b' : palette.outline,
-              color: palette.text,
-            },
-          ]}
-          value={sessionDate}
-        />
-        <ThemedText style={styles.helperText}>
-          Use `YYYY-MM-DD`, like `2026-04-22`. {scheduleHint}
+        <ThemedText type="subtitle">Pick date and time</ThemedText>
+        <ThemedText style={styles.statusText}>
+          Studi will name the session from your selected class.
         </ThemedText>
-        {dateError && (
-          <ThemedText style={[styles.helperText, { color: '#ff6b6b' }]}>
-            {dateError}
-          </ThemedText>
-        )}
 
-        <View style={styles.timeRow}>
-          <TextInput
-            autoCapitalize="none"
-            keyboardType="numbers-and-punctuation"
-            maxLength={5}
-            onChangeText={(value) => {
-              setStartTime(value);
-              setScheduleHint(`Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
-            }}
-            placeholder="Start (HH:MM)"
-            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-            style={[
-              styles.input,
-              styles.flexInput,
-              {
-                borderColor: palette.outline,
-                color: palette.text,
-              },
-            ]}
-            value={startTime}
-          />
+        <View style={[styles.calendar, { borderColor: palette.outline }]}>
+          <View style={styles.calendarHeader}>
+            <Pressable
+              disabled={!canGoToPreviousMonth}
+              onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, -1))}
+              style={[
+                styles.monthButton,
+                {
+                  borderColor: palette.outline,
+                  opacity: canGoToPreviousMonth ? 1 : 0.35,
+                },
+              ]}>
+              <ThemedText type="defaultSemiBold">{'<'}</ThemedText>
+            </Pressable>
+            <ThemedText type="defaultSemiBold">{formatMonthLabel(selectedCalendarMonth)}</ThemedText>
+            <Pressable
+              onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, 1))}
+              style={[styles.monthButton, { borderColor: palette.outline }]}>
+              <ThemedText type="defaultSemiBold">{'>'}</ThemedText>
+            </Pressable>
+          </View>
 
-          <TextInput
-            autoCapitalize="none"
-            keyboardType="numbers-and-punctuation"
-            maxLength={5}
-            onChangeText={(value) => {
-              setEndTime(value);
-              setScheduleHint(`Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
-            }}
-            placeholder="End (HH:MM)"
-            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-            style={[
-              styles.input,
-              styles.flexInput,
-              {
-                borderColor: palette.outline,
-                color: palette.text,
-              },
-            ]}
-            value={endTime}
-          />
+          <View style={styles.weekdayRow}>
+            {CALENDAR_WEEKDAYS.map((weekday) => (
+              <ThemedText key={weekday} style={styles.weekday}>
+                {weekday}
+              </ThemedText>
+            ))}
+          </View>
+
+          <View style={styles.calendarGrid}>
+            {calendarDays.map((calendarDay) => {
+              const isSelected = sessionDate === calendarDay.isoDate;
+              const isPast = isPastCalendarDate(calendarDay.isoDate);
+
+              return (
+                <Pressable
+                  disabled={isPast}
+                  key={calendarDay.isoDate}
+                  onPress={() => {
+                    setSessionDate(calendarDay.isoDate);
+                    setScheduleHint(
+                      `Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`
+                    );
+                  }}
+                  style={[
+                    styles.dateCell,
+                    {
+                      backgroundColor: isSelected ? palette.tint : 'transparent',
+                      opacity: calendarDay.inCurrentMonth && !isPast ? 1 : 0.34,
+                    },
+                  ]}>
+                  <ThemedText
+                    type={isSelected ? 'defaultSemiBold' : 'default'}
+                    lightColor={isSelected ? '#ffffff' : undefined}
+                    darkColor={isSelected ? '#ffffff' : undefined}>
+                    {calendarDay.label}
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
+
+        <ThemedText type="defaultSemiBold">
+          Selected date: {sessionDate ? formatDateLabel(sessionDate) : 'Choose a date'}
+        </ThemedText>
+        <ThemedText style={styles.helperText}>{scheduleHint}</ThemedText>
+
+        <View style={styles.timeDropdownRow}>
+          <View style={styles.flexInput}>
+            <TimeDropdown
+              label="Start time"
+              onChange={(time) => {
+                setStartTime(time);
+                setEndTime((currentEndTime) =>
+                  currentEndTime && currentEndTime <= time ? '' : currentEndTime
+                );
+              }}
+              value={startTime}
+            />
+          </View>
+          <View style={styles.flexInput}>
+            <TimeDropdown
+              disabledOption={(time) => !!startTime && time <= startTime}
+              label="End time"
+              onChange={setEndTime}
+              value={endTime}
+            />
+          </View>
+        </View>
+
+        <ThemedText style={styles.statusText}>
+          {startTime && endTime
+            ? `Selected time: ${formatTimeLabel(startTime)}-${formatTimeLabel(endTime)}`
+            : 'Choose a start and end time.'}
+        </ThemedText>
 
         <Pressable
           disabled={isSaving || isLoading}
@@ -424,7 +536,8 @@ export default function CreateSessionScreen() {
           )}
         </Pressable>
       </ThemedView>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -500,8 +613,28 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 10,
   },
-  flexInput: {
-    flex: 1,
+  calendar: {
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 12,
+    padding: 14,
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: 8,
+  },
+  calendarHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  dateCell: {
+    alignItems: 'center',
+    borderRadius: 999,
+    height: 40,
+    justifyContent: 'center',
+    width: `${100 / 7}%`,
   },
   input: {
     borderRadius: 14,
@@ -527,8 +660,27 @@ const styles = StyleSheet.create({
     minHeight: 52,
     paddingHorizontal: 16,
   },
-  timeRow: {
+  monthButton: {
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  flexInput: {
+    flex: 1,
+  },
+  timeDropdownRow: {
     flexDirection: 'row',
     gap: 10,
+  },
+  weekday: {
+    opacity: 0.65,
+    textAlign: 'center',
+    width: `${100 / 7}%`,
+  },
+  weekdayRow: {
+    flexDirection: 'row',
   },
 });

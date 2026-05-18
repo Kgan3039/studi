@@ -73,6 +73,22 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
     tags: ['business', 'modern', 'group-study', 'south-campus'],
   },
   {
+    locationId: 'morgridge-hall',
+    name: 'Morgridge Hall',
+    building: 'Morgridge Hall',
+    campusArea: 'South Campus',
+    notes: 'Modern academic building with collaborative study areas and a convenient south-campus location.',
+    tags: ['modern', 'south-campus', 'collaboration', 'study-rooms'],
+  },
+  {
+    locationId: 'college-library-cafe',
+    name: 'College Library Cafe',
+    building: 'Helen C. White Hall',
+    campusArea: 'Central Campus',
+    notes: 'Casual meetup-friendly area near College Library with easy access to Library Mall.',
+    tags: ['central', 'casual', 'coffee', 'meetup'],
+  },
+  {
     locationId: 'merit-library',
     name: 'MERIT Library',
     building: 'Teacher Education Building',
