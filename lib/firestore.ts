@@ -1,22 +1,20 @@
 import {
-    addDoc,
-    arrayRemove,
-    arrayUnion,
-    collection,
-    deleteDoc,
-    doc,
-    getDoc,
-    getDocs,
-    onSnapshot,
-    orderBy,
-    query,
-    serverTimestamp,
-    setDoc,
-    Timestamp,
-    updateDoc,
-    where,
-    writeBatch,
-    type DocumentReference,
+  addDoc,
+  arrayRemove,
+  arrayUnion,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  Timestamp,
+  updateDoc,
+  where
 } from "firebase/firestore";
 
 import { UW_STUDY_LOCATIONS } from "@/data/uw-study-locations";
@@ -157,27 +155,41 @@ function withBuiltInLocationFallback(location: StudyLocation): StudyLocation {
   const fallback = findStudyLocationById(location.locationId);
 
   if (!fallback) {
-    return location;
+    return {
+      ...location,
+      tags: location.tags ?? [],
+    };
   }
 
   return {
     ...fallback,
     ...location,
+    tags: location.tags ?? fallback.tags,
   };
 }
 
-async function deleteDocumentRefs(documentRefs: DocumentReference[]) {
-  const batchSize = 400;
+function normalizeStudyLocation(
+  locationId: string,
+  location: Partial<Omit<StudyLocation, "locationId">>
+): StudyLocation {
+  const fallback = findStudyLocationById(locationId);
 
-  for (let index = 0; index < documentRefs.length; index += batchSize) {
-    const batch = writeBatch(db);
+  return {
+    building: location.building ?? fallback?.building ?? "UW-Madison",
+    campusArea: location.campusArea ?? fallback?.campusArea ?? "Campus",
+    locationId,
+    name: location.name ?? fallback?.name ?? locationId,
+    notes: location.notes ?? fallback?.notes ?? "Study location on or near campus.",
+    tags: Array.isArray(location.tags) ? location.tags : fallback?.tags ?? [],
+  };
+}
 
-    for (const documentRef of documentRefs.slice(index, index + batchSize)) {
-      batch.delete(documentRef);
-    }
-
-    await batch.commit();
-  }
+function getBuiltInStudyLocations() {
+  return UW_STUDY_LOCATIONS.map((location) =>
+    normalizeStudyLocation(location.locationId, location)
+  ).sort((firstLocation, secondLocation) =>
+    firstLocation.name.localeCompare(secondLocation.name)
+  );
 }
 
 export async function createOrUpdateUserProfile(
@@ -369,30 +381,37 @@ export async function deleteUserAccountData(userId: string) {
 }
 
 export async function getLocations() {
-  const locationsQuery = query(
-    collection(db, COLLECTIONS.locations),
-    orderBy("name")
-  );
-  const snapshot = await getDocs(locationsQuery);
+  try {
+    const locationsQuery = query(
+      collection(db, COLLECTIONS.locations),
+      orderBy("name")
+    );
+    const snapshot = await getDocs(locationsQuery);
 
-  const storedLocations = snapshot.docs.map((locationDoc) => ({
-    locationId: locationDoc.id,
-    ...(locationDoc.data() as Omit<StudyLocation, "locationId">),
-  }));
+    const storedLocations = snapshot.docs.map((locationDoc) =>
+      normalizeStudyLocation(
+        locationDoc.id,
+        locationDoc.data() as Partial<Omit<StudyLocation, "locationId">>
+      )
+    );
 
-  const mergedLocations = new Map<string, StudyLocation>();
+    const mergedLocations = new Map<string, StudyLocation>();
 
-  for (const location of UW_STUDY_LOCATIONS) {
-    mergedLocations.set(location.locationId, location);
+    for (const location of getBuiltInStudyLocations()) {
+      mergedLocations.set(location.locationId, location);
+    }
+
+    for (const location of storedLocations) {
+      mergedLocations.set(location.locationId, withBuiltInLocationFallback(location));
+    }
+
+    return [...mergedLocations.values()].sort((firstLocation, secondLocation) =>
+      firstLocation.name.localeCompare(secondLocation.name)
+    );
+  } catch (error) {
+    console.warn("Unable to load saved locations, using built-in UW study spots.", error);
+    return getBuiltInStudyLocations();
   }
-
-  for (const location of storedLocations) {
-    mergedLocations.set(location.locationId, withBuiltInLocationFallback(location));
-  }
-
-  return [...mergedLocations.values()].sort((firstLocation, secondLocation) =>
-    firstLocation.name.localeCompare(secondLocation.name)
-  );
 }
 
 export async function getSessions() {

@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { TimeDropdown } from '@/components/time-dropdown';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
@@ -290,8 +291,8 @@ export default function ProfileScreen() {
     }
 
     if (startMinutes === null || endMinutes === null) {
-      setAvailabilityStatus('Enter start and end times in HH:MM format.');
-      Alert.alert('Availability Error', 'Use HH:MM for both start and end time.');
+      setAvailabilityStatus('Choose both a start and end time.');
+      Alert.alert('Availability Error', 'Choose both a start and end time.');
       return;
     }
 
@@ -665,7 +666,7 @@ export default function ProfileScreen() {
         <ThemedText type="subtitle">Choose real days and time blocks</ThemedText>
         <ThemedText style={styles.statusCopy}>{availabilityStatus}</ThemedText>
         <ThemedText style={styles.mutedText}>
-          Pick a real day from the calendar, then add a start and end time in `HH:MM` format.
+          Pick a real day from the calendar, then choose a start and end time.
           Studi will block dates in the past and time slots that have already passed.
         </ThemedText>
         <View style={[styles.calendarCard, { borderColor: palette.outline, backgroundColor: palette.background }]}>
@@ -735,24 +736,28 @@ export default function ProfileScreen() {
           Selected day: {formatDateLabel(selectedAvailabilityDate)}
         </ThemedText>
         <View style={styles.inlineRow}>
-          <TextInput
-            autoCapitalize="none"
-            editable={!isSaving}
-            onChangeText={setAvailabilityStartTime}
-            placeholder="Start (HH:MM)"
-            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-            style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
-            value={availabilityStartTime}
-          />
-          <TextInput
-            autoCapitalize="none"
-            editable={!isSaving}
-            onChangeText={setAvailabilityEndTime}
-            placeholder="End (HH:MM)"
-            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-            style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
-            value={availabilityEndTime}
-          />
+          <View style={styles.flexInput}>
+            <TimeDropdown
+              disabled={isSaving}
+              label="Start time"
+              onChange={(time) => {
+                setAvailabilityStartTime(time);
+                setAvailabilityEndTime((currentEndTime) =>
+                  currentEndTime && currentEndTime <= time ? '' : currentEndTime
+                );
+              }}
+              value={availabilityStartTime}
+            />
+          </View>
+          <View style={styles.flexInput}>
+            <TimeDropdown
+              disabled={isSaving}
+              disabledOption={(time) => !!availabilityStartTime && time <= availabilityStartTime}
+              label="End time"
+              onChange={setAvailabilityEndTime}
+              value={availabilityEndTime}
+            />
+          </View>
         </View>
         <Pressable
           disabled={isSaving}
