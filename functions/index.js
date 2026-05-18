@@ -91,8 +91,18 @@ exports.deleteUserAccount = functions.https.onCall(async (data, context) => {
     // 6) Delete any locationRatings/user-owned docs already handled; delete user document
     await db.collection('users').doc(uidToDelete).delete().catch(() => null);
 
-    // 7) Finally delete the Auth user
-    await admin.auth().deleteUser(uidToDelete);
+    // 7) Finally delete the Auth user. If the Auth user record is already gone
+    // (for example due to an earlier partial deletion), treat that as success.
+    try {
+      await admin.auth().deleteUser(uidToDelete);
+    } catch (authErr) {
+      // admin.auth().deleteUser throws an Error-like object with `code` when user is missing
+      if (authErr && (authErr.code === 'auth/user-not-found' || authErr.code === 'USER_NOT_FOUND')) {
+        console.warn(`Auth user ${uidToDelete} not found at delete time; continuing.`);
+      } else {
+        throw authErr;
+      }
+    }
 
     return { success: true };
   } catch (err) {

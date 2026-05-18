@@ -14,14 +14,15 @@ import {
   setDoc,
   Timestamp,
   updateDoc,
-  where
+  where,
+  writeBatch,
+  type DocumentReference,
 } from "firebase/firestore";
 
 import { UW_STUDY_LOCATIONS } from "@/data/uw-study-locations";
 import { findStudyLocationById } from "@/lib/catalog";
 import { db } from "../firebaseConfig";
 import { validateSessionSchedule } from "./session-schedule";
-
 export const COLLECTIONS = {
   conversations: "conversations",
   locationRatings: "locationRatings",
@@ -327,6 +328,20 @@ export async function updateUserDisplayName(userId: string, displayName: string)
   });
 }
 
+async function deleteDocumentRefs(documentRefs: DocumentReference[]) {
+  const batchSize = 400;
+
+  for (let index = 0; index < documentRefs.length; index += batchSize) {
+    const batch = writeBatch(db);
+
+    for (const documentRef of documentRefs.slice(index, index + batchSize)) {
+      batch.delete(documentRef);
+    }
+
+    await batch.commit();
+  }
+}
+
 export async function deleteUserAccountData(userId: string) {
   const locationRatingsSnapshot = await getDocs(
     query(collection(db, COLLECTIONS.locationRatings), where("userId", "==", userId))
@@ -338,10 +353,20 @@ export async function deleteUserAccountData(userId: string) {
   );
   await deleteDocumentRefs(userBlocksSnapshot.docs.map((blockDoc) => blockDoc.ref));
 
+  const blockedByOthersSnapshot = await getDocs(
+    query(collection(db, COLLECTIONS.userBlocks), where("blockedUserId", "==", userId))
+  );
+  await deleteDocumentRefs(blockedByOthersSnapshot.docs.map((blockDoc) => blockDoc.ref));
+
   const reportsSnapshot = await getDocs(
     query(collection(db, COLLECTIONS.reports), where("reporterUserId", "==", userId))
   );
   await deleteDocumentRefs(reportsSnapshot.docs.map((reportDoc) => reportDoc.ref));
+
+  const reportedByOthersSnapshot = await getDocs(
+    query(collection(db, COLLECTIONS.reports), where("reportedUserId", "==", userId))
+  );
+  await deleteDocumentRefs(reportedByOthersSnapshot.docs.map((reportDoc) => reportDoc.ref));
 
   const hostedSessionsSnapshot = await getDocs(
     query(collection(db, COLLECTIONS.sessions), where("hostId", "==", userId))

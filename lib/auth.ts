@@ -1,14 +1,14 @@
 import {
-    createUserWithEmailAndPassword,
-    deleteUser,
-    EmailAuthProvider,
-    onAuthStateChanged,
-    reauthenticateWithCredential,
-    signInWithEmailAndPassword,
-    signOut,
-    updateProfile,
-    type AuthError,
-    type User,
+  createUserWithEmailAndPassword,
+  deleteUser,
+  EmailAuthProvider,
+  onAuthStateChanged,
+  reauthenticateWithCredential,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile,
+  type AuthError,
+  type User
 } from "firebase/auth";
 
 import { auth } from "../firebaseConfig";
@@ -277,6 +277,9 @@ export async function deleteCurrentUserAccount(
   const userId = currentUser.uid;
 
   try {
+    // Client-side deletion path for the free Firebase plan.
+    // Firestore rules must allow the owner to remove their own docs and the
+    // related session/conversation/report data touched by the cleanup.
     await deleteUserAccountData(userId);
     await deleteUser(currentUser);
     return { status: "deleted" };
@@ -294,6 +297,5 @@ export async function deleteCurrentUserAccount(
 }
 
 // `deleteCurrentUserAccount` performs client-side cleanup and deletes the Auth user.
-// For large-scale or admin-only deletions, prefer calling a server-side Admin function
-// (Cloud Function) which can atomically remove related Firestore documents without
-// relaxing client-side security rules.
+// This is the no-Blaze path: Firestore rules must explicitly allow the owner-side
+// deletes/updates needed by `deleteUserAccountData`.
