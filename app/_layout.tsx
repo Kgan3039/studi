@@ -23,6 +23,7 @@ export default function RootLayout() {
         <Stack.Screen name="matches" options={{ title: 'Matched Students' }} />
         <Stack.Screen name="report-user" options={{ title: 'Report User' }} />
         <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />
+        <Stack.Screen name="rate-location" options={{ title: 'Rate This Spot' }} />
         <Stack.Screen name="sessions" options={{ title: 'Available Sessions' }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>

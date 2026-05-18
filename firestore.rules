@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Signed-in helper
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Users can read any profile; only write their own
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Study sessions: any signed-in user can read/create; only host can update/delete
+    match /sessions/{sessionId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn()
+        && request.auth.uid == resource.data.hostId;
+    }
+
+    // Conversations: only participants can read/write
+    match /conversations/{conversationId} {
+      allow read, write: if isSignedIn()
+        && request.auth.uid in resource.data.participantIds;
+
+      // Allow creating a new conversation if the current user is in the participant list
+      allow create: if isSignedIn()
+        && request.auth.uid in request.resource.data.participantIds;
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds;
+        allow create: if isSignedIn()
+          && request.auth.uid == request.resource.data.senderId
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds;
+      }
+    }
+
+    // Study locations (custom): any signed-in user can read; only admins write (manage via console)
+    match /locations/{locationId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Location ratings: any signed-in user can read; users can only write their own rating
+    match /locationRatings/{ratingId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid;
+    }
+
+    // User blocks: users can read/write their own block records
+    match /userBlocks/{blockId} {
+      allow read: if isSignedIn()
+        && (resource.data.blockerUserId == request.auth.uid
+          || resource.data.blockedUserId == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.blockerUserId == request.auth.uid;
+      allow delete: if isSignedIn()
+        && resource.data.blockerUserId == request.auth.uid;
+    }
+
+    // Reports: signed-in users can file a report; no reads (admin-only via console)
+    match /reports/{reportId} {
+      allow create: if isSignedIn()
+        && request.resource.data.reporterUserId == request.auth.uid;
+      allow read, update, delete: if false;
+    }
+  }
+}

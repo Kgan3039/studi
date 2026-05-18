@@ -20,11 +20,11 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import { createSession, getLocations, getUserProfile, type StudyLocation } from '@/lib/firestore';
+import {
+  MAX_DAYS_IN_FUTURE,
+  validateSessionSchedule,
+} from '@/lib/session-schedule';
 import type { User } from 'firebase/auth';
-
-function combineDateAndTime(date: string, time: string) {
-  return new Date(`${date}T${time}:00`).toISOString();
-}
 
 const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
@@ -102,6 +102,9 @@ export default function CreateSessionScreen() {
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [status, setStatus] = useState('Sign in to create a study session.');
+  const [scheduleHint, setScheduleHint] = useState(
+    `Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const filteredLocations = useMemo(() => {
@@ -225,6 +228,15 @@ export default function CreateSessionScreen() {
       return;
     }
 
+    const validatedSchedule = validateSessionSchedule(sessionDate, startTime, endTime);
+
+    if ('error' in validatedSchedule) {
+      setScheduleHint(validatedSchedule.error);
+      setStatus(validatedSchedule.error);
+      Alert.alert('Invalid Session Time', validatedSchedule.error);
+      return;
+    }
+
     try {
       setIsSaving(true);
       const sessionId = await createSession({
@@ -232,11 +244,12 @@ export default function CreateSessionScreen() {
         hostId: currentUser.uid,
         locationId: selectedLocationId,
         title: `${selectedClass} Study Session`,
-        startTime: combineDateAndTime(sessionDate, startTime),
-        endTime: combineDateAndTime(sessionDate, endTime),
+        startTime: validatedSchedule.startTimeIso,
+        endTime: validatedSchedule.endTimeIso,
       });
 
       setStatus(`Session created successfully. Session ID: ${sessionId}`);
+      setScheduleHint(`Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
       setSessionDate('');
       setStartTime('');
       setEndTime('');
@@ -448,7 +461,12 @@ export default function CreateSessionScreen() {
                 <Pressable
                   disabled={isPast}
                   key={calendarDay.isoDate}
-                  onPress={() => setSessionDate(calendarDay.isoDate)}
+                  onPress={() => {
+                    setSessionDate(calendarDay.isoDate);
+                    setScheduleHint(
+                      `Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`
+                    );
+                  }}
                   style={[
                     styles.dateCell,
                     {
@@ -471,6 +489,7 @@ export default function CreateSessionScreen() {
         <ThemedText type="defaultSemiBold">
           Selected date: {sessionDate ? formatDateLabel(sessionDate) : 'Choose a date'}
         </ThemedText>
+        <ThemedText style={styles.helperText}>{scheduleHint}</ThemedText>
 
         <View style={styles.timeDropdownRow}>
           <View style={styles.flexInput}>
@@ -576,6 +595,11 @@ const styles = StyleSheet.create({
   },
   statusText: {
     opacity: 0.82,
+  },
+  helperText: {
+    fontSize: 13,
+    lineHeight: 18,
+    opacity: 0.72,
   },
   chip: {
     borderRadius: 999,
