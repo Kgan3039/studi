@@ -183,45 +183,11 @@ function hasRecentLogin(user: User) {
 }
 
 async function revokeAppleAccessTokenWithRestApi(options: DeleteAccountOptions) {
-  const token = options.appleRefreshToken ?? options.appleAccessToken;
-
-  if (!token) {
-    throw new Error("Apple re-authentication is required before deleting your account.");
-  }
-
-  const clientId = process.env.EXPO_PUBLIC_APPLE_CLIENT_ID;
-  const clientSecret = process.env.EXPO_PUBLIC_APPLE_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
-    throw new Error(
-      "Missing Apple revoke configuration. Set EXPO_PUBLIC_APPLE_CLIENT_ID and EXPO_PUBLIC_APPLE_CLIENT_SECRET."
-    );
-  }
-
-  const body = new URLSearchParams({
-    client_id: clientId,
-    client_secret: clientSecret,
-    token,
-    token_type_hint: options.appleRefreshToken ? "refresh_token" : "access_token",
-  });
-
-  const response = await fetch("https://appleid.apple.com/auth/revoke", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: body.toString(),
-  });
-
-  if (!response.ok) {
-    const responseText = await response.text();
-    throw new Error(responseText || "Unable to revoke Apple authorization token.");
-  }
+  // Client-side Apple token revocation is intentionally not implemented here.
+  // Apple revoke requires a server-side client secret, which should not be bundled
+  // into the app. The delete flow still deletes the Firebase account itself.
+  void options;
 }
-
-// NOTE: `revokeAppleAccessTokenWithRestApi` calls Apple's token revoke endpoint.
-// It requires `EXPO_PUBLIC_APPLE_CLIENT_ID` and `EXPO_PUBLIC_APPLE_CLIENT_SECRET` to be
-// present in the environment. Tokens should be stored securely if you need to revoke them.
 
 async function reauthenticateForDelete(user: User, method: DeleteAccountMethod, options: DeleteAccountOptions) {
   if (method === "password") {
@@ -239,7 +205,6 @@ async function reauthenticateForDelete(user: User, method: DeleteAccountMethod, 
   }
 
   if (method === "apple") {
-    await revokeAppleAccessTokenWithRestApi(options);
     return;
   }
 
@@ -268,10 +233,6 @@ export async function deleteCurrentUserAccount(
     }
 
     await reauthenticateForDelete(currentUser, method, options);
-  }
-
-  if (method === "apple") {
-    await revokeAppleAccessTokenWithRestApi(options);
   }
 
   const userId = currentUser.uid;

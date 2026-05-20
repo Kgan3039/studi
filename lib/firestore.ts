@@ -353,21 +353,6 @@ export async function deleteUserAccountData(userId: string) {
   );
   await deleteDocumentRefs(userBlocksSnapshot.docs.map((blockDoc) => blockDoc.ref));
 
-  const blockedByOthersSnapshot = await getDocs(
-    query(collection(db, COLLECTIONS.userBlocks), where("blockedUserId", "==", userId))
-  );
-  await deleteDocumentRefs(blockedByOthersSnapshot.docs.map((blockDoc) => blockDoc.ref));
-
-  const reportsSnapshot = await getDocs(
-    query(collection(db, COLLECTIONS.reports), where("reporterUserId", "==", userId))
-  );
-  await deleteDocumentRefs(reportsSnapshot.docs.map((reportDoc) => reportDoc.ref));
-
-  const reportedByOthersSnapshot = await getDocs(
-    query(collection(db, COLLECTIONS.reports), where("reportedUserId", "==", userId))
-  );
-  await deleteDocumentRefs(reportedByOthersSnapshot.docs.map((reportDoc) => reportDoc.ref));
-
   const hostedSessionsSnapshot = await getDocs(
     query(collection(db, COLLECTIONS.sessions), where("hostId", "==", userId))
   );
@@ -392,15 +377,14 @@ export async function deleteUserAccountData(userId: string) {
     query(collection(db, COLLECTIONS.conversations), where("participantIds", "array-contains", userId))
   );
 
-  for (const conversationDoc of conversationsSnapshot.docs) {
-    const messagesSnapshot = await getDocs(
-      collection(db, COLLECTIONS.conversations, conversationDoc.id, "messages")
-    );
-
-    await deleteDocumentRefs(messagesSnapshot.docs.map((messageDoc) => messageDoc.ref));
-  }
-
-  await deleteDocumentRefs(conversationsSnapshot.docs.map((conversationDoc) => conversationDoc.ref));
+  await Promise.all(
+    conversationsSnapshot.docs.map((conversationDoc) =>
+      updateDoc(conversationDoc.ref, {
+        participantIds: arrayRemove(userId),
+        updatedAt: serverTimestamp(),
+      })
+    )
+  );
 
   await deleteDoc(doc(db, COLLECTIONS.users, userId));
 }

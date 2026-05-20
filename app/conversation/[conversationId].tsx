@@ -131,7 +131,7 @@ export default function ConversationScreen() {
       <ThemedView style={[styles.hero, { backgroundColor: palette.hero }]}>
         <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Direct chat</ThemedText>
         <ThemedText type="title" style={styles.heroTitle}>
-          {otherUserName || 'Conversation'}
+          {otherUserName || 'Deleted User'}
         </ThemedText>
         <ThemedText style={styles.heroText}>
           Use this space to coordinate times, places, and session details with another student.

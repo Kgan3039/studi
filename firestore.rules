@@ -38,27 +38,23 @@ service cloud.firestore {
       allow delete: if isSignedIn() && request.auth.uid == resource.data.hostId;
     }
 
-    // Conversations: only participants can read/create/update/delete conversation docs.
+    // Conversations: only participants can read/create/update conversation docs.
     match /conversations/{conversationId} {
       allow read: if isSignedIn()
         && request.auth.uid in resource.data.participantIds;
       allow create: if isSignedIn()
         && request.auth.uid in request.resource.data.participantIds;
-      allow update, delete: if isSignedIn()
+      allow update: if isSignedIn()
         && request.auth.uid in resource.data.participantIds;
 
-      // Messages: participants may read/create; participants OR message sender may delete messages.
+      // Messages: participants may read/create; only the sender may delete their own messages.
       match /messages/{messageId} {
         allow read: if isSignedIn()
           && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds;
         allow create: if isSignedIn()
           && request.auth.uid == request.resource.data.senderId
           && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds;
-        allow delete: if isSignedIn() &&
-          (
-            request.auth.uid == resource.data.senderId
-            || request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds
-          );
+        allow delete: if isSignedIn() && request.auth.uid == resource.data.senderId;
       }
     }
 
@@ -75,23 +71,20 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
-    // User blocks: blocker or blocked may read; blocker may create; blocker or blocked may delete their relevant record
+    // User blocks: blocker or blocked may read; blocker may create; only the blocker may delete
     match /userBlocks/{blockId} {
       allow read: if isSignedIn() &&
         (resource.data.blockerUserId == request.auth.uid || resource.data.blockedUserId == request.auth.uid);
       allow create: if isSignedIn() && request.resource.data.blockerUserId == request.auth.uid;
-      allow delete: if isSignedIn() &&
-        (resource.data.blockerUserId == request.auth.uid || resource.data.blockedUserId == request.auth.uid);
+      allow delete: if isSignedIn() && resource.data.blockerUserId == request.auth.uid;
     }
 
-    // Reports: allow creation by reporter; allow the reporter or reported user to read/delete their relevant reports.
-    // This lets the client-side account cleanup query and remove reports during delete-account.
+    // Reports: allow creation by reporter; only the reporter may read/delete their reports.
+    // Reports about a user are retained for moderation safety.
     match /reports/{reportId} {
       allow create: if isSignedIn() && request.resource.data.reporterUserId == request.auth.uid;
-      allow read: if isSignedIn() &&
-        (resource.data.reporterUserId == request.auth.uid || resource.data.reportedUserId == request.auth.uid);
-      allow delete: if isSignedIn() &&
-        (resource.data.reporterUserId == request.auth.uid || resource.data.reportedUserId == request.auth.uid);
+      allow read: if isSignedIn() && resource.data.reporterUserId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.reporterUserId == request.auth.uid;
       allow update: if false;
     }
 
