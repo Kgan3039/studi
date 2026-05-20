@@ -1,6 +1,6 @@
 import {
-  arrayUnion,
   addDoc,
+  arrayUnion,
   collection,
   doc,
   getDoc,
@@ -39,6 +39,13 @@ export type AvailabilitySlot = {
   startMinutes: number;
 };
 
+export type Socials = {
+  phone: string;
+  instagram: string;
+  snapchat: string;
+  discord: string;
+};
+
 export type UserProfile = {
   availability: AvailabilitySlot[];
   classes: string[];
@@ -47,6 +54,7 @@ export type UserProfile = {
   email: string;
   lastLoginAt?: unknown;
   photoURL: string;
+  socials?: Socials;
   uid: string;
   updatedAt?: unknown;
 };
@@ -206,6 +214,12 @@ export async function createOrUpdateUserProfile(
       photoURL: profile.photoURL ?? "",
       classes: profile.classes ?? existingUser.data()?.classes ?? [],
       availability: profile.availability ?? existingUser.data()?.availability ?? [],
+      socials: profile.socials ?? existingUser.data()?.socials ?? {
+        phone: "",
+        instagram: "",
+        snapchat: "",
+        discord: "",
+      },
       createdAt:
         existingUser.data()?.createdAt ??
         profile.createdAt ??
@@ -321,6 +335,13 @@ export async function updateUserAvailability(
 export async function updateUserDisplayName(userId: string, displayName: string) {
   await updateDoc(doc(db, COLLECTIONS.users, userId), {
     displayName,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function updateUserSocials(userId: string, socials: Socials) {
+  await updateDoc(doc(db, COLLECTIONS.users, userId), {
+    socials,
     updatedAt: serverTimestamp(),
   });
 }
