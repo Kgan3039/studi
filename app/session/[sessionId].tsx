@@ -12,6 +12,7 @@ import {
   getOrCreateDirectConversation,
   getSessionById,
   joinSession,
+  type Socials,
   type StudySessionListItem,
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
@@ -48,6 +49,19 @@ function formatDisplayName(name: string | undefined, email: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
+}
+
+function getVisibleSocials(socials: Socials | undefined) {
+  if (!socials) {
+    return [];
+  }
+
+  return [
+    { label: 'Phone', value: socials.phone },
+    { label: 'Instagram', value: socials.instagram },
+    { label: 'Snapchat', value: socials.snapchat },
+    { label: 'Discord', value: socials.discord },
+  ].filter((social) => social.value.trim().length > 0);
 }
 
 export default function SessionDetailScreen() {
@@ -278,6 +292,15 @@ export default function SessionDetailScreen() {
                       {formatDisplayName(attendee.displayName, attendee.email)}
                     </ThemedText>
                     <ThemedText style={styles.metaText}>{attendee.email}</ThemedText>
+                    {getVisibleSocials(attendee.socials).length > 0 ? (
+                      <View style={styles.socialList}>
+                        {getVisibleSocials(attendee.socials).map((social) => (
+                          <ThemedText key={social.label} style={styles.socialText}>
+                            {social.label}: {social.value.trim()}
+                          </ThemedText>
+                        ))}
+                      </View>
+                    ) : null}
                   </View>
                 </ThemedView>
               ))}
@@ -390,6 +413,14 @@ const styles = StyleSheet.create({
   },
   attendeeMeta: {
     flex: 1,
+    gap: 3,
+  },
+  socialList: {
     gap: 2,
+    marginTop: 4,
+  },
+  socialText: {
+    fontSize: 13,
+    opacity: 0.78,
   },
 });
