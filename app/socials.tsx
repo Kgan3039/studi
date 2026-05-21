@@ -133,14 +133,6 @@ export default function SocialsScreen() {
     try {
       setIsSaving(true);
 
-      const profile = await getUserProfile(currentUser.uid);
-      const existingSocials = profile?.socials ?? {
-        phone: '',
-        instagram: '',
-        snapchat: '',
-        discord: '',
-      };
-
       const mergedSocials: Socials = {
         phone: socials.phone.trim(),
         instagram: socials.instagram.trim(),
