@@ -1,14 +1,15 @@
+import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Modal,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -20,12 +21,14 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
 import { UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
 import {
-    getUserProfile,
-    updateUserAvailability,
-    updateUserClasses,
-    updateUserDisplayName,
-    type AvailabilitySlot,
+  getUserProfile,
+  updateUserAvailability,
+  updateUserClasses,
+  updateUserDisplayName,
+  type AvailabilitySlot,
+  type Socials,
 } from '@/lib/firestore';
+import { useRouter } from 'expo-router';
 import type { User } from 'firebase/auth';
 
 function splitDisplayName(displayName: string | undefined) {
@@ -166,6 +169,7 @@ export default function ProfileScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -179,6 +183,12 @@ export default function ProfileScreen() {
   const [courseQuery, setCourseQuery] = useState('');
   const [classes, setClasses] = useState<string[]>([]);
   const [availability, setAvailability] = useState<AvailabilitySlot[]>([]);
+  const [socials, setSocials] = useState<Socials>({
+    phone: '',
+    instagram: '',
+    snapchat: '',
+    discord: '',
+  });
   const [selectedAvailabilityDate, setSelectedAvailabilityDate] = useState(buildUpcomingDates(21)[0]);
   const [selectedCalendarMonth, setSelectedCalendarMonth] = useState(() => startOfMonth(new Date()));
   const [availabilityStartTime, setAvailabilityStartTime] = useState('');
@@ -209,7 +219,8 @@ export default function ProfileScreen() {
     return unsubscribe;
   }, []);
 
-  useEffect(() => {
+  useFocusEffect(
+    useCallback(() => {
     async function loadProfile() {
       if (!currentUser) {
         setIsLoading(false);
@@ -222,11 +233,17 @@ export default function ProfileScreen() {
         const savedName = splitDisplayName(profile?.displayName);
         const savedClasses = profile?.classes ?? [];
         const savedAvailability = profile?.availability ?? [];
-
+        const savedSocials = profile?.socials ?? {
+          phone: '',
+          instagram: '',
+          snapchat: '',
+          discord: '',
+        };
         setFirstName(savedName.firstName);
         setLastName(savedName.lastName);
         setClasses(savedClasses);
         setAvailability(savedAvailability);
+        setSocials(savedSocials);
         setNameStatus(
           profile?.displayName
             ? `Profile name saved as ${profile.displayName}.`
@@ -257,7 +274,10 @@ export default function ProfileScreen() {
     }
 
     loadProfile();
-  }, [currentUser]);
+
+    return () => {};
+  }, [currentUser])
+);
 
   function toggleClassSelection(classCode: string) {
     setClasses((currentClasses) =>
@@ -577,6 +597,109 @@ export default function ProfileScreen() {
           onPress={handleSaveName}
           style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isSaving ? 0.6 : 1 }]}>
           <ThemedText type="defaultSemiBold">Save Name</ThemedText>
+        </Pressable>
+      </ThemedView>
+
+      <ThemedView
+        style={[
+          styles.card,
+          {
+            backgroundColor: palette.surface,
+            borderColor: palette.border,
+          },
+        ]}>
+        <View style={styles.sectionHeader}>
+          <ThemedText style={styles.sectionLabel}>Socials</ThemedText>
+        </View>
+
+        <ThemedText type="subtitle">Connect your socials</ThemedText>
+
+        <ThemedText style={styles.mutedText}>
+          Add your social accounts so people can connect with you outside of Studi.
+        </ThemedText>
+
+        <View style={styles.slotList}>
+          {socials.phone ? (
+            <View
+              style={[
+                styles.chip,
+                styles.wideChip,
+                {
+                  backgroundColor: palette.surfaceMuted,
+                  borderColor: palette.outline,
+                },
+              ]}>
+              <ThemedText type="defaultSemiBold">
+                Phone: {socials.phone}
+              </ThemedText>
+            </View>
+          ) : null}
+
+          {socials.instagram ? (
+            <View
+              style={[
+                styles.chip,
+                styles.wideChip,
+                {
+                  backgroundColor: palette.surfaceMuted,
+                  borderColor: palette.outline,
+                },
+              ]}>
+              <ThemedText type="defaultSemiBold">
+                Instagram: {socials.instagram}
+              </ThemedText>
+            </View>
+          ) : null}
+
+          {socials.snapchat ? (
+            <View
+              style={[
+                styles.chip,
+                styles.wideChip,
+                {
+                  backgroundColor: palette.surfaceMuted,
+                  borderColor: palette.outline,
+                },
+              ]}>
+              <ThemedText type="defaultSemiBold">
+                Snapchat: {socials.snapchat}
+              </ThemedText>
+            </View>
+          ) : null}
+
+          {socials.discord ? (
+            <View
+              style={[
+                styles.chip,
+                styles.wideChip,
+                {
+                  backgroundColor: palette.surfaceMuted,
+                  borderColor: palette.outline,
+                },
+              ]}>
+              <ThemedText type="defaultSemiBold">
+                Discord: {socials.discord}
+              </ThemedText>
+            </View>
+          ) : null}
+        </View>
+
+        <Pressable
+          disabled={isSaving}
+          onPress={() => router.push('/socials')}
+          style={[
+            styles.primaryButton,
+            {
+              backgroundColor: palette.tint,
+              opacity: isSaving ? 0.6 : 1,
+            },
+          ]}>
+          <ThemedText
+            lightColor="#ffffff"
+            darkColor="#ffffff"
+            type="defaultSemiBold">
+            Edit
+          </ThemedText>
         </Pressable>
       </ThemedView>
 
