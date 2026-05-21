@@ -1,9 +1,6 @@
 import {
   addDoc,
-<<<<<<< HEAD
-=======
   arrayRemove,
->>>>>>> main
   arrayUnion,
   collection,
   deleteDoc,
@@ -345,13 +342,13 @@ export async function updateUserDisplayName(userId: string, displayName: string)
   });
 }
 
-<<<<<<< HEAD
 export async function updateUserSocials(userId: string, socials: Socials) {
   await updateDoc(doc(db, COLLECTIONS.users, userId), {
     socials,
     updatedAt: serverTimestamp(),
   });
-=======
+}
+
 async function deleteDocumentRefs(documentRefs: DocumentReference[]) {
   const batchSize = 400;
 
@@ -411,7 +408,6 @@ export async function deleteUserAccountData(userId: string) {
   );
 
   await deleteDoc(doc(db, COLLECTIONS.users, userId));
->>>>>>> main
 }
 
 export async function getLocations() {

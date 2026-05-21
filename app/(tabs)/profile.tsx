@@ -1,11 +1,6 @@
-<<<<<<< HEAD
 import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-=======
-import { Image } from 'expo-image';
-import { useEffect, useMemo, useState } from 'react';
->>>>>>> main
 import {
     ActivityIndicator,
     Alert,
@@ -26,20 +21,12 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
 import { UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
 import {
-<<<<<<< HEAD
   getUserProfile,
   updateUserAvailability,
   updateUserClasses,
   updateUserDisplayName,
   type AvailabilitySlot,
   type Socials,
-=======
-    getUserProfile,
-    updateUserAvailability,
-    updateUserClasses,
-    updateUserDisplayName,
-    type AvailabilitySlot,
->>>>>>> main
 } from '@/lib/firestore';
 import { useRouter } from 'expo-router';
 import type { User } from 'firebase/auth';
