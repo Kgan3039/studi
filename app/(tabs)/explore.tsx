@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -7,12 +7,16 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
+import {
+  LOCATION_ATMOSPHERE_FILTERS,
+  type LocationAtmosphereFilter,
+} from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
@@ -22,6 +26,22 @@ import {
   type StudyLocation,
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
+
+const ATMOSPHERE_MATCH_TERMS: Record<LocationAtmosphereFilter, string[]> = {
+  Quiet: ['quiet'],
+  Loud: ['loud'],
+  Crowded: ['crowded'],
+  Spacious: ['spacious'],
+  'Group Friendly': [
+    'group friendly',
+    'group-study',
+    'groups',
+    'collaborative',
+    'collaboration',
+    'meetup',
+  ],
+  'Solo Focused': ['solo focused', 'focused'],
+};
 
 export default function StudyLocationsScreen() {
   const router = useRouter();
@@ -36,29 +56,50 @@ export default function StudyLocationsScreen() {
   );
   const [expandedLocationId, setExpandedLocationId] = useState<string | null>(null);
   const [locationQuery, setLocationQuery] = useState('');
+  const [selectedCampusArea, setSelectedCampusArea] = useState<string | null>(null);
+  const [selectedAtmosphere, setSelectedAtmosphere] = useState<LocationAtmosphereFilter | null>(
+    null
+  );
   const [status, setStatus] = useState('Loading study locations...');
   const [isLoading, setIsLoading] = useState(true);
   const hasLocationSearch = locationQuery.trim().length > 0;
+  const hasActiveFilters =
+    hasLocationSearch || selectedCampusArea !== null || selectedAtmosphere !== null;
+  const campusAreas = useMemo(
+    () => [...new Set(locations.map((location) => location.campusArea))].sort(),
+    [locations]
+  );
   const filteredLocations = useMemo(() => {
     const normalizedQuery = locationQuery.trim().toLowerCase();
 
-    if (!normalizedQuery) {
-      return locations;
-    }
-
-    return locations.filter((location) =>
-      [
+    return locations.filter((location) => {
+      const aggregate = ratingAggregates.get(location.locationId);
+      const descriptorText = [
+        location.notes,
+        ...(Array.isArray(location.tags) ? location.tags : []),
+        ...(aggregate?.reviewTags ?? []),
+      ]
+        .join(' ')
+        .toLowerCase();
+      const searchText = [
         location.name,
         location.building,
         location.campusArea,
-        location.notes,
-        ...(Array.isArray(location.tags) ? location.tags : []),
+        descriptorText,
       ]
         .join(' ')
-        .toLowerCase()
-        .includes(normalizedQuery)
-    );
-  }, [locationQuery, locations]);
+        .toLowerCase();
+      const matchesQuery = !normalizedQuery || searchText.includes(normalizedQuery);
+      const matchesArea = !selectedCampusArea || location.campusArea === selectedCampusArea;
+      const matchesAtmosphere =
+        !selectedAtmosphere ||
+        ATMOSPHERE_MATCH_TERMS[selectedAtmosphere].some((term) =>
+          descriptorText.includes(term)
+        );
+
+      return matchesQuery && matchesArea && matchesAtmosphere;
+    });
+  }, [locationQuery, locations, ratingAggregates, selectedAtmosphere, selectedCampusArea]);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -69,7 +110,7 @@ export default function StudyLocationsScreen() {
     return unsubscribe;
   }, []);
 
-  async function loadLocations() {
+  const loadLocations = useCallback(async () => {
     try {
       setIsLoading(true);
       const loadedLocations = await getLocations();
@@ -93,15 +134,15 @@ export default function StudyLocationsScreen() {
     } catch {
       // Ratings unavailable — locations still show
     }
-  }
+  }, []);
 
-  useEffect(() => {
-    if (!currentUser) {
-      return;
-    }
-
-    loadLocations();
-  }, [currentUser]);
+  useFocusEffect(
+    useCallback(() => {
+      if (currentUser) {
+        loadLocations();
+      }
+    }, [currentUser, loadLocations])
+  );
 
   useEffect(() => {
     if (authResolved && !currentUser) {
@@ -160,6 +201,86 @@ export default function StudyLocationsScreen() {
           style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
           value={locationQuery}
         />
+        <View style={styles.filters}>
+          <View style={styles.filterHeader}>
+            <ThemedText style={styles.filterLabel}>Area</ThemedText>
+            {hasActiveFilters ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setLocationQuery('');
+                  setSelectedCampusArea(null);
+                  setSelectedAtmosphere(null);
+                }}>
+                <ThemedText style={[styles.clearFilters, { color: palette.tint }]}>
+                  Clear all
+                </ThemedText>
+              </Pressable>
+            ) : null}
+          </View>
+          <View style={styles.filterChipRow}>
+            {[null, ...campusAreas].map((campusArea) => {
+              const isSelected = selectedCampusArea === campusArea;
+
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
+                  key={campusArea ?? 'all-areas'}
+                  onPress={() => setSelectedCampusArea(campusArea)}
+                  style={[
+                    styles.filterChip,
+                    {
+                      backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
+                      borderColor: isSelected ? palette.tint : palette.outline,
+                    },
+                  ]}>
+                  <ThemedText
+                    lightColor={isSelected ? '#ffffff' : undefined}
+                    darkColor={isSelected ? '#ffffff' : undefined}
+                    type="defaultSemiBold">
+                    {campusArea ?? 'All areas'}
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
+          </View>
+          <ThemedText style={styles.filterLabel}>Atmosphere</ThemedText>
+          <View style={styles.filterChipRow}>
+            {LOCATION_ATMOSPHERE_FILTERS.map((atmosphere) => {
+              const isSelected = selectedAtmosphere === atmosphere;
+
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
+                  key={atmosphere}
+                  onPress={() =>
+                    setSelectedAtmosphere((currentAtmosphere) =>
+                      currentAtmosphere === atmosphere ? null : atmosphere
+                    )
+                  }
+                  style={[
+                    styles.filterChip,
+                    {
+                      backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
+                      borderColor: isSelected ? palette.tint : palette.outline,
+                    },
+                  ]}>
+                  <ThemedText
+                    lightColor={isSelected ? '#ffffff' : undefined}
+                    darkColor={isSelected ? '#ffffff' : undefined}
+                    type="defaultSemiBold">
+                    {atmosphere}
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
+          </View>
+          <ThemedText style={styles.filterHint}>
+            Atmosphere filters use location details and tags students add in reviews.
+          </ThemedText>
+        </View>
         {hasLocationSearch ? (
           <View style={styles.searchResults}>
             <ThemedText style={styles.searchHint}>
@@ -238,9 +359,9 @@ export default function StudyLocationsScreen() {
 
           {filteredLocations.length === 0 ? (
             <View style={styles.emptySearch}>
-              <ThemedText type="subtitle">No spots match that search</ThemedText>
+              <ThemedText type="subtitle">No spots match those filters</ThemedText>
               <ThemedText style={styles.notesText}>
-                {'Try a building name, campus area, or terms like "quiet" or "group".'}
+                Try another area or atmosphere, or clear all filters.
               </ThemedText>
             </View>
           ) : (
@@ -259,7 +380,14 @@ export default function StudyLocationsScreen() {
                     style={styles.accordionHeader}>
                     <View style={styles.accordionHeaderLeft}>
                       <ThemedText type="defaultSemiBold">{location.name}</ThemedText>
-                      <ThemedText style={styles.locationArea}>{location.campusArea}</ThemedText>
+                      <View style={styles.locationMetaRow}>
+                        <ThemedText style={styles.locationArea}>{location.campusArea}</ThemedText>
+                        {agg ? (
+                          <ThemedText style={styles.locationRatingPreview}>
+                            ★ {agg.averageStars} ({agg.totalRatings})
+                          </ThemedText>
+                        ) : null}
+                      </View>
                     </View>
                     <ThemedText style={[styles.chevron, { color: palette.tint }]}>
                       {isExpanded ? '▲' : '▼'}
@@ -318,7 +446,7 @@ export default function StudyLocationsScreen() {
                       {agg && agg.topTags.length > 0 && (
                         <View style={styles.communityTagsSection}>
                           <ThemedText style={styles.communityTagsLabel}>
-                            Community tags
+                            Student tags
                           </ThemedText>
                           <View style={styles.tagRow}>
                             {agg.topTags.map((tag) => (
@@ -489,6 +617,41 @@ const styles = StyleSheet.create({
     minHeight: 54,
     paddingHorizontal: 14,
   },
+  filters: {
+    gap: 10,
+    paddingTop: 4,
+  },
+  filterHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  filterLabel: {
+    fontSize: 12,
+    letterSpacing: 0.8,
+    opacity: 0.65,
+    textTransform: 'uppercase',
+  },
+  filterChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  filterChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    minHeight: 36,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  filterHint: {
+    fontSize: 13,
+    opacity: 0.66,
+  },
+  clearFilters: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
   refreshButton: {
     alignItems: 'center',
     borderRadius: 14,
@@ -511,6 +674,15 @@ const styles = StyleSheet.create({
   },
   searchSuggestionText: {
     gap: 2,
+  },
+  locationMetaRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+  },
+  locationRatingPreview: {
+    color: '#D98700',
+    fontSize: 13,
   },
   tag: {
     borderRadius: 999,

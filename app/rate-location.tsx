@@ -12,29 +12,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
+import { LOCATION_RATING_TAG_GROUPS } from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import { getUserLocationRating, submitLocationRating } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
-
-const LOCATION_TAGS = [
-  'Quiet',
-  'Loud',
-  'Crowded',
-  'Spacious',
-  'Good WiFi',
-  'Poor WiFi',
-  'Comfortable',
-  'Outlets Available',
-  'Natural Light',
-  'Open Late',
-  'Group Friendly',
-  'Solo Focused',
-  'Food Nearby',
-  'Cold Inside',
-  'Warm Inside',
-  'Reservable Rooms',
-];
 
 export default function RateLocationScreen() {
   const router = useRouter();
@@ -142,7 +124,13 @@ export default function RateLocationScreen() {
         <ThemedText type="subtitle">Your rating</ThemedText>
         <View style={styles.starRow}>
           {[1, 2, 3, 4, 5].map((star) => (
-            <Pressable key={star} onPress={() => setSelectedStars(star)} style={styles.starButton}>
+            <Pressable
+              accessibilityLabel={`${star} out of 5 stars`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: selectedStars === star }}
+              key={star}
+              onPress={() => setSelectedStars(star)}
+              style={styles.starButton}>
               <ThemedText
                 style={[
                   styles.starChar,
@@ -161,31 +149,40 @@ export default function RateLocationScreen() {
       <ThemedView
         style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
         <ThemedText type="subtitle">Tags</ThemedText>
-        <ThemedText style={styles.hintText}>Select any that apply to this location.</ThemedText>
-        <View style={styles.tagGrid}>
-          {LOCATION_TAGS.map((tag) => {
-            const isSelected = selectedTags.includes(tag);
-            return (
-              <Pressable
-                key={tag}
-                onPress={() => toggleTag(tag)}
-                style={[
-                  styles.tagChip,
-                  {
-                    backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
-                    borderColor: isSelected ? palette.tint : palette.outline,
-                  },
-                ]}>
-                <ThemedText
-                  lightColor={isSelected ? '#ffffff' : undefined}
-                  darkColor={isSelected ? '#ffffff' : undefined}
-                  type="defaultSemiBold">
-                  {tag}
-                </ThemedText>
-              </Pressable>
-            );
-          })}
-        </View>
+        <ThemedText style={styles.hintText}>
+          Select any that apply. These help other students filter study spots.
+        </ThemedText>
+        {LOCATION_RATING_TAG_GROUPS.map((group) => (
+          <View key={group.label} style={styles.tagGroup}>
+            <ThemedText style={styles.tagGroupLabel}>{group.label}</ThemedText>
+            <View style={styles.tagGrid}>
+              {group.tags.map((tag) => {
+                const isSelected = selectedTags.includes(tag);
+                return (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isSelected }}
+                    key={tag}
+                    onPress={() => toggleTag(tag)}
+                    style={[
+                      styles.tagChip,
+                      {
+                        backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
+                        borderColor: isSelected ? palette.tint : palette.outline,
+                      },
+                    ]}>
+                    <ThemedText
+                      lightColor={isSelected ? '#ffffff' : undefined}
+                      darkColor={isSelected ? '#ffffff' : undefined}
+                      type="defaultSemiBold">
+                      {tag}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ))}
       </ThemedView>
 
       {statusMessage ? (
@@ -269,6 +266,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  tagGroup: {
+    gap: 8,
+    marginTop: 4,
+  },
+  tagGroupLabel: {
+    fontSize: 12,
+    letterSpacing: 0.8,
+    opacity: 0.65,
+    textTransform: 'uppercase',
   },
   tagChip: {
     borderRadius: 999,

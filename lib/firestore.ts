@@ -20,6 +20,7 @@ import {
 } from "firebase/firestore";
 
 import { UW_STUDY_LOCATIONS } from "@/data/uw-study-locations";
+import { sanitizeLocationRatingTags } from "@/data/location-rating-options";
 import { findStudyLocationById } from "@/lib/catalog";
 import { db } from "../firebaseConfig";
 import { validateSessionSchedule } from "./session-schedule";
@@ -140,6 +141,7 @@ export type LocationRating = {
 export type LocationRatingAggregate = {
   averageStars: number;
   locationId: string;
+  reviewTags: string[];
   topTags: string[];
   totalRatings: number;
 };
@@ -761,6 +763,10 @@ export async function submitLocationRating(
   stars: number,
   tags: string[]
 ) {
+  if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
+    throw new Error("Choose a rating from 1 to 5 stars.");
+  }
+
   const ratingRef = doc(db, COLLECTIONS.locationRatings, `${locationId}__${userId}`);
   const existing = await getDoc(ratingRef);
 
@@ -768,7 +774,7 @@ export async function submitLocationRating(
     locationId,
     userId,
     stars,
-    tags,
+    tags: sanitizeLocationRatingTags(tags),
     createdAt: existing.exists() ? existing.data()?.createdAt : serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -783,12 +789,19 @@ export async function getUserLocationRating(locationId: string, userId: string) 
     return null;
   }
 
-  return snapshot.data() as LocationRating;
+  const rating = snapshot.data() as LocationRating;
+
+  return {
+    ...rating,
+    tags: sanitizeLocationRatingTags(rating.tags),
+  };
 }
 
 export async function getLocationRatingAggregates() {
   const snapshot = await getDocs(collection(db, COLLECTIONS.locationRatings));
-  const ratings = snapshot.docs.map((ratingDoc) => ratingDoc.data() as LocationRating);
+  const ratings = snapshot.docs
+    .map((ratingDoc) => ratingDoc.data() as LocationRating)
+    .filter((rating) => Number.isInteger(rating.stars) && rating.stars >= 1 && rating.stars <= 5);
 
   const byLocation = new Map<string, LocationRating[]>();
 
@@ -807,21 +820,24 @@ export async function getLocationRatingAggregates() {
 
     const tagCounts = new Map<string, number>();
     for (const rating of locationRatings) {
-      for (const tag of rating.tags) {
+      for (const tag of sanitizeLocationRatingTags(rating.tags)) {
         tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
       }
     }
 
-    const topTags = [...tagCounts.entries()]
-      .filter(([, count]) => count >= 2)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 5)
+    const reviewTags = [...tagCounts.entries()]
+      .sort(([firstTag, firstCount], [secondTag, secondCount]) =>
+        secondCount === firstCount
+          ? firstTag.localeCompare(secondTag)
+          : secondCount - firstCount
+      )
       .map(([tag]) => tag);
 
     aggregates.set(locationId, {
       averageStars: Math.round(averageStars * 10) / 10,
       locationId,
-      topTags,
+      reviewTags,
+      topTags: reviewTags.slice(0, 5),
       totalRatings,
     });
   }

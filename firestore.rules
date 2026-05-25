@@ -77,10 +77,50 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Location ratings: owners can create/update/delete their own rating
+    function hasValidLocationRating(ratingId) {
+      return request.resource.data.keys().hasOnly([
+          'locationId',
+          'userId',
+          'stars',
+          'tags',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.locationId is string
+        && ratingId == request.resource.data.locationId + '__' + request.auth.uid
+        && request.resource.data.stars is int
+        && request.resource.data.stars >= 1
+        && request.resource.data.stars <= 5
+        && request.resource.data.tags is list
+        && request.resource.data.tags.size() <= 16
+        && request.resource.data.tags.hasOnly([
+          'Quiet',
+          'Loud',
+          'Crowded',
+          'Spacious',
+          'Group Friendly',
+          'Solo Focused',
+          'Reservable Rooms',
+          'Good WiFi',
+          'Poor WiFi',
+          'Outlets Available',
+          'Natural Light',
+          'Open Late',
+          'Food Nearby',
+          'Comfortable',
+          'Cold Inside',
+          'Warm Inside'
+        ]);
+    }
+
+    // Location ratings: owners can submit one validated review per study location.
     match /locationRatings/{ratingId} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && hasValidLocationRating(ratingId);
+      allow update: if isSignedIn()
+        && hasValidLocationRating(ratingId)
+        && request.resource.data.createdAt == resource.data.createdAt;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
