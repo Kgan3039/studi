@@ -14,6 +14,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import {
+  getAtmosphereFiltersForLocationTags,
   LOCATION_ATMOSPHERE_FILTERS,
   type LocationAtmosphereFilter,
 } from '@/data/location-rating-options';
@@ -26,22 +27,6 @@ import {
   type StudyLocation,
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
-
-const ATMOSPHERE_MATCH_TERMS: Record<LocationAtmosphereFilter, string[]> = {
-  Quiet: ['quiet'],
-  Loud: ['loud'],
-  Crowded: ['crowded'],
-  Spacious: ['spacious'],
-  'Group Friendly': [
-    'group friendly',
-    'group-study',
-    'groups',
-    'collaborative',
-    'collaboration',
-    'meetup',
-  ],
-  'Solo Focused': ['solo focused', 'focused'],
-};
 
 export default function StudyLocationsScreen() {
   const router = useRouter();
@@ -91,11 +76,12 @@ export default function StudyLocationsScreen() {
         .toLowerCase();
       const matchesQuery = !normalizedQuery || searchText.includes(normalizedQuery);
       const matchesArea = !selectedCampusArea || location.campusArea === selectedCampusArea;
+      const atmosphereFilters = getAtmosphereFiltersForLocationTags([
+        ...(Array.isArray(location.tags) ? location.tags : []),
+        ...(aggregate?.reviewTags ?? []),
+      ]);
       const matchesAtmosphere =
-        !selectedAtmosphere ||
-        ATMOSPHERE_MATCH_TERMS[selectedAtmosphere].some((term) =>
-          descriptorText.includes(term)
-        );
+        !selectedAtmosphere || atmosphereFilters.has(selectedAtmosphere);
 
       return matchesQuery && matchesArea && matchesAtmosphere;
     });
@@ -278,7 +264,7 @@ export default function StudyLocationsScreen() {
             })}
           </View>
           <ThemedText style={styles.filterHint}>
-            Atmosphere filters use location details and tags students add in reviews.
+            Atmosphere filters use location tags and tags students add in reviews.
           </ThemedText>
         </View>
         {hasLocationSearch ? (
