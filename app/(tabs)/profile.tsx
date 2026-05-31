@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TimeDropdown } from '@/components/time-dropdown';
+import { STUDI_SUPPORT_EMAIL } from '@/constants/app-info';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
@@ -28,7 +29,7 @@ import {
   type AvailabilitySlot,
   type Socials,
 } from '@/lib/firestore';
-import { useRouter } from 'expo-router';
+import { type Href, useRouter } from 'expo-router';
 import type { User } from 'firebase/auth';
 
 function splitDisplayName(displayName: string | undefined) {
@@ -918,6 +919,23 @@ export default function ProfileScreen() {
           <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
             Save Availability
           </ThemedText>
+        </Pressable>
+      </ThemedView>
+
+      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+        <View style={styles.sectionHeader}>
+          <ThemedText style={styles.sectionLabel}>Privacy and support</ThemedText>
+        </View>
+        <ThemedText type="subtitle">Help, policy, and data requests</ThemedText>
+        <ThemedText style={styles.mutedText}>
+          Open the privacy policy, contact {STUDI_SUPPORT_EMAIL}, or find account data request
+          options before using delete account.
+        </ThemedText>
+        <Pressable
+          disabled={isBusy}
+          onPress={() => router.push('/privacy-support' as Href)}
+          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isBusy ? 0.6 : 1 }]}>
+          <ThemedText type="defaultSemiBold">Privacy & Support</ThemedText>
         </Pressable>
       </ThemedView>
 

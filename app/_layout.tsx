@@ -21,6 +21,7 @@ export default function RootLayout() {
         <Stack.Screen name="conversation/[conversationId]" options={{ title: 'Conversation' }} />
         <Stack.Screen name="match/[userId]" options={{ title: 'Match Details' }} />
         <Stack.Screen name="matches" options={{ title: 'Matched Students' }} />
+        <Stack.Screen name="privacy-support" options={{ title: 'Privacy & Support' }} />
         <Stack.Screen name="report-user" options={{ title: 'Report User' }} />
         <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />
         <Stack.Screen name="rate-location" options={{ title: 'Rate This Spot' }} />
