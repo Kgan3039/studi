@@ -41,11 +41,9 @@ function splitDisplayName(displayName: string | undefined) {
 function getSetupSummary(profile: UserProfile | null) {
   const hasName = !!profile?.displayName?.trim();
   const hasClasses = (profile?.classes?.length ?? 0) > 0;
-  const hasAvailability = (profile?.availability?.length ?? 0) > 0;
 
   return {
-    completed: [hasName, hasClasses, hasAvailability].filter(Boolean).length,
-    hasAvailability,
+    completed: [hasName, hasClasses].filter(Boolean).length,
     hasClasses,
     hasName,
   };
@@ -63,7 +61,7 @@ export default function HomeScreen() {
   const [isBusy, setIsBusy] = useState(false);
   const [isProfileLoading, setIsProfileLoading] = useState(false);
   const [dashboardStatus, setDashboardStatus] = useState(
-    'Sign in to start matching with classmates and exploring sessions.'
+    'Sign in to find and join study sessions for your classes.'
   );
   const isSignedIn = !!currentUser;
 
@@ -77,7 +75,7 @@ export default function HomeScreen() {
       }
 
       setProfile(null);
-      setDashboardStatus('Sign in to start matching with classmates and exploring sessions.');
+      setDashboardStatus('Sign in to find and join study sessions for your classes.');
     });
 
     return unsubscribe;
@@ -101,9 +99,9 @@ export default function HomeScreen() {
 
         const setup = getSetupSummary(loadedProfile);
         setDashboardStatus(
-          setup.completed === 3
-            ? 'Your profile is ready. Jump into matches, messages, or active study sessions.'
-            : `You are ${setup.completed}/3 of the way through setup. Finish the rest on Profile to get better matches.`
+          setup.completed === 2
+            ? 'Your profile is ready. Browse sessions or create one for your class.'
+            : `You are ${setup.completed}/2 of the way through setup. Add your classes on Profile to see sessions for them.`
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to load your dashboard right now.';
@@ -136,7 +134,6 @@ export default function HomeScreen() {
   const firstName = savedName.firstName || 'Study';
   const setup = useMemo(() => getSetupSummary(profile), [profile]);
   const classCount = profile?.classes.length ?? 0;
-  const availabilityCount = profile?.availability.length ?? 0;
 
   return (
     <ScrollView
@@ -152,8 +149,8 @@ export default function HomeScreen() {
           UW-Madison Study Hub
         </ThemedText>
         <ThemedText style={styles.heroText}>
-          Find study partners, compare availability, and lock in study sessions without bouncing
-          between five different group chats.
+          Find and join study sessions for your classes — or start one and let classmates come to
+          you.
         </ThemedText>
       </ThemedView>
 
@@ -164,7 +161,7 @@ export default function HomeScreen() {
               <ThemedText style={styles.sectionLabel}>Dashboard</ThemedText>
               <View style={[styles.statusPill, { backgroundColor: palette.badge }]}>
                 <ThemedText type="defaultSemiBold">
-                  {setup.completed}/3 ready
+                  {setup.completed}/2 ready
                 </ThemedText>
               </View>
             </View>
@@ -178,14 +175,8 @@ export default function HomeScreen() {
                 </ThemedText>
               </View>
               <View style={[styles.metricCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText style={styles.metricValue}>{availabilityCount}</ThemedText>
-                <ThemedText style={styles.metricLabel}>
-                  time block{availabilityCount === 1 ? '' : 's'}
-                </ThemedText>
-              </View>
-              <View style={[styles.metricCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
                 <ThemedText style={styles.metricValue}>{profile ? 'On' : 'Off'}</ThemedText>
-                <ThemedText style={styles.metricLabel}>matching</ThemedText>
+                <ThemedText style={styles.metricLabel}>profile</ThemedText>
               </View>
             </View>
           </ThemedView>
@@ -197,10 +188,10 @@ export default function HomeScreen() {
             <ThemedText type="subtitle">Start from what you need right now</ThemedText>
             <View style={styles.actionGrid}>
               <Pressable
-                onPress={() => router.push('/matches')}
+                onPress={() => router.push('/sessions')}
                 style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText type="defaultSemiBold">View Matches</ThemedText>
-                <ThemedText style={styles.actionCopy}>See who overlaps with your classes and free time.</ThemedText>
+                <ThemedText type="defaultSemiBold">Browse Sessions</ThemedText>
+                <ThemedText style={styles.actionCopy}>Find sessions already happening for your classes.</ThemedText>
               </Pressable>
               <Pressable
                 onPress={() => router.push('/messages')}
@@ -213,12 +204,6 @@ export default function HomeScreen() {
                 style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
                 <ThemedText type="defaultSemiBold">Browse Spots</ThemedText>
                 <ThemedText style={styles.actionCopy}>Search campus libraries, commons, and other study areas.</ThemedText>
-              </Pressable>
-              <Pressable
-                onPress={() => router.push('/sessions')}
-                style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText type="defaultSemiBold">Join Sessions</ThemedText>
-                <ThemedText style={styles.actionCopy}>Find sessions already happening for your classes.</ThemedText>
               </Pressable>
             </View>
             <Pressable
@@ -237,7 +222,7 @@ export default function HomeScreen() {
                 <ThemedText type="defaultSemiBold">Edit on Profile</ThemedText>
               </View>
             </View>
-            <ThemedText type="subtitle">Keep matching data accurate</ThemedText>
+            <ThemedText type="subtitle">Keep your profile accurate</ThemedText>
             <View style={styles.checklist}>
               <View style={styles.checklistItem}>
                 <ThemedText type="defaultSemiBold">{setup.hasName ? 'Done' : 'Next'}</ThemedText>
@@ -251,16 +236,8 @@ export default function HomeScreen() {
                 <ThemedText type="defaultSemiBold">{setup.hasClasses ? 'Done' : 'Next'}</ThemedText>
                 <ThemedText style={styles.checklistCopy}>
                   {setup.hasClasses
-                    ? `${classCount} class${classCount === 1 ? '' : 'es'} selected for matching.`
-                    : 'Choose classes on your Profile so Studi can find the right classmates.'}
-                </ThemedText>
-              </View>
-              <View style={styles.checklistItem}>
-                <ThemedText type="defaultSemiBold">{setup.hasAvailability ? 'Done' : 'Next'}</ThemedText>
-                <ThemedText style={styles.checklistCopy}>
-                  {setup.hasAvailability
-                    ? `${availabilityCount} availability block${availabilityCount === 1 ? '' : 's'} saved.`
-                    : 'Save weekly windows on your Profile so matches happen at the right time.'}
+                    ? `${classCount} class${classCount === 1 ? '' : 'es'} selected.`
+                    : 'Choose classes on your Profile so Studi can show the right sessions.'}
                 </ThemedText>
               </View>
             </View>
@@ -328,7 +305,7 @@ export default function HomeScreen() {
             <ThemedText type="subtitle">One login, then a personalized dashboard</ThemedText>
             <ThemedText style={styles.mutedText}>
               New users finish their name on a separate setup screen, then land inside Studi with
-              access to profile editing, matches, study spots, messages, and sessions.
+              access to profile editing, study spots, messages, and sessions.
             </ThemedText>
           </ThemedView>
         </>

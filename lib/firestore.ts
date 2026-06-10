@@ -88,12 +88,6 @@ export type StudyLocation = {
   tags: string[];
 };
 
-export type PotentialMatch = {
-  availabilityOverlap: AvailabilitySlot[];
-  sharedClasses: string[];
-  user: UserProfile;
-};
-
 export type StudySessionListItem = StudySession & {
   attendeeProfiles: UserProfile[];
   hostEmail?: string;
@@ -246,93 +240,9 @@ export async function getUserProfile(userId: string) {
   return snapshot.data() as UserProfile;
 }
 
-function isSameAvailabilitySlot(first: AvailabilitySlot, second: AvailabilitySlot) {
-  const firstDay = first.date ? getAvailabilityDayFromDate(first.date) : first.day;
-  const secondDay = second.date ? getAvailabilityDayFromDate(second.date) : second.day;
-
-  return (
-    (first.date && second.date ? first.date === second.date : firstDay === secondDay) &&
-    first.startMinutes === second.startMinutes &&
-    first.endMinutes === second.endMinutes
-  );
-}
-
-function getAvailabilityDayFromDate(date: string): AvailabilityDay {
-  const parsedDate = new Date(`${date}T12:00:00`);
-  const day = parsedDate.getDay();
-
-  return (["sun", "mon", "tue", "wed", "thu", "fri", "sat"][day] ?? "mon") as AvailabilityDay;
-}
-
-function getAvailabilityOverlap(
-  currentAvailability: AvailabilitySlot[],
-  candidateAvailability: AvailabilitySlot[]
-) {
-  return currentAvailability.filter((currentSlot) =>
-    candidateAvailability.some((candidateSlot) => isSameAvailabilitySlot(currentSlot, candidateSlot))
-  );
-}
-
-export async function getPotentialMatches(currentUserId: string) {
-  const currentUser = await getUserProfile(currentUserId);
-  const blockedUserIds = await getBlockedUserIds(currentUserId);
-
-  if (!currentUser) {
-    return [];
-  }
-
-  const usersSnapshot = await getDocs(collection(db, COLLECTIONS.users));
-
-  return usersSnapshot.docs
-    .map((userDoc) => userDoc.data() as UserProfile)
-    .filter((candidateUser) => candidateUser.uid !== currentUserId)
-    .filter((candidateUser) => !blockedUserIds.includes(candidateUser.uid))
-    .map((candidateUser) => {
-      const sharedClasses = candidateUser.classes.filter((classCode) =>
-        currentUser.classes.includes(classCode)
-      );
-      const availabilityOverlap = getAvailabilityOverlap(
-        currentUser.availability,
-        candidateUser.availability
-      );
-
-      return {
-        availabilityOverlap,
-        sharedClasses,
-        user: candidateUser,
-      };
-    })
-    .filter(
-      (match) => match.sharedClasses.length > 0 && match.availabilityOverlap.length > 0
-    )
-    .sort((firstMatch, secondMatch) => {
-      if (secondMatch.sharedClasses.length !== firstMatch.sharedClasses.length) {
-        return secondMatch.sharedClasses.length - firstMatch.sharedClasses.length;
-      }
-
-      return secondMatch.availabilityOverlap.length - firstMatch.availabilityOverlap.length;
-    });
-}
-
-export async function getPotentialMatch(currentUserId: string, matchUserId: string) {
-  const matches = await getPotentialMatches(currentUserId);
-
-  return matches.find((match) => match.user.uid === matchUserId) ?? null;
-}
-
 export async function updateUserClasses(userId: string, classes: string[]) {
   await updateDoc(doc(db, COLLECTIONS.users, userId), {
     classes,
-    updatedAt: serverTimestamp(),
-  });
-}
-
-export async function updateUserAvailability(
-  userId: string,
-  availability: AvailabilitySlot[]
-) {
-  await updateDoc(doc(db, COLLECTIONS.users, userId), {
-    availability,
     updatedAt: serverTimestamp(),
   });
 }

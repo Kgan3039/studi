@@ -9,8 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "web:export": "expo export --platform web",
-    "lint": "expo lint",
-    "backend:test": "npm --prefix backend run test"
+    "lint": "expo lint"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
