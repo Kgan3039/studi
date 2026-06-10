@@ -120,8 +120,8 @@ export type LocationRatingAggregate = {
   totalRatings: number;
 };
 
-function buildDirectConversationKey(firstUserId: string, secondUserId: string) {
-  return [firstUserId, secondUserId].sort().join("__");
+export function buildParticipantKey(userA: string, userB: string) {
+  return [userA, userB].sort().join("__");
 }
 
 function withBuiltInLocationFallback(location: StudyLocation): StudyLocation {
@@ -550,33 +550,35 @@ export async function createSession(input: {
   return sessionRef.id;
 }
 
-export async function getOrCreateDirectConversation(firstUserId: string, secondUserId: string) {
-  const participantKey = buildDirectConversationKey(firstUserId, secondUserId);
-  const conversationsSnapshot = await getDocs(
-    query(
-      collection(db, COLLECTIONS.conversations),
-      where("participantIds", "array-contains", firstUserId)
-    )
-  );
-  const existingConversation = conversationsSnapshot.docs.find((conversationDoc) => {
-    const data = conversationDoc.data() as Omit<DirectConversation, "conversationId">;
-    return data.participantKey === participantKey;
-  });
-
-  if (existingConversation) {
-    return existingConversation.id;
+export async function getOrCreateDirectConversation(
+  currentUserId: string,
+  otherUserId: string
+): Promise<string> {
+  if (currentUserId === otherUserId) {
+    throw new Error("You can't start a conversation with yourself.");
   }
 
-  const conversationRef = await addDoc(collection(db, COLLECTIONS.conversations), {
-    participantIds: [firstUserId, secondUserId].sort(),
-    participantKey,
+  const participantIds = [currentUserId, otherUserId].sort();
+  // Conversation doc ID == participantKey: dedup is a one-read getDoc and the
+  // rules (PR 4) enforce the invariant, so the duplicate-thread race is gone.
+  const conversationId = buildParticipantKey(currentUserId, otherUserId);
+  const conversationRef = doc(db, COLLECTIONS.conversations, conversationId);
+  const existing = await getDoc(conversationRef);
+
+  if (existing.exists()) {
+    return conversationId;
+  }
+
+  await setDoc(conversationRef, {
+    participantIds,
+    participantKey: conversationId,
     lastMessagePreview: "",
+    lastMessageAt: serverTimestamp(),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-    lastMessageAt: serverTimestamp(),
   });
 
-  return conversationRef.id;
+  return conversationId;
 }
 
 export async function sendDirectMessage(
@@ -746,35 +748,39 @@ export async function getUserLocationRating(locationId: string, userId: string) 
   };
 }
 
+// Aggregates are precomputed on the location docs by the onRatingWritten
+// Cloud Function (ratingCount / ratingSum / tagCounts) — reading them costs
+// `locations.length` reads and zero ratings reads, replacing the old
+// full-collection scan of locationRatings.
+function readAggregateFromLocationDoc(data: Record<string, unknown>) {
+  const ratingCount = typeof data.ratingCount === "number" ? data.ratingCount : 0;
+  const ratingSum = typeof data.ratingSum === "number" ? data.ratingSum : 0;
+
+  return {
+    ratingCount,
+    averageStars: ratingCount > 0 ? ratingSum / ratingCount : null,
+    tagCounts:
+      data.tagCounts && typeof data.tagCounts === "object"
+        ? (data.tagCounts as Record<string, number>)
+        : {},
+  };
+}
+
 export async function getLocationRatingAggregates() {
-  const snapshot = await getDocs(collection(db, COLLECTIONS.locationRatings));
-  const ratings = snapshot.docs
-    .map((ratingDoc) => ratingDoc.data() as LocationRating)
-    .filter((rating) => Number.isInteger(rating.stars) && rating.stars >= 1 && rating.stars <= 5);
-
-  const byLocation = new Map<string, LocationRating[]>();
-
-  for (const rating of ratings) {
-    const existing = byLocation.get(rating.locationId) ?? [];
-    existing.push(rating);
-    byLocation.set(rating.locationId, existing);
-  }
-
+  const snapshot = await getDocs(collection(db, COLLECTIONS.locations));
   const aggregates = new Map<string, LocationRatingAggregate>();
 
-  for (const [locationId, locationRatings] of byLocation.entries()) {
-    const totalRatings = locationRatings.length;
-    const averageStars =
-      locationRatings.reduce((sum, r) => sum + r.stars, 0) / totalRatings;
+  snapshot.forEach((locationDoc) => {
+    const { ratingCount, averageStars, tagCounts } = readAggregateFromLocationDoc(
+      locationDoc.data()
+    );
 
-    const tagCounts = new Map<string, number>();
-    for (const rating of locationRatings) {
-      for (const tag of sanitizeLocationRatingTags(rating.tags)) {
-        tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
-      }
+    if (ratingCount === 0 || averageStars === null) {
+      return;
     }
 
-    const reviewTags = [...tagCounts.entries()]
+    const reviewTags = Object.entries(tagCounts)
+      .filter(([, count]) => typeof count === "number" && count > 0)
       .sort(([firstTag, firstCount], [secondTag, secondCount]) =>
         secondCount === firstCount
           ? firstTag.localeCompare(secondTag)
@@ -782,14 +788,14 @@ export async function getLocationRatingAggregates() {
       )
       .map(([tag]) => tag);
 
-    aggregates.set(locationId, {
+    aggregates.set(locationDoc.id, {
       averageStars: Math.round(averageStars * 10) / 10,
-      locationId,
-      reviewTags,
-      topTags: reviewTags.slice(0, 5),
-      totalRatings,
+      locationId: locationDoc.id,
+      reviewTags: sanitizeLocationRatingTags(reviewTags),
+      topTags: sanitizeLocationRatingTags(reviewTags).slice(0, 5),
+      totalRatings: ratingCount,
     });
-  }
+  });
 
   return aggregates;
 }
