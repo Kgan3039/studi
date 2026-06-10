@@ -10,6 +10,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   getLocations,
+  getProfilesByIds,
   getUpcomingSessions,
   getUserProfile,
   joinSession,
@@ -87,11 +88,7 @@ export default function SessionsScreen() {
       const locationsById = new Map(
         locations.map((location) => [location.locationId, location] as const)
       );
-      const hostIds = [...new Set(loadedSessions.map((session) => session.hostId))];
-      const hostProfiles = await Promise.all(hostIds.map((hostId) => getUserProfile(hostId)));
-      const hostsById = new Map(
-        hostIds.map((hostId, index) => [hostId, hostProfiles[index]] as const)
-      );
+      const hostsById = await getProfilesByIds(loadedSessions.map((session) => session.hostId));
 
       setSessions(
         loadedSessions.map((session) => ({
