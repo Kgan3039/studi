@@ -226,7 +226,10 @@ service cloud.firestore {
     // ------------------------------------------------------------------
 
     match /locations/{locationId} {
-      allow read: if isVerifiedUwUser();
+      // Curated public data (also bundled in the app binary) — readable by any
+      // signed-in user, including pre-verification. Matches the pre-rewrite
+      // behavior; verification gates stay on the sensitive collections.
+      allow read: if request.auth != null;
       allow write: if false; // aggregates written by Cloud Function (admin bypasses rules)
     }
 

@@ -382,6 +382,26 @@ describe('conversations + messages', () => {
 });
 
 // ---------------------------------------------------------------- blocks
+describe('locations (curated public data)', () => {
+  it('readable by any signed-in user, including unverified', async () => {
+    await seed('locations/college-library', { name: 'College Library', campusArea: 'Lakeshore' });
+    await assertSucceeds(getDoc(doc(ctx(ALICE), 'locations', 'college-library')));
+    await assertSucceeds(
+      getDoc(doc(ctx(BOB, { verified: false }), 'locations', 'college-library'))
+    );
+  });
+
+  it('not readable signed-out; never client-writable', async () => {
+    await seed('locations/college-library', { name: 'College Library', campusArea: 'Lakeshore' });
+    await assertFails(
+      getDoc(doc(env.unauthenticatedContext().firestore(), 'locations', 'college-library'))
+    );
+    await assertFails(updateDoc(doc(ctx(ALICE), 'locations', 'college-library'), {
+      ratingCount: 9999,
+    }));
+  });
+});
+
 describe('userBlocks (D5: blocker-only visibility)', () => {
   it('blocker creates/reads/deletes; blocked party cannot read', async () => {
     await assertSucceeds(setDoc(doc(ctx(ALICE), 'userBlocks', `${ALICE}__${BOB}`), {
