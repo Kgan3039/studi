@@ -59,7 +59,7 @@ export default function MessagesScreen() {
           ? `You have ${loadedConversations.length} conversation${
               loadedConversations.length === 1 ? '' : 's'
             }.`
-          : 'No conversations yet. Start from a match or session attendee to message someone.'
+          : 'No conversations yet. Open a session and message an attendee to start one.'
       );
       setIsLoading(false);
     });
@@ -77,7 +77,7 @@ export default function MessagesScreen() {
           Messages
         </ThemedText>
         <ThemedText style={styles.heroText}>
-          Coordinate with matches and session partners without leaving Studi.
+          Coordinate with session partners without leaving Studi.
         </ThemedText>
       </ThemedView>
 
@@ -135,7 +135,7 @@ export default function MessagesScreen() {
         <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
           <ThemedText type="subtitle">No messages yet</ThemedText>
           <ThemedText>
-            Open a match or session detail and start a conversation from there.
+            Open a session detail and start a conversation from there.
           </ThemedText>
         </ThemedView>
       )}
