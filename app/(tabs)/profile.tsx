@@ -13,10 +13,15 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ExternalLink } from '@/components/external-link';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TimeDropdown } from '@/components/time-dropdown';
-import { STUDI_SUPPORT_EMAIL } from '@/constants/app-info';
+import {
+  STUDI_CONTACT_EMAIL,
+  STUDI_PRIVACY_POLICY_URL,
+  STUDI_SUPPORT_URL,
+} from '@/constants/app-info';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
@@ -119,6 +124,10 @@ function parseTimeInput(value: string) {
 }
 
 const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+function buildMailtoHref(email: string, subject: string) {
+  return `mailto:${email}?subject=${encodeURIComponent(subject)}` as Href & string;
+}
 
 function startOfMonth(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), 1);
@@ -924,19 +933,32 @@ export default function ProfileScreen() {
 
       <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
         <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Privacy and support</ThemedText>
+          <ThemedText style={styles.sectionLabel}>App Store review</ThemedText>
         </View>
-        <ThemedText type="subtitle">Help, policy, and data requests</ThemedText>
+        <ThemedText type="subtitle">Privacy, support, and contact</ThemedText>
         <ThemedText style={styles.mutedText}>
-          Open the privacy policy, contact {STUDI_SUPPORT_EMAIL}, or find account data request
-          options before using delete account.
+          These links stay available from Profile for privacy review, support, and account help.
         </ThemedText>
-        <Pressable
-          disabled={isBusy}
-          onPress={() => router.push('/privacy-support' as Href)}
-          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isBusy ? 0.6 : 1 }]}>
-          <ThemedText type="defaultSemiBold">Privacy & Support</ThemedText>
-        </Pressable>
+        <View style={styles.reviewLinkList}>
+          <ExternalLink href={STUDI_PRIVACY_POLICY_URL as Href & string} asChild>
+            <Pressable style={[styles.reviewLinkButton, { borderColor: palette.outline }]}>
+              <ThemedText type="defaultSemiBold">Privacy Policy</ThemedText>
+              <ThemedText style={styles.reviewLinkMeta}>Policy URL</ThemedText>
+            </Pressable>
+          </ExternalLink>
+          <ExternalLink href={STUDI_SUPPORT_URL as Href & string} asChild>
+            <Pressable style={[styles.reviewLinkButton, { borderColor: palette.outline }]}>
+              <ThemedText type="defaultSemiBold">Support</ThemedText>
+              <ThemedText style={styles.reviewLinkMeta}>Support URL</ThemedText>
+            </Pressable>
+          </ExternalLink>
+          <ExternalLink href={buildMailtoHref(STUDI_CONTACT_EMAIL, 'Studi Contact')} asChild>
+            <Pressable style={[styles.reviewLinkButton, { borderColor: palette.outline }]}>
+              <ThemedText type="defaultSemiBold">Contact</ThemedText>
+              <ThemedText style={styles.reviewLinkMeta}>{STUDI_CONTACT_EMAIL}</ThemedText>
+            </Pressable>
+          </ExternalLink>
+        </View>
       </ThemedView>
 
       <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
@@ -1229,6 +1251,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 54,
     paddingHorizontal: 16,
+  },
+  reviewLinkList: {
+    gap: 10,
+  },
+  reviewLinkButton: {
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 2,
+    justifyContent: 'center',
+    minHeight: 58,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  reviewLinkMeta: {
+    fontSize: 13,
+    opacity: 0.65,
   },
   modalBackdrop: {
     alignItems: 'center',

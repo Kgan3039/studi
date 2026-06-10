@@ -21,11 +21,12 @@ export default function RootLayout() {
         <Stack.Screen name="conversation/[conversationId]" options={{ title: 'Conversation' }} />
         <Stack.Screen name="match/[userId]" options={{ title: 'Match Details' }} />
         <Stack.Screen name="matches" options={{ title: 'Matched Students' }} />
-        <Stack.Screen name="privacy-support" options={{ title: 'Privacy & Support' }} />
+        <Stack.Screen name="privacy" options={{ title: 'Privacy Policy' }} />
         <Stack.Screen name="report-user" options={{ title: 'Report User' }} />
         <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />
         <Stack.Screen name="rate-location" options={{ title: 'Rate This Spot' }} />
         <Stack.Screen name="sessions" options={{ title: 'Available Sessions' }} />
+        <Stack.Screen name="support" options={{ title: 'Support' }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
       <StatusBar style="auto" />
