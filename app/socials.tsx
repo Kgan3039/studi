@@ -90,9 +90,11 @@ export default function SocialsScreen() {
       return;
     }
 
+    const user = currentUser;
+
     async function loadSocials() {
       try {
-        const profile = await getUserProfile(currentUser.uid);
+        const profile = await getUserProfile(user.uid);
 
         setSocials({
           phone: profile?.socials?.phone ?? '',
