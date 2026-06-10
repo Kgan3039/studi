@@ -51,14 +51,14 @@ export default function PrivacyPolicyScreen() {
 
       <PolicySection title="Information We Collect">
         <Bullet text="Account information, including email address, display name, and sign-in provider details." />
-        <Bullet text="Profile information you choose to add, including classes, availability, and optional social/contact links." />
+        <Bullet text="Profile information you choose to add, including your display name and classes." />
         <Bullet text="Study activity you create in the app, including sessions, session participation, messages, reports, blocks, and study location ratings." />
         <Bullet text="Technical data needed to operate the app, such as authentication state, timestamps, and Firebase service logs." />
       </PolicySection>
 
       <PolicySection title="How We Use Information">
         <Bullet text="Create and secure your account." />
-        <Bullet text="Match students by class and availability." />
+        <Bullet text="Show study sessions relevant to your classes." />
         <Bullet text="Show sessions, messages, location ratings, and profile details to the people who need them for app features." />
         <Bullet text="Investigate reports, prevent abuse, debug issues, and keep the service reliable." />
       </PolicySection>
@@ -81,7 +81,7 @@ export default function PrivacyPolicyScreen() {
       </PolicySection>
 
       <PolicySection title="Your Choices">
-        <Bullet text="You can edit profile details, classes, availability, and optional social links from Profile." />
+        <Bullet text="You can edit your display name and classes from Profile." />
         <Bullet text="You can delete your account from Profile > Account actions > Delete Account." />
         <Bullet text="You can contact us to request access, correction, deletion, or consent withdrawal help." />
       </PolicySection>

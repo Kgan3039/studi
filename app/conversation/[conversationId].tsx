@@ -33,9 +33,8 @@ function formatTimestamp(value: unknown) {
 
 export default function ConversationScreen() {
   const router = useRouter();
-  const { conversationId, otherUserId, otherUserName, otherUserEmail } = useLocalSearchParams<{
+  const { conversationId, otherUserId, otherUserName } = useLocalSearchParams<{
     conversationId?: string;
-    otherUserEmail?: string;
     otherUserId?: string;
     otherUserName?: string;
   }>();
@@ -66,13 +65,13 @@ export default function ConversationScreen() {
       setMessages(loadedMessages);
       setStatus(
         loadedMessages.length > 0
-          ? `Chatting with ${otherUserName || otherUserEmail || 'this student'}.`
-          : `Start the conversation with ${otherUserName || otherUserEmail || 'this student'}.`
+          ? `Chatting with ${otherUserName || 'Student'}.`
+          : `Start the conversation with ${otherUserName || 'Student'}.`
       );
     });
 
     return unsubscribe;
-  }, [conversationId, currentUser, otherUserEmail, otherUserName]);
+  }, [conversationId, currentUser, otherUserName]);
 
   useEffect(() => {
     async function loadBlocks() {
@@ -114,7 +113,10 @@ export default function ConversationScreen() {
     try {
       await blockUser(currentUser.uid, otherUserId);
       setBlockedUserIds((currentIds) => [...new Set([...currentIds, otherUserId])]);
-      Alert.alert('User Blocked', 'You will no longer see this user in matching results.');
+      Alert.alert(
+        'User Blocked',
+        "They can no longer message you or join a conversation with you. You won't see them in attendee lists."
+      );
       router.replace('/messages');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to block this user.';
@@ -131,7 +133,7 @@ export default function ConversationScreen() {
       <ThemedView style={[styles.hero, { backgroundColor: palette.hero }]}>
         <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Direct chat</ThemedText>
         <ThemedText type="title" style={styles.heroTitle}>
-          {otherUserName || 'Deleted User'}
+          {otherUserName || 'Student'}
         </ThemedText>
         <ThemedText style={styles.heroText}>
           Use this space to coordinate times, places, and session details with another student.
@@ -147,7 +149,6 @@ export default function ConversationScreen() {
                 params: {
                   reportedUserId: otherUserId || '',
                   reportedUserName: otherUserName || '',
-                  reportedUserEmail: otherUserEmail || '',
                   context: 'conversation',
                 },
               })

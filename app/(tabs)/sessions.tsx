@@ -196,7 +196,9 @@ export default function SessionsScreen() {
               <ThemedText style={styles.metaText}>
                 {formatSessionTime(session.startTime)} to {formatSessionTime(session.endTime)}
               </ThemedText>
-              <ThemedText style={styles.metaText}>Host: {session.hostEmail || session.hostId}</ThemedText>
+              <ThemedText style={styles.metaText}>
+                Host: {session.hostProfile?.displayName || 'Student'}
+              </ThemedText>
               <ThemedText style={styles.metaText}>
                 Participants: {session.participantIds.length}
               </ThemedText>
