@@ -329,6 +329,30 @@ describe('conversations + messages', () => {
     }));
   });
 
+  it('client send flow for a max-length message: sliced preview passes, full text does not', async () => {
+    // Regression: sendDirectMessage must write lastMessagePreview as
+    // text.slice(0, 200) — a 2000-char message is a valid message but an
+    // invalid preview, so the unsliced shape strands the conversation update.
+    const cid = convoId(ALICE, BOB);
+    const longText = 'x'.repeat(2000);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB),
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+      lastMessageAt: Timestamp.now(),
+    });
+    await assertSucceeds(setDoc(doc(ctx(ALICE), 'conversations', cid, 'messages', 'm1'), {
+      senderId: ALICE, text: longText, createdAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'conversations', cid), {
+      lastMessagePreview: longText, lastMessageAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'conversations', cid), {
+      lastMessagePreview: longText.slice(0, 200), lastMessageAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
+  });
+
   it('messages: sender-only create, 1–2000 chars, block stops mid-thread', async () => {
     const cid = convoId(ALICE, BOB);
     await seed(`conversations/${cid}`, {
