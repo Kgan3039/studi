@@ -8,16 +8,23 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
-import { getSessions, joinSession, type StudySessionListItem } from '@/lib/firestore';
+import {
+  getLocations,
+  getUpcomingSessions,
+  getUserProfile,
+  joinSession,
+  type StudySession,
+} from '@/lib/firestore';
 import type { User } from 'firebase/auth';
+import type { Timestamp } from 'firebase/firestore';
 
-function formatSessionTime(timestamp: string) {
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) {
-    return timestamp;
-  }
+type SessionListEntry = StudySession & {
+  hostName: string;
+  locationName: string;
+};
 
-  return date.toLocaleString('en-US', {
+function formatSessionTime(timestamp: Timestamp) {
+  return timestamp.toDate().toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
@@ -32,17 +39,15 @@ export default function SessionsScreen() {
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [sessions, setSessions] = useState<StudySessionListItem[]>([]);
+  const [profileClasses, setProfileClasses] = useState<string[]>([]);
+  const [showAllClasses, setShowAllClasses] = useState(false);
+  const [sessions, setSessions] = useState<SessionListEntry[]>([]);
   const [status, setStatus] = useState('Loading sessions...');
   const [isLoading, setIsLoading] = useState(true);
   const [joiningSessionId, setJoiningSessionId] = useState('');
   const normalizedRequestedClass = requestedClassId?.trim().toUpperCase() ?? '';
 
-  const visibleSessions = normalizedRequestedClass
-    ? sessions.filter(
-        (session) => session.classId.trim().toUpperCase() === normalizedRequestedClass
-      )
-    : sessions;
+  const visibleSessions = sessions;
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -52,26 +57,59 @@ export default function SessionsScreen() {
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    if (!currentUser) {
+      setProfileClasses([]);
+      return;
+    }
+
+    getUserProfile(currentUser.uid)
+      .then((profile) => setProfileClasses(profile?.classes ?? []))
+      .catch(() => setProfileClasses([]));
+  }, [currentUser]);
+
+  const isFilteredToMyClasses =
+    !normalizedRequestedClass && !showAllClasses && profileClasses.length > 0;
+
   const loadSessions = useCallback(async () => {
     try {
       setIsLoading(true);
-      const loadedSessions = await getSessions();
-      const filteredCount = normalizedRequestedClass
-        ? loadedSessions.filter(
-            (session) => session.classId.trim().toUpperCase() === normalizedRequestedClass
-          ).length
-        : loadedSessions.length;
-      setSessions(loadedSessions);
+      const classIds = normalizedRequestedClass
+        ? [normalizedRequestedClass]
+        : isFilteredToMyClasses
+          ? profileClasses
+          : undefined;
+      const [loadedSessions, locations] = await Promise.all([
+        getUpcomingSessions(classIds ? { classIds } : undefined),
+        getLocations(),
+      ]);
+
+      const locationsById = new Map(
+        locations.map((location) => [location.locationId, location] as const)
+      );
+      const hostIds = [...new Set(loadedSessions.map((session) => session.hostId))];
+      const hostProfiles = await Promise.all(hostIds.map((hostId) => getUserProfile(hostId)));
+      const hostsById = new Map(
+        hostIds.map((hostId, index) => [hostId, hostProfiles[index]] as const)
+      );
+
+      setSessions(
+        loadedSessions.map((session) => ({
+          ...session,
+          hostName: hostsById.get(session.hostId)?.displayName || 'Student',
+          locationName: locationsById.get(session.locationId)?.name ?? session.locationId,
+        }))
+      );
       setStatus(
         loadedSessions.length > 0
           ? normalizedRequestedClass
-            ? `Loaded ${filteredCount} session${
-                filteredCount === 1
-                  ? ''
-                  : 's'
+            ? `Loaded ${loadedSessions.length} upcoming session${
+                loadedSessions.length === 1 ? '' : 's'
               } for ${normalizedRequestedClass}.`
-            : `Loaded ${loadedSessions.length} available session${loadedSessions.length === 1 ? '' : 's'}.`
-          : 'No sessions available yet.'
+            : `Loaded ${loadedSessions.length} upcoming session${
+                loadedSessions.length === 1 ? '' : 's'
+              }.`
+          : 'No upcoming sessions yet.'
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load sessions right now.';
@@ -79,7 +117,7 @@ export default function SessionsScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [normalizedRequestedClass]);
+  }, [isFilteredToMyClasses, normalizedRequestedClass, profileClasses]);
 
   useEffect(() => {
     loadSessions();
@@ -93,10 +131,13 @@ export default function SessionsScreen() {
 
     try {
       setJoiningSessionId(sessionId);
-      await joinSession(sessionId, currentUser.uid);
-      setStatus('Joined session successfully.');
+      const result = await joinSession(sessionId, currentUser.uid);
       await loadSessions();
-      Alert.alert('Joined Session', 'You were added to the session participant list.');
+
+      if (result === 'joined') {
+        setStatus('Joined session successfully.');
+        Alert.alert('Joined Session', 'You were added to the session participant list.');
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to join this session right now.';
       setStatus(message);
@@ -145,6 +186,42 @@ export default function SessionsScreen() {
             : 'Browse and join a session'}
         </ThemedText>
         <ThemedText style={styles.statusText}>{status}</ThemedText>
+        {!normalizedRequestedClass && profileClasses.length > 0 ? (
+          <View style={styles.chipRow}>
+            <Pressable
+              onPress={() => setShowAllClasses(false)}
+              style={[
+                styles.chip,
+                {
+                  backgroundColor: !showAllClasses ? palette.tint : palette.surfaceMuted,
+                  borderColor: !showAllClasses ? palette.tint : palette.outline,
+                },
+              ]}>
+              <ThemedText
+                type="defaultSemiBold"
+                lightColor={!showAllClasses ? '#ffffff' : undefined}
+                darkColor={!showAllClasses ? '#ffffff' : undefined}>
+                My classes
+              </ThemedText>
+            </Pressable>
+            <Pressable
+              onPress={() => setShowAllClasses(true)}
+              style={[
+                styles.chip,
+                {
+                  backgroundColor: showAllClasses ? palette.tint : palette.surfaceMuted,
+                  borderColor: showAllClasses ? palette.tint : palette.outline,
+                },
+              ]}>
+              <ThemedText
+                type="defaultSemiBold"
+                lightColor={showAllClasses ? '#ffffff' : undefined}
+                darkColor={showAllClasses ? '#ffffff' : undefined}>
+                All classes
+              </ThemedText>
+            </Pressable>
+          </View>
+        ) : null}
         {normalizedRequestedClass ? (
           <Pressable
             onPress={() => router.replace('/sessions')}
@@ -192,13 +269,11 @@ export default function SessionsScreen() {
                 </View>
               </View>
               <ThemedText type="subtitle">{session.title}</ThemedText>
-              <ThemedText style={styles.metaText}>{session.location?.name ?? session.locationId}</ThemedText>
+              <ThemedText style={styles.metaText}>{session.locationName}</ThemedText>
               <ThemedText style={styles.metaText}>
                 {formatSessionTime(session.startTime)} to {formatSessionTime(session.endTime)}
               </ThemedText>
-              <ThemedText style={styles.metaText}>
-                Host: {session.hostProfile?.displayName || 'Student'}
-              </ThemedText>
+              <ThemedText style={styles.metaText}>Host: {session.hostName}</ThemedText>
               <ThemedText style={styles.metaText}>
                 Participants: {session.participantIds.length}
               </ThemedText>
@@ -318,6 +393,19 @@ const styles = StyleSheet.create({
   },
   statusText: {
     opacity: 0.82,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  chip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    minHeight: 40,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
   metaText: {
     opacity: 0.8,

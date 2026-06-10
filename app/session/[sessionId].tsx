@@ -16,14 +16,10 @@ import {
   type StudySessionListItem,
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
+import type { Timestamp } from 'firebase/firestore';
 
-function formatSessionTime(timestamp: string) {
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) {
-    return timestamp;
-  }
-
-  return date.toLocaleString('en-US', {
+function formatSessionTime(timestamp: Timestamp) {
+  return timestamp.toDate().toLocaleString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -117,10 +113,13 @@ export default function SessionDetailScreen() {
 
     try {
       setIsJoining(true);
-      await joinSession(sessionId, currentUser.uid);
+      const result = await joinSession(sessionId, currentUser.uid);
       await loadSession();
-      setStatus('Joined session successfully.');
-      Alert.alert('Joined Session', 'You were added to the attendee list.');
+
+      if (result === 'joined') {
+        setStatus('Joined session successfully.');
+        Alert.alert('Joined Session', 'You were added to the attendee list.');
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to join this session.';
       setStatus(message);

@@ -244,8 +244,8 @@ export default function CreateSessionScreen() {
         hostId: currentUser.uid,
         locationId: selectedLocationId,
         title: `${selectedClass} Study Session`,
-        startTime: validatedSchedule.startTimeIso,
-        endTime: validatedSchedule.endTimeIso,
+        startTime: new Date(validatedSchedule.startTimeIso),
+        endTime: new Date(validatedSchedule.endTimeIso),
       });
 
       setStatus(`Session created successfully. Session ID: ${sessionId}`);
