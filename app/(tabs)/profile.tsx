@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ExternalLink } from '@/components/external-link';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { identifyUser, track } from '@/lib/analytics';
 import {
   STUDI_CONTACT_EMAIL,
   STUDI_PRIVACY_POLICY_URL,
@@ -179,6 +180,8 @@ export default function ProfileScreen() {
     try {
       setIsSaving(true);
       await updateUserClasses(currentUser.uid, classes);
+      track('classes_saved', { count: classes.length });
+      identifyUser(currentUser.uid, { classCount: classes.length });
       setClassesStatus(
         classes.length > 0
           ? `You'll see sessions for ${classes.length} class${classes.length === 1 ? '' : 'es'}.`

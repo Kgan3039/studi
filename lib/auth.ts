@@ -13,6 +13,7 @@ import {
 } from "firebase/auth";
 
 import { auth } from "../firebaseConfig";
+import { identifyUser, resetAnalyticsIdentity, track } from "./analytics";
 import { createOrUpdateUserProfile } from "./firestore";
 
 const UW_EMAIL_DOMAIN = "@wisc.edu";
@@ -118,6 +119,7 @@ export async function signUp(
     // profile is written post-verification (rules require a verified token).
     await updateProfile(credential.user, { displayName });
     await sendEmailVerification(credential.user);
+    track("sign_up_completed");
 
     return credential.user;
   } catch (error: unknown) {
@@ -164,6 +166,8 @@ export async function refreshVerificationState() {
 
   if (freshUser?.emailVerified) {
     await syncUserProfile(freshUser, freshUser.displayName ?? undefined);
+    track("email_verified");
+    identifyUser(freshUser.uid);
     return { verified: true };
   }
 
@@ -195,6 +199,7 @@ export function subscribeToAuthState(listener: (user: User | null) => void) {
 
 export async function logOut() {
   await signOut(auth);
+  resetAnalyticsIdentity();
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +254,9 @@ export async function deleteCurrentUserAccount(
     const { getFunctions, httpsCallable } = await import("firebase/functions");
     const callDelete = httpsCallable(getFunctions(undefined, "us-central1"), "deleteUserAccount");
     await callDelete({});
+    track("account_deleted");
     await signOut(auth); // the server already deleted the Auth user; clear local state
+    resetAnalyticsIdentity();
     return { status: "deleted" };
   } catch (error) {
     if (isRecentLoginRequiredError(error)) {

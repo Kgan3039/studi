@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   getBlockedUserIds,
@@ -88,6 +89,7 @@ export default function SessionDetailScreen() {
 
       setSession(loadedSession);
       setStatus('Session details loaded.');
+      track('session_viewed', { classId: loadedSession.classId });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Unable to load session details right now.';
@@ -117,6 +119,9 @@ export default function SessionDetailScreen() {
       await loadSession();
 
       if (result === 'joined') {
+        if (session) {
+          track('session_joined', { classId: session.classId });
+        }
         setStatus('Joined session successfully.');
         Alert.alert('Joined Session', 'You were added to the attendee list.');
       }
