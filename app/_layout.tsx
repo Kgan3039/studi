@@ -16,7 +16,6 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="complete-profile" options={{ title: 'Complete Profile' }} />
         <Stack.Screen name="create-session" options={{ title: 'Create Session' }} />
         <Stack.Screen name="conversation/[conversationId]" options={{ title: 'Conversation' }} />
         <Stack.Screen name="privacy" options={{ title: 'Privacy Policy' }} />
@@ -24,6 +23,7 @@ export default function RootLayout() {
         <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />
         <Stack.Screen name="rate-location" options={{ title: 'Rate This Spot' }} />
         <Stack.Screen name="support" options={{ title: 'Support' }} />
+        <Stack.Screen name="verify-email" options={{ title: 'Verify Email', headerShown: false }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

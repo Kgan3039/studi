@@ -140,10 +140,6 @@ export type LocationRatingAggregate = {
   totalRatings: number;
 };
 
-type UserProfileWrite = Partial<Omit<UserProfile, "uid" | "updatedAt">> & {
-  email: string;
-};
-
 type CreateSessionInput = Omit<
   StudySession,
   "createdAt" | "participantIds" | "sessionId" | "status" | "updatedAt"
@@ -199,35 +195,21 @@ function getBuiltInStudyLocations() {
 
 export async function createOrUpdateUserProfile(
   userId: string,
-  profile: UserProfileWrite
+  data: { email: string; displayName?: string }
 ) {
   const userRef = doc(db, COLLECTIONS.users, userId);
-  const existingUser = await getDoc(userRef);
+  const existing = await getDoc(userRef);
 
-  await setDoc(
-    userRef,
-    {
-      uid: userId,
-      email: profile.email,
-      displayName: profile.displayName ?? "",
-      photoURL: profile.photoURL ?? "",
-      classes: profile.classes ?? existingUser.data()?.classes ?? [],
-      availability: profile.availability ?? existingUser.data()?.availability ?? [],
-      socials: profile.socials ?? existingUser.data()?.socials ?? {
-        phone: "",
-        instagram: "",
-        snapchat: "",
-        discord: "",
-      },
-      createdAt:
-        existingUser.data()?.createdAt ??
-        profile.createdAt ??
-        serverTimestamp(),
-      lastLoginAt: profile.lastLoginAt ?? serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
+  const payload: Record<string, unknown> = {
+    email: data.email,
+    updatedAt: serverTimestamp(),
+    ...(existing.exists() ? {} : { createdAt: serverTimestamp(), classes: [] }),
+    // Only set displayName when explicitly provided (sign-up / verification),
+    // never from a plain sign-in — fixes the clobber-on-login bug.
+    ...(data.displayName ? { displayName: data.displayName } : {}),
+  };
+
+  await setDoc(userRef, payload, { merge: true });
 }
 
 export async function getUserProfile(userId: string) {

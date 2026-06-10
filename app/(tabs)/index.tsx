@@ -17,7 +17,9 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
-  signInOrPrepareAccountCreation,
+  requestPasswordReset,
+  signIn,
+  signUp,
   subscribeToAuthState,
 } from '@/lib/auth';
 import { getUserProfile, type UserProfile } from '@/lib/firestore';
@@ -56,6 +58,9 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [authMode, setAuthMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isBusy, setIsBusy] = useState(false);
@@ -63,7 +68,13 @@ export default function HomeScreen() {
   const [dashboardStatus, setDashboardStatus] = useState(
     'Sign in to find and join study sessions for your classes.'
   );
-  const isSignedIn = !!currentUser;
+  const isSignedIn = !!currentUser && currentUser.emailVerified;
+
+  useEffect(() => {
+    if (currentUser && !currentUser.emailVerified) {
+      router.replace('/verify-email');
+    }
+  }, [currentUser, router]);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -83,7 +94,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     async function loadUserProfile() {
-      if (!currentUser) {
+      if (!currentUser || !currentUser.emailVerified) {
         return;
       }
 
@@ -114,24 +125,41 @@ export default function HomeScreen() {
     loadUserProfile();
   }, [currentUser]);
 
-  async function handleSignIn() {
+  async function handleSubmitAuth() {
     try {
       setIsBusy(true);
-      const result = await signInOrPrepareAccountCreation(email, password);
-
-      if (result.mode === 'needs-profile') {
-        router.push('/complete-profile');
+      if (authMode === 'sign-in') {
+        await signIn(email, password);
+      } else {
+        await signUp(email, password, firstName, lastName);
+        router.replace('/verify-email');
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to sign in right now.';
-      Alert.alert('Auth Error', message);
+      const message = error instanceof Error ? error.message : 'Unable to continue right now.';
+      Alert.alert(authMode === 'sign-in' ? 'Sign In Error' : 'Sign Up Error', message);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleForgotPassword() {
+    try {
+      setIsBusy(true);
+      await requestPasswordReset(email);
+      Alert.alert(
+        'Check Your Email',
+        'If an account exists for that address, a password reset link is on its way.'
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to send a reset email.';
+      Alert.alert('Reset Error', message);
     } finally {
       setIsBusy(false);
     }
   }
 
   const savedName = splitDisplayName(profile?.displayName);
-  const firstName = savedName.firstName || 'Study';
+  const welcomeName = savedName.firstName || 'Study';
   const setup = useMemo(() => getSetupSummary(profile), [profile]);
   const classCount = profile?.classes.length ?? 0;
 
@@ -165,7 +193,7 @@ export default function HomeScreen() {
                 </ThemedText>
               </View>
             </View>
-            <ThemedText type="subtitle">Welcome back, {firstName}</ThemedText>
+            <ThemedText type="subtitle">Welcome back, {welcomeName}</ThemedText>
             <ThemedText style={styles.helperText}>{dashboardStatus}</ThemedText>
             <View style={styles.metricsRow}>
               <View style={[styles.metricCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
@@ -257,11 +285,35 @@ export default function HomeScreen() {
                 <ThemedText type="defaultSemiBold">Start here</ThemedText>
               </View>
             </View>
-            <ThemedText type="subtitle">Sign in with your UW email</ThemedText>
-            <ThemedText style={styles.helperText}>
-              Use a `@wisc.edu` email. If the account does not exist yet, we&apos;ll send you to a
-              quick profile screen to finish setting up your name before you enter the app.
+            <ThemedText type="subtitle">
+              {authMode === 'sign-in' ? 'Sign in with your UW email' : 'Create your Studi account'}
             </ThemedText>
+            <ThemedText style={styles.helperText}>
+              {authMode === 'sign-in'
+                ? 'Use your @wisc.edu email and password to sign in.'
+                : 'Use your @wisc.edu email. We will send a verification link before you can enter the app.'}
+            </ThemedText>
+
+            {authMode === 'sign-up' ? (
+              <View style={styles.inlineRow}>
+                <TextInput
+                  autoCapitalize="words"
+                  onChangeText={setFirstName}
+                  placeholder="First name"
+                  placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+                  style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
+                  value={firstName}
+                />
+                <TextInput
+                  autoCapitalize="words"
+                  onChangeText={setLastName}
+                  placeholder="Last name"
+                  placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+                  style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
+                  value={lastName}
+                />
+              </View>
+            ) : null}
 
             <TextInput
               autoCapitalize="none"
@@ -286,26 +338,45 @@ export default function HomeScreen() {
 
             <Pressable
               disabled={isBusy}
-              onPress={handleSignIn}
+              onPress={handleSubmitAuth}
               style={[styles.primaryButton, { backgroundColor: palette.tint, opacity: isBusy ? 0.7 : 1 }]}>
               {isBusy ? (
                 <ActivityIndicator color="#ffffff" />
               ) : (
                 <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-                  Sign In / Create Account
+                  {authMode === 'sign-in' ? 'Sign In' : 'Create Account'}
                 </ThemedText>
               )}
             </Pressable>
+
+            <Pressable
+              disabled={isBusy}
+              onPress={() => setAuthMode(authMode === 'sign-in' ? 'sign-up' : 'sign-in')}
+              style={styles.textLink}>
+              <ThemedText type="defaultSemiBold" style={{ color: palette.tint }}>
+                {authMode === 'sign-in'
+                  ? 'New to Studi? Create an account'
+                  : 'Have an account? Sign in'}
+              </ThemedText>
+            </Pressable>
+
+            {authMode === 'sign-in' ? (
+              <Pressable disabled={isBusy} onPress={handleForgotPassword} style={styles.textLink}>
+                <ThemedText type="defaultSemiBold" style={{ color: palette.tint }}>
+                  Forgot password?
+                </ThemedText>
+              </Pressable>
+            ) : null}
           </ThemedView>
 
           <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
             <View style={styles.sectionHeader}>
               <ThemedText style={styles.sectionLabel}>What happens next</ThemedText>
             </View>
-            <ThemedText type="subtitle">One login, then a personalized dashboard</ThemedText>
+            <ThemedText type="subtitle">Verify once, then a personalized dashboard</ThemedText>
             <ThemedText style={styles.mutedText}>
-              New users finish their name on a separate setup screen, then land inside Studi with
-              access to profile editing, study spots, messages, and sessions.
+              New users verify their @wisc.edu email from a link we send, then land inside Studi
+              with access to profile editing, study spots, messages, and sessions.
             </ThemedText>
           </ThemedView>
         </>
@@ -392,6 +463,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     minHeight: 56,
     paddingHorizontal: 16,
+  },
+  inlineRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  flexInput: {
+    flex: 1,
+  },
+  textLink: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
   },
   primaryButton: {
     alignItems: 'center',
