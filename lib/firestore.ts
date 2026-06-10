@@ -7,6 +7,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -23,7 +24,6 @@ import { UW_STUDY_LOCATIONS } from "@/data/uw-study-locations";
 import { sanitizeLocationRatingTags } from "@/data/location-rating-options";
 import { findStudyLocationById } from "@/lib/catalog";
 import { db } from "../firebaseConfig";
-import { validateSessionSchedule } from "./session-schedule";
 export const COLLECTIONS = {
   conversations: "conversations",
   locationRatings: "locationRatings",
@@ -46,18 +46,17 @@ export type UserProfile = {
 
 export type StudySessionStatus = "cancelled" | "full" | "open";
 
+// Session times are Firestore Timestamps (D4).
 export type StudySession = {
   classId: string;
-  createdAt?: unknown;
-  endTime: string;
+  endTime: Timestamp;
   hostId: string;
   locationId: string;
   participantIds: string[];
   sessionId: string;
-  startTime: string;
+  startTime: Timestamp;
   status: StudySessionStatus;
   title: string;
-  updatedAt?: unknown;
 };
 
 export type StudyLocation = {
@@ -118,14 +117,6 @@ export type LocationRatingAggregate = {
   reviewTags: string[];
   topTags: string[];
   totalRatings: number;
-};
-
-type CreateSessionInput = Omit<
-  StudySession,
-  "createdAt" | "participantIds" | "sessionId" | "status" | "updatedAt"
-> & {
-  participantIds?: string[];
-  status?: StudySessionStatus;
 };
 
 function buildDirectConversationKey(firstUserId: string, secondUserId: string) {
@@ -347,65 +338,49 @@ export async function getLocations() {
   }
 }
 
-export async function getSessions() {
-  const sessionsQuery = query(
-    collection(db, COLLECTIONS.sessions),
-    orderBy("createdAt", "desc")
-  );
-  const [sessionsSnapshot, locations] = await Promise.all([
-    getDocs(sessionsQuery),
-    getLocations(),
-  ]);
+const SESSIONS_PAGE_SIZE = 50;
 
-  const locationsById = new Map(
-    locations.map((location) => [location.locationId, location] as const)
-  );
+export async function getUpcomingSessions(options?: {
+  classIds?: string[];
+}): Promise<StudySession[]> {
+  const now = Timestamp.now();
+  // `in` queries cap at 10 entries; users with 11-12 classes see their first
+  // 10 in the filtered view — the "All classes" view covers the gap.
+  const classIds = (options?.classIds ?? []).slice(0, 10);
 
-  const sessionDocs = sessionsSnapshot.docs.map((sessionDoc) => ({
-    sessionId: sessionDoc.id,
-    ...(sessionDoc.data() as Omit<StudySession, "sessionId">),
-  }));
+  const constraints =
+    classIds.length > 0
+      ? [
+          where("classId", "in", classIds),
+          where("startTime", ">=", now),
+          orderBy("startTime", "asc"),
+          limit(SESSIONS_PAGE_SIZE),
+        ]
+      : [
+          where("startTime", ">=", now),
+          orderBy("startTime", "asc"),
+          limit(SESSIONS_PAGE_SIZE),
+        ];
 
-  const hostIds = [...new Set(sessionDocs.map((session) => session.hostId))];
-  const hostProfiles = await Promise.all(hostIds.map((hostId) => getUserProfile(hostId)));
-  const hostsById = new Map(
-    hostIds.map((hostId, index) => [hostId, hostProfiles[index]] as const)
-  );
+  const snapshot = await getDocs(query(collection(db, COLLECTIONS.sessions), ...constraints));
+  const sessions: StudySession[] = [];
 
-  const participantIds = [
-    ...new Set(sessionDocs.flatMap((session) => session.participantIds)),
-  ];
-  const participantProfiles = await Promise.all(
-    participantIds.map((participantId) => getUserProfile(participantId))
-  );
-  const participantsById = new Map(
-    participantIds.map((participantId, index) => [participantId, participantProfiles[index]] as const)
-  );
+  snapshot.forEach((docSnap) => {
+    const data = docSnap.data();
+    sessions.push({
+      sessionId: docSnap.id,
+      classId: data.classId ?? "",
+      hostId: data.hostId ?? "",
+      locationId: data.locationId ?? "",
+      title: data.title ?? "",
+      startTime: data.startTime,
+      endTime: data.endTime,
+      participantIds: Array.isArray(data.participantIds) ? data.participantIds : [],
+      status: data.status ?? "open",
+    });
+  });
 
-  return sessionDocs.map((session) => ({
-    ...session,
-    attendeeProfiles: session.participantIds
-      .map((participantId) => participantsById.get(participantId))
-      .filter((participant): participant is UserProfile => !!participant),
-    hostProfile: hostsById.get(session.hostId) ?? null,
-    location: locationsById.get(session.locationId) ?? findStudyLocationById(session.locationId),
-  }));
-}
-
-export async function getSessionsForClassIds(classIds: string[]) {
-  const normalizedClassIds = classIds
-    .map((classId) => classId.trim().toUpperCase())
-    .filter(Boolean);
-
-  if (normalizedClassIds.length === 0) {
-    return [];
-  }
-
-  const allSessions = await getSessions();
-
-  return allSessions.filter((session) =>
-    normalizedClassIds.includes(session.classId.trim().toUpperCase())
-  );
+  return sessions.filter((s) => s.status !== "cancelled");
 }
 
 export async function getSessionById(sessionId: string) {
@@ -439,53 +414,68 @@ export async function getSessionById(sessionId: string) {
   } satisfies StudySessionListItem;
 }
 
-export async function joinSession(sessionId: string, userId: string) {
-  await updateDoc(doc(db, COLLECTIONS.sessions, sessionId), {
+export async function joinSession(
+  sessionId: string,
+  userId: string
+): Promise<"joined" | "already-joined"> {
+  const sessionRef = doc(db, COLLECTIONS.sessions, sessionId);
+  const snapshot = await getDoc(sessionRef);
+
+  if (!snapshot.exists()) {
+    throw new Error("This session no longer exists.");
+  }
+
+  const data = snapshot.data();
+  const participantIds: string[] = Array.isArray(data.participantIds)
+    ? data.participantIds
+    : [];
+
+  if (participantIds.includes(userId)) {
+    return "already-joined"; // already in — silent no-op instead of a scary error
+  }
+
+  if (data.status !== "open") {
+    throw new Error("This session is no longer open.");
+  }
+
+  if (data.startTime instanceof Timestamp && data.startTime.toMillis() < Date.now()) {
+    throw new Error("This session has already started.");
+  }
+
+  await updateDoc(sessionRef, {
     participantIds: arrayUnion(userId),
+    updatedAt: serverTimestamp(),
+  });
+
+  return "joined";
+}
+
+export async function leaveSession(sessionId: string, userId: string) {
+  await updateDoc(doc(db, COLLECTIONS.sessions, sessionId), {
+    participantIds: arrayRemove(userId),
     updatedAt: serverTimestamp(),
   });
 }
 
-export async function createSession(input: CreateSessionInput) {
-  const startDate = new Date(input.startTime);
-  const endDate = new Date(input.endTime);
+export async function createSession(input: {
+  classId: string;
+  hostId: string;
+  locationId: string;
+  title: string;
+  startTime: Date;
+  endTime: Date;
+}): Promise<string> {
+  const sessionRef = doc(collection(db, COLLECTIONS.sessions));
 
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-    throw new Error("Session start and end times must be valid ISO timestamps.");
-  }
-
-  const scheduleDate = [
-    startDate.getFullYear(),
-    `${startDate.getMonth() + 1}`.padStart(2, "0"),
-    `${startDate.getDate()}`.padStart(2, "0"),
-  ].join("-");
-  const scheduleStart = [
-    `${startDate.getHours()}`.padStart(2, "0"),
-    `${startDate.getMinutes()}`.padStart(2, "0"),
-  ].join(":");
-  const scheduleEnd = [
-    `${endDate.getHours()}`.padStart(2, "0"),
-    `${endDate.getMinutes()}`.padStart(2, "0"),
-  ].join(":");
-  const validatedSchedule = validateSessionSchedule(
-    scheduleDate,
-    scheduleStart,
-    scheduleEnd
-  );
-
-  if ("error" in validatedSchedule) {
-    throw new Error(validatedSchedule.error);
-  }
-
-  const sessionRef = await addDoc(collection(db, COLLECTIONS.sessions), {
+  await setDoc(sessionRef, {
     classId: input.classId,
     hostId: input.hostId,
     locationId: input.locationId,
-    title: input.title,
-    startTime: validatedSchedule.startTimeIso,
-    endTime: validatedSchedule.endTimeIso,
-    participantIds: input.participantIds ?? [input.hostId],
-    status: input.status ?? "open",
+    title: input.title.slice(0, 80),
+    startTime: Timestamp.fromDate(input.startTime),
+    endTime: Timestamp.fromDate(input.endTime),
+    participantIds: [input.hostId],
+    status: "open",
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
