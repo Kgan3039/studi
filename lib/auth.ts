@@ -4,23 +4,19 @@ import {
   EmailAuthProvider,
   onAuthStateChanged,
   reauthenticateWithCredential,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
   type AuthError,
-  type User
+  type User,
 } from "firebase/auth";
 
 import { auth } from "../firebaseConfig";
 import { createOrUpdateUserProfile, deleteUserAccountData } from "./firestore";
 
 const UW_EMAIL_DOMAIN = "@wisc.edu";
-let pendingAccountCreation:
-  | {
-      email: string;
-      password: string;
-    }
-  | null = null;
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
@@ -38,87 +34,160 @@ export function isValidUwEmail(email: string) {
   return normalizeEmail(email).endsWith(UW_EMAIL_DOMAIN);
 }
 
-async function upsertUserProfile(user: User, displayNameOverride?: string) {
+/**
+ * Writes the Firestore profile for a signed-in, VERIFIED user.
+ * Must only be called when `user.emailVerified === true` — Firestore rules
+ * (PR 4) reject writes from unverified accounts.
+ *
+ * Display name precedence: explicit override > existing Firestore value
+ * (preserved by merge semantics in createOrUpdateUserProfile) > Auth value.
+ * This function intentionally does NOT pass the Auth displayName on plain
+ * sign-ins, which previously clobbered Firestore-edited names.
+ */
+export async function syncUserProfile(user: User, displayNameOverride?: string) {
   await createOrUpdateUserProfile(user.uid, {
     email: user.email ?? "",
-    displayName: displayNameOverride ?? user.displayName ?? "",
-    photoURL: user.photoURL ?? "",
-    createdAt:
-      user.metadata.creationTime ??
-      user.metadata.lastSignInTime ??
-      new Date().toISOString(),
-    lastLoginAt:
-      user.metadata.lastSignInTime ??
-      user.metadata.creationTime ??
-      new Date().toISOString(),
+    ...(displayNameOverride ? { displayName: displayNameOverride } : {}),
   });
 }
 
-export async function signInOrPrepareAccountCreation(email: string, password: string) {
+export async function signIn(email: string, password: string) {
   const normalizedEmail = normalizeEmail(email);
 
   if (!isValidUwEmail(normalizedEmail)) {
     throw new Error("Please use your @wisc.edu email.");
   }
 
-  if (password.length < 6) {
-    throw new Error("Password must be at least 6 characters.");
+  if (!password) {
+    throw new Error("Enter your password.");
   }
 
   try {
     const credential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
-    await upsertUserProfile(credential.user);
-    pendingAccountCreation = null;
-    return { mode: "sign-in" as const, user: credential.user };
+
+    if (credential.user.emailVerified) {
+      await syncUserProfile(credential.user);
+    }
+
+    return credential.user;
   } catch (error: unknown) {
     const authError = error as AuthError;
 
     if (
-        authError.code !== "auth/invalid-credential" &&
-        authError.code !== "auth/user-not-found"
+      authError.code === "auth/invalid-credential" ||
+      authError.code === "auth/user-not-found" ||
+      authError.code === "auth/wrong-password"
     ) {
+      throw new Error(
+        "Incorrect email or password. If you forgot your password, use “Forgot password?” below."
+      );
+    }
+
+    if (authError.code === "auth/too-many-requests") {
+      throw new Error("Too many attempts. Wait a few minutes or reset your password.");
+    }
+
+    throw authError;
+  }
+}
+
+export async function signUp(
+  email: string,
+  password: string,
+  firstName: string,
+  lastName: string
+) {
+  const normalizedEmail = normalizeEmail(email);
+  const displayName = buildDisplayName(firstName, lastName);
+
+  if (!isValidUwEmail(normalizedEmail)) {
+    throw new Error("Please use your @wisc.edu email.");
+  }
+
+  if (password.length < 8) {
+    throw new Error("Password must be at least 8 characters.");
+  }
+
+  if (!normalizeNamePart(firstName) || !normalizeNamePart(lastName)) {
+    throw new Error("Enter your first and last name.");
+  }
+
+  try {
+    const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+
+    // Name lives on the Auth profile until the email is verified; the Firestore
+    // profile is written post-verification (rules require a verified token).
+    await updateProfile(credential.user, { displayName });
+    await sendEmailVerification(credential.user);
+
+    return credential.user;
+  } catch (error: unknown) {
+    const authError = error as AuthError;
+
+    if (authError.code === "auth/email-already-in-use") {
+      throw new Error(
+        "An account with this email already exists. Sign in instead — or use “Forgot password?” if you can't get in."
+      );
+    }
+
+    if (authError.code === "auth/weak-password") {
+      throw new Error("Choose a stronger password (at least 8 characters).");
+    }
+
+    throw authError;
+  }
+}
+
+export async function resendVerificationEmail() {
+  const user = auth.currentUser;
+
+  if (!user) {
+    throw new Error("Sign in first to resend the verification email.");
+  }
+
+  await sendEmailVerification(user);
+}
+
+/**
+ * Reloads the current user and, on first confirmed verification, creates the
+ * Firestore profile (carrying the name captured at sign-up). Returns the
+ * fresh verification state.
+ */
+export async function refreshVerificationState() {
+  const user = auth.currentUser;
+
+  if (!user) {
+    return { verified: false };
+  }
+
+  await user.reload();
+  const freshUser = auth.currentUser;
+
+  if (freshUser?.emailVerified) {
+    await syncUserProfile(freshUser, freshUser.displayName ?? undefined);
+    return { verified: true };
+  }
+
+  return { verified: false };
+}
+
+export async function requestPasswordReset(email: string) {
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!isValidUwEmail(normalizedEmail)) {
+    throw new Error("Enter your @wisc.edu email to reset your password.");
+  }
+
+  try {
+    await sendPasswordResetEmail(auth, normalizedEmail);
+  } catch (error: unknown) {
+    const authError = error as AuthError;
+
+    // Don't reveal whether the account exists.
+    if (authError.code !== "auth/user-not-found") {
       throw authError;
     }
   }
-
-  pendingAccountCreation = {
-    email: normalizedEmail,
-    password,
-  };
-
-  return { mode: "needs-profile" as const };
-}
-
-export function getPendingAccountCreationEmail() {
-  return pendingAccountCreation?.email ?? "";
-}
-
-export function clearPendingAccountCreation() {
-  pendingAccountCreation = null;
-}
-
-export async function completeAccountCreation(firstName: string, lastName: string) {
-  const normalizedFirstName = normalizeNamePart(firstName);
-  const normalizedLastName = normalizeNamePart(lastName);
-
-  if (!normalizedFirstName || !normalizedLastName) {
-    throw new Error("Enter your first and last name to create a new account.");
-  }
-
-  if (!pendingAccountCreation) {
-    throw new Error("Start from the sign-in screen before creating a new account.");
-  }
-
-  const credential = await createUserWithEmailAndPassword(
-    auth,
-    pendingAccountCreation.email,
-    pendingAccountCreation.password
-  );
-  const displayName = buildDisplayName(firstName, lastName);
-  await updateProfile(credential.user, { displayName });
-  await upsertUserProfile(credential.user, displayName);
-  pendingAccountCreation = null;
-  return { mode: "sign-up" as const, user: credential.user };
 }
 
 export function subscribeToAuthState(listener: (user: User | null) => void) {
@@ -129,22 +198,19 @@ export async function logOut() {
   await signOut(auth);
 }
 
-const RECENT_LOGIN_WINDOW_MS = 4 * 60 * 1000;
-
-type DeleteAccountMethod = "password" | "apple" | "unknown";
+// ---------------------------------------------------------------------------
+// Account deletion (password reauth only — Apple branches removed; Apple
+// sign-in was never implemented and its branch silently skipped reauth).
+// NOTE: PR 5 (commit 5d) replaces deleteUserAccountData with the Cloud
+// Function call; the reauth logic below is unchanged by that swap.
+// ---------------------------------------------------------------------------
 
 export type DeleteAccountResult =
   | { status: "deleted" }
-  | {
-      status: "requires-recent-login";
-      method: DeleteAccountMethod;
-      email: string;
-    };
+  | { status: "requires-recent-login"; email: string };
 
 type DeleteAccountOptions = {
   password?: string;
-  appleAccessToken?: string;
-  appleRefreshToken?: string;
 };
 
 function isRecentLoginRequiredError(error: unknown) {
@@ -152,63 +218,17 @@ function isRecentLoginRequiredError(error: unknown) {
   return authError?.code === "auth/requires-recent-login";
 }
 
-function getDeleteAccountMethod(user: User): DeleteAccountMethod {
-  const providerIds = user.providerData.map((provider) => provider.providerId);
-
-  if (providerIds.includes("password")) {
-    return "password";
+async function reauthenticateForDelete(user: User, options: DeleteAccountOptions) {
+  if (!user.email) {
+    throw new Error("Unable to verify your account email for re-authentication.");
   }
 
-  if (providerIds.includes("apple.com")) {
-    return "apple";
+  if (!options.password) {
+    throw new Error("Please enter your password to confirm account deletion.");
   }
 
-  return "unknown";
-}
-
-function hasRecentLogin(user: User) {
-  const lastSignInTime = user.metadata.lastSignInTime;
-
-  if (!lastSignInTime) {
-    return false;
-  }
-
-  const parsed = new Date(lastSignInTime).getTime();
-
-  if (Number.isNaN(parsed)) {
-    return false;
-  }
-
-  return Date.now() - parsed <= RECENT_LOGIN_WINDOW_MS;
-}
-
-async function revokeAppleAccessTokenWithRestApi(options: DeleteAccountOptions) {
-  // Client-side Apple token revocation is intentionally not implemented here.
-  // Apple revoke requires a server-side client secret, which should not be bundled
-  // into the app. The delete flow still deletes the Firebase account itself.
-  void options;
-}
-
-async function reauthenticateForDelete(user: User, method: DeleteAccountMethod, options: DeleteAccountOptions) {
-  if (method === "password") {
-    if (!user.email) {
-      throw new Error("Unable to verify your account email for re-authentication.");
-    }
-
-    if (!options.password) {
-      throw new Error("Please enter your password to confirm account deletion.");
-    }
-
-    const credential = EmailAuthProvider.credential(user.email, options.password);
-    await reauthenticateWithCredential(user, credential);
-    return;
-  }
-
-  if (method === "apple") {
-    return;
-  }
-
-  throw new Error("Please sign in again before deleting your account.");
+  const credential = EmailAuthProvider.credential(user.email, options.password);
+  await reauthenticateWithCredential(user, credential);
 }
 
 export async function deleteCurrentUserAccount(
@@ -220,43 +240,21 @@ export async function deleteCurrentUserAccount(
     throw new Error("You must be signed in to delete your account.");
   }
 
-  const method = getDeleteAccountMethod(currentUser);
   const email = currentUser.email ?? "";
 
-  if (!hasRecentLogin(currentUser)) {
-    if (!options.password && !options.appleAccessToken && !options.appleRefreshToken) {
-      return {
-        status: "requires-recent-login",
-        method,
-        email,
-      };
-    }
-
-    await reauthenticateForDelete(currentUser, method, options);
+  if (options.password) {
+    await reauthenticateForDelete(currentUser, options);
   }
 
-  const userId = currentUser.uid;
-
   try {
-    // Client-side deletion path for the free Firebase plan.
-    // Firestore rules must allow the owner to remove their own docs and the
-    // related session/conversation/report data touched by the cleanup.
-    await deleteUserAccountData(userId);
+    await deleteUserAccountData(currentUser.uid);
     await deleteUser(currentUser);
     return { status: "deleted" };
   } catch (error) {
     if (isRecentLoginRequiredError(error)) {
-      return {
-        status: "requires-recent-login",
-        method,
-        email,
-      };
+      return { status: "requires-recent-login", email };
     }
 
     throw error;
   }
 }
-
-// `deleteCurrentUserAccount` performs client-side cleanup and deletes the Auth user.
-// This is the no-Blaze path: Firestore rules must explicitly allow the owner-side
-// deletes/updates needed by `deleteUserAccountData`.

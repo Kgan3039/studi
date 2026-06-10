@@ -11,6 +11,7 @@ import type { User } from 'firebase/auth';
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const isSignedIn = !!currentUser && currentUser.emailVerified;
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -37,7 +38,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="sessions"
         options={{
-          href: currentUser ? undefined : null,
+          href: isSignedIn ? undefined : null,
           title: 'Sessions',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="calendar" color={color} />,
         }}
@@ -45,7 +46,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="messages"
         options={{
-          href: currentUser ? undefined : null,
+          href: isSignedIn ? undefined : null,
           title: 'Messages',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="message.fill" color={color} />,
         }}
@@ -53,7 +54,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="profile"
         options={{
-          href: currentUser ? undefined : null,
+          href: isSignedIn ? undefined : null,
           title: 'Profile',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="person.crop.circle.fill" color={color} />,
         }}
@@ -61,7 +62,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="explore"
         options={{
-          href: currentUser ? undefined : null,
+          href: isSignedIn ? undefined : null,
           title: 'Explore',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
         }}

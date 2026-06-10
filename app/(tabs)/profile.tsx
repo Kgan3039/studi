@@ -239,17 +239,10 @@ export default function ProfileScreen() {
       const result = await deleteCurrentUserAccount();
 
       if (result.status === 'requires-recent-login') {
-        if (result.method === 'password') {
-          setDeleteReauthPassword('');
-          setDeleteReauthEmail(result.email);
-          setShowDeleteReauthModal(true);
-          return;
-        }
-
-        Alert.alert(
-          'Please Sign In Again',
-          'For security, Firebase requires a recent login before deleting this account. Please sign out, sign back in, and try again.'
-        );
+        setDeleteReauthPassword('');
+        setDeleteReauthEmail(result.email);
+        setShowDeleteReauthModal(true);
+        return;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to delete your account right now.';
