@@ -165,6 +165,9 @@ export async function refreshVerificationState() {
   const freshUser = auth.currentUser;
 
   if (freshUser?.emailVerified) {
+    // Force-refresh the ID token: Firestore rules read the email_verified
+    // claim from the token, which stays stale for up to an hour after reload().
+    await freshUser.getIdToken(true);
     await syncUserProfile(freshUser, freshUser.displayName ?? undefined);
     track("email_verified");
     identifyUser(freshUser.uid);
