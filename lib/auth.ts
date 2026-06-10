@@ -1,6 +1,5 @@
 import {
   createUserWithEmailAndPassword,
-  deleteUser,
   EmailAuthProvider,
   onAuthStateChanged,
   reauthenticateWithCredential,
@@ -14,7 +13,7 @@ import {
 } from "firebase/auth";
 
 import { auth } from "../firebaseConfig";
-import { createOrUpdateUserProfile, deleteUserAccountData } from "./firestore";
+import { createOrUpdateUserProfile } from "./firestore";
 
 const UW_EMAIL_DOMAIN = "@wisc.edu";
 
@@ -201,8 +200,8 @@ export async function logOut() {
 // ---------------------------------------------------------------------------
 // Account deletion (password reauth only — Apple branches removed; Apple
 // sign-in was never implemented and its branch silently skipped reauth).
-// NOTE: PR 5 (commit 5d) replaces deleteUserAccountData with the Cloud
-// Function call; the reauth logic below is unchanged by that swap.
+// Deletion runs through the deleteUserAccount Cloud Function (Admin SDK):
+// one authoritative, transaction-paged path that also deletes the Auth user.
 // ---------------------------------------------------------------------------
 
 export type DeleteAccountResult =
@@ -247,8 +246,10 @@ export async function deleteCurrentUserAccount(
   }
 
   try {
-    await deleteUserAccountData(currentUser.uid);
-    await deleteUser(currentUser);
+    const { getFunctions, httpsCallable } = await import("firebase/functions");
+    const callDelete = httpsCallable(getFunctions(undefined, "us-central1"), "deleteUserAccount");
+    await callDelete({});
+    await signOut(auth); // the server already deleted the Auth user; clear local state
     return { status: "deleted" };
   } catch (error) {
     if (isRecentLoginRequiredError(error)) {
