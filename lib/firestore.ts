@@ -537,7 +537,8 @@ export async function sendDirectMessage(
   });
 
   await updateDoc(doc(db, COLLECTIONS.conversations, conversationId), {
-    lastMessagePreview: trimmedText,
+    // Rules cap the preview at 200 chars; messages themselves go up to 2000.
+    lastMessagePreview: trimmedText.slice(0, 200),
     lastMessageAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
