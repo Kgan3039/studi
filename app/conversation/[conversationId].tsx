@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   blockUser,
@@ -112,6 +113,7 @@ export default function ConversationScreen() {
 
     try {
       await blockUser(currentUser.uid, otherUserId);
+      track('user_blocked', { context: 'conversation' });
       setBlockedUserIds((currentIds) => [...new Set([...currentIds, otherUserId])]);
       Alert.alert(
         'User Blocked',

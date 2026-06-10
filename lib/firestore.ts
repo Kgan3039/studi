@@ -22,6 +22,7 @@ import { UW_STUDY_LOCATIONS } from "@/data/uw-study-locations";
 import { sanitizeLocationRatingTags } from "@/data/location-rating-options";
 import { findStudyLocationById } from "@/lib/catalog";
 import { db } from "../firebaseConfig";
+import { track } from "./analytics";
 export const COLLECTIONS = {
   conversations: "conversations",
   locationRatings: "locationRatings",
@@ -513,6 +514,7 @@ export async function getOrCreateDirectConversation(
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  track("conversation_started");
 
   return conversationId;
 }
@@ -539,6 +541,7 @@ export async function sendDirectMessage(
     lastMessageAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  track("message_sent", { length: trimmedText.length });
 }
 
 export function subscribeToConversationMessages(

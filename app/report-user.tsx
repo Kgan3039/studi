@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import { reportUser } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
@@ -45,6 +46,7 @@ export default function ReportUserScreen() {
     try {
       setIsSubmitting(true);
       await reportUser(currentUser.uid, reportedUserId, selectedReason, details, context || 'general');
+      track('report_submitted', { reason: selectedReason, context: context || 'general' });
       Alert.alert('Report Submitted', 'Thanks for flagging this. The report was saved.');
       router.back();
     } catch (error) {

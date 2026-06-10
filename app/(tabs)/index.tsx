@@ -16,6 +16,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { track } from '@/lib/analytics';
 import {
   requestPasswordReset,
   signIn,
@@ -130,7 +131,9 @@ export default function HomeScreen() {
       setIsBusy(true);
       if (authMode === 'sign-in') {
         await signIn(email, password);
+        track('sign_in_completed');
       } else {
+        track('sign_up_started');
         await signUp(email, password, firstName, lastName);
         router.replace('/verify-email');
       }

@@ -18,6 +18,7 @@ import { ThemedView } from '@/components/themed-view';
 import { formatTimeLabel, TimeDropdown } from '@/components/time-dropdown';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import { createSession, getLocations, getUserProfile, type StudyLocation } from '@/lib/firestore';
 import {
@@ -141,6 +142,12 @@ export default function CreateSessionScreen() {
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    track('session_create_started', {
+      ...(requestedClassId ? { fromClassId: requestedClassId } : {}),
+    });
+  }, [requestedClassId]);
+
   const loadSetupData = useCallback(async () => {
     if (!currentUser) {
       setClasses([]);
@@ -248,6 +255,12 @@ export default function CreateSessionScreen() {
         endTime: new Date(validatedSchedule.endTimeIso),
       });
 
+      track('session_created', {
+        classId: selectedClass,
+        hoursUntilStart: Math.round(
+          (new Date(validatedSchedule.startTimeIso).getTime() - Date.now()) / 3_600_000
+        ),
+      });
       setStatus(`Session created successfully. Session ID: ${sessionId}`);
       setScheduleHint(`Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
       setSessionDate('');

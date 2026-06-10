@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   getLocations,
@@ -132,6 +133,10 @@ export default function SessionsScreen() {
       await loadSessions();
 
       if (result === 'joined') {
+        const joinedSession = sessions.find((session) => session.sessionId === sessionId);
+        track('session_joined', {
+          ...(joinedSession ? { classId: joinedSession.classId } : {}),
+        });
         setStatus('Joined session successfully.');
         Alert.alert('Joined Session', 'You were added to the session participant list.');
       }
