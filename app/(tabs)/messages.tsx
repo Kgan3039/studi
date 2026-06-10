@@ -98,10 +98,7 @@ export default function MessagesScreen() {
         </View>
       ) : conversations.length > 0 ? (
         conversations.map((conversation) => {
-          const otherName =
-            conversation.otherParticipant?.displayName ||
-            conversation.otherParticipant?.email ||
-            'Student';
+          const otherName = conversation.otherParticipant?.displayName || 'Student';
 
           return (
             <Pressable
@@ -113,7 +110,6 @@ export default function MessagesScreen() {
                     conversationId: conversation.conversationId,
                     otherUserId: conversation.otherParticipant?.uid ?? '',
                     otherUserName: otherName,
-                    otherUserEmail: conversation.otherParticipant?.email ?? '',
                   },
                 })
               }>

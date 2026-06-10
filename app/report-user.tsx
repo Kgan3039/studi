@@ -15,9 +15,8 @@ const REPORT_REASONS = ['Spam', 'Harassment', 'Unsafe behavior', 'Impersonation'
 
 export default function ReportUserScreen() {
   const router = useRouter();
-  const { reportedUserEmail, reportedUserId, reportedUserName, context } = useLocalSearchParams<{
+  const { reportedUserId, reportedUserName, context } = useLocalSearchParams<{
     context?: string;
-    reportedUserEmail?: string;
     reportedUserId?: string;
     reportedUserName?: string;
   }>();
@@ -72,8 +71,7 @@ export default function ReportUserScreen() {
 
       <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
         <ThemedText style={styles.sectionLabel}>Reporting</ThemedText>
-        <ThemedText type="subtitle">{reportedUserName || reportedUserEmail || 'This user'}</ThemedText>
-        {reportedUserEmail ? <ThemedText style={styles.mutedText}>{reportedUserEmail}</ThemedText> : null}
+        <ThemedText type="subtitle">{reportedUserName || 'This user'}</ThemedText>
         <View style={styles.chipRow}>
           {REPORT_REASONS.map((reason) => {
             const isSelected = selectedReason === reason;
@@ -100,6 +98,7 @@ export default function ReportUserScreen() {
           })}
         </View>
         <TextInput
+          maxLength={1000}
           multiline
           onChangeText={setDetails}
           placeholder="Add any context that would help explain what happened"

@@ -34,33 +34,14 @@ export const COLLECTIONS = {
   users: "users",
 } as const;
 
-export type AvailabilityDay = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
-
-export type AvailabilitySlot = {
-  date?: string;
-  day: AvailabilityDay;
-  endMinutes: number;
-  startMinutes: number;
-};
-
-export type Socials = {
-  phone: string;
-  instagram: string;
-  snapchat: string;
-  discord: string;
-};
-
+/**
+ * PUBLIC profile — readable by any verified UW user (rules, PR 4).
+ * Contains nothing sensitive: no email, no socials, no availability.
+ */
 export type UserProfile = {
-  availability: AvailabilitySlot[];
-  classes: string[];
-  createdAt?: unknown;
-  displayName: string;
-  email: string;
-  lastLoginAt?: unknown;
-  photoURL: string;
-  socials?: Socials;
   uid: string;
-  updatedAt?: unknown;
+  displayName: string;
+  classes: string[];
 };
 
 export type StudySessionStatus = "cancelled" | "full" | "open";
@@ -90,7 +71,6 @@ export type StudyLocation = {
 
 export type StudySessionListItem = StudySession & {
   attendeeProfiles: UserProfile[];
-  hostEmail?: string;
   hostProfile?: UserProfile | null;
   location?: StudyLocation | null;
 };
@@ -197,50 +177,79 @@ export async function createOrUpdateUserProfile(
   userId: string,
   data: { email: string; displayName?: string }
 ) {
-  const userRef = doc(db, COLLECTIONS.users, userId);
-  const existing = await getDoc(userRef);
+  const publicRef = doc(db, COLLECTIONS.users, userId);
+  const privateRef = doc(db, COLLECTIONS.users, userId, "private", "profile");
+  const existing = await getDoc(publicRef);
 
-  const payload: Record<string, unknown> = {
-    email: data.email,
+  const publicPayload: Record<string, unknown> = {
     updatedAt: serverTimestamp(),
     ...(existing.exists() ? {} : { createdAt: serverTimestamp(), classes: [] }),
-    // Only set displayName when explicitly provided (sign-up / verification),
-    // never from a plain sign-in — fixes the clobber-on-login bug.
     ...(data.displayName ? { displayName: data.displayName } : {}),
   };
 
-  await setDoc(userRef, payload, { merge: true });
+  await setDoc(publicRef, publicPayload, { merge: true });
+  await setDoc(
+    privateRef,
+    { email: data.email, updatedAt: serverTimestamp() },
+    { merge: true }
+  );
 }
 
-export async function getUserProfile(userId: string) {
+export async function getUserProfile(userId: string): Promise<UserProfile | null> {
   const snapshot = await getDoc(doc(db, COLLECTIONS.users, userId));
 
   if (!snapshot.exists()) {
     return null;
   }
 
-  return snapshot.data() as UserProfile;
+  const data = snapshot.data();
+
+  return {
+    uid: userId,
+    displayName: typeof data.displayName === "string" ? data.displayName : "",
+    classes: Array.isArray(data.classes) ? data.classes.filter((c) => typeof c === "string") : [],
+  };
 }
 
+const MAX_CLASSES = 12;
+
 export async function updateUserClasses(userId: string, classes: string[]) {
+  const normalized = [
+    ...new Set(
+      classes
+        .map((classCode) => classCode.trim().toUpperCase())
+        .filter((classCode) => classCode.length > 0 && classCode.length <= 20)
+    ),
+  ];
+
+  if (normalized.length > MAX_CLASSES) {
+    throw new Error(`You can save up to ${MAX_CLASSES} classes.`);
+  }
+
   await updateDoc(doc(db, COLLECTIONS.users, userId), {
-    classes,
+    classes: normalized,
     updatedAt: serverTimestamp(),
   });
 }
 
 export async function updateUserDisplayName(userId: string, displayName: string) {
-  await updateDoc(doc(db, COLLECTIONS.users, userId), {
-    displayName,
-    updatedAt: serverTimestamp(),
-  });
-}
+  const trimmed = displayName.trim();
 
-export async function updateUserSocials(userId: string, socials: Socials) {
+  if (!trimmed || trimmed.length > 60) {
+    throw new Error("Display name must be 1–60 characters.");
+  }
+
   await updateDoc(doc(db, COLLECTIONS.users, userId), {
-    socials,
+    displayName: trimmed,
     updatedAt: serverTimestamp(),
   });
+  // Keep the Auth profile in sync so future profile writes can never resurrect
+  // a stale name (the other half of the clobber fix; see lib/auth.ts caller note).
+  const { updateProfile, getAuth } = await import("firebase/auth");
+  const currentUser = getAuth().currentUser;
+  if (currentUser && currentUser.uid === userId) {
+    await updateProfile(currentUser, { displayName: trimmed });
+  }
 }
 
 async function deleteDocumentRefs(documentRefs: DocumentReference[]) {
@@ -378,7 +387,6 @@ export async function getSessions() {
     attendeeProfiles: session.participantIds
       .map((participantId) => participantsById.get(participantId))
       .filter((participant): participant is UserProfile => !!participant),
-    hostEmail: hostsById.get(session.hostId)?.email ?? '',
     hostProfile: hostsById.get(session.hostId) ?? null,
     location: locationsById.get(session.locationId) ?? findStudyLocationById(session.locationId),
   }));
@@ -421,7 +429,6 @@ export async function getSessionById(sessionId: string) {
   return {
     ...session,
     attendeeProfiles: attendeeProfiles.filter((participant): participant is UserProfile => !!participant),
-    hostEmail: hostProfile?.email ?? '',
     hostProfile,
     location: location.exists()
       ? ({
@@ -643,7 +650,7 @@ export async function reportUser(
     reporterUserId,
     reportedUserId,
     reason: reason.trim(),
-    details: details.trim(),
+    details: details.trim().slice(0, 1000),
     context,
     createdAt: serverTimestamp(),
   });

@@ -9,10 +9,10 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
+  getBlockedUserIds,
   getOrCreateDirectConversation,
   getSessionById,
   joinSession,
-  type Socials,
   type StudySessionListItem,
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
@@ -32,36 +32,12 @@ function formatSessionTime(timestamp: string) {
   });
 }
 
-function formatDisplayName(name: string | undefined, email: string) {
+function formatDisplayName(name: string | undefined) {
   if (name && name.trim().length > 0) {
     return name.trim();
   }
 
-  const localPart = email.split('@')[0] ?? '';
-  const normalized = localPart.replace(/[._-]+/g, ' ').trim();
-
-  if (!normalized) {
-    return email;
-  }
-
-  return normalized
-    .split(' ')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
-
-function getVisibleSocials(socials: Socials | undefined) {
-  if (!socials) {
-    return [];
-  }
-
-  return [
-    { label: 'Phone', value: socials.phone },
-    { label: 'Instagram', value: socials.instagram },
-    { label: 'Snapchat', value: socials.snapchat },
-    { label: 'Discord', value: socials.discord },
-  ].filter((social) => social.value.trim().length > 0);
+  return 'Student';
 }
 
 export default function SessionDetailScreen() {
@@ -71,6 +47,7 @@ export default function SessionDetailScreen() {
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [session, setSession] = useState<StudySessionListItem | null>(null);
   const [status, setStatus] = useState('Loading session details...');
   const [isLoading, setIsLoading] = useState(true);
@@ -84,6 +61,17 @@ export default function SessionDetailScreen() {
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setBlockedUserIds([]);
+      return;
+    }
+
+    getBlockedUserIds(currentUser.uid)
+      .then(setBlockedUserIds)
+      .catch(() => setBlockedUserIds([]));
+  }, [currentUser]);
 
   const loadSession = useCallback(async () => {
     if (!sessionId) {
@@ -156,7 +144,6 @@ export default function SessionDetailScreen() {
           conversationId,
           otherUserId: session.hostId,
           otherUserName: session.hostProfile?.displayName || '',
-          otherUserEmail: session.hostEmail || '',
         },
       });
     } catch (error) {
@@ -170,6 +157,9 @@ export default function SessionDetailScreen() {
   const isParticipant = currentUser && session
     ? session.participantIds.includes(currentUser.uid)
     : false;
+  const visibleAttendees = session
+    ? session.attendeeProfiles.filter((attendee) => !blockedUserIds.includes(attendee.uid))
+    : [];
 
   return (
     <ScrollView
@@ -220,7 +210,7 @@ export default function SessionDetailScreen() {
               {formatSessionTime(session.startTime)} to {formatSessionTime(session.endTime)}
             </ThemedText>
             <ThemedText style={styles.metaText}>
-              Host: {session.hostProfile?.displayName || session.hostEmail || session.hostId}
+              Host: {formatDisplayName(session.hostProfile?.displayName)}
             </ThemedText>
             <ThemedText style={styles.metaText}>
               Building: {session.location?.building ?? 'Campus location'}
@@ -269,13 +259,13 @@ export default function SessionDetailScreen() {
               <ThemedText style={styles.sectionLabel}>Attendees</ThemedText>
               <View style={[styles.statusPill, { backgroundColor: palette.surfaceMuted }]}>
                 <ThemedText type="defaultSemiBold">
-                  {session.attendeeProfiles.length} going
+                  {visibleAttendees.length} going
                 </ThemedText>
               </View>
             </View>
             <ThemedText type="subtitle">Who is already in</ThemedText>
             <View style={styles.attendeeList}>
-              {session.attendeeProfiles.map((attendee) => (
+              {visibleAttendees.map((attendee) => (
                 <ThemedView
                   key={attendee.uid}
                   style={[
@@ -284,23 +274,13 @@ export default function SessionDetailScreen() {
                   ]}>
                   <View style={[styles.avatar, { backgroundColor: palette.badge }]}>
                     <ThemedText type="defaultSemiBold">
-                      {(attendee.displayName || attendee.email || '?').slice(0, 1).toUpperCase()}
+                      {(attendee.displayName || 'S').slice(0, 1).toUpperCase()}
                     </ThemedText>
                   </View>
                   <View style={styles.attendeeMeta}>
                     <ThemedText type="defaultSemiBold">
-                      {formatDisplayName(attendee.displayName, attendee.email)}
+                      {formatDisplayName(attendee.displayName)}
                     </ThemedText>
-                    <ThemedText style={styles.metaText}>{attendee.email}</ThemedText>
-                    {getVisibleSocials(attendee.socials).length > 0 ? (
-                      <View style={styles.socialList}>
-                        {getVisibleSocials(attendee.socials).map((social) => (
-                          <ThemedText key={social.label} style={styles.socialText}>
-                            {social.label}: {social.value.trim()}
-                          </ThemedText>
-                        ))}
-                      </View>
-                    ) : null}
                   </View>
                 </ThemedView>
               ))}
@@ -414,13 +394,5 @@ const styles = StyleSheet.create({
   attendeeMeta: {
     flex: 1,
     gap: 3,
-  },
-  socialList: {
-    gap: 2,
-    marginTop: 4,
-  },
-  socialText: {
-    fontSize: 13,
-    opacity: 0.78,
   },
 });

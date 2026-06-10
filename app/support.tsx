@@ -59,7 +59,7 @@ export default function SupportScreen() {
         />
         <HelpItem
           title="Profile updates"
-          text="Use Profile to update your display name, classes, availability, and optional social/contact links."
+          text="Use Profile to update your display name and classes."
         />
         <HelpItem
           title="Study sessions"
