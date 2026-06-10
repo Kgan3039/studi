@@ -18,6 +18,8 @@ import {
   where,
 } from "firebase/firestore";
 
+import { FirebaseError } from "firebase/app";
+
 import { UW_STUDY_LOCATIONS } from "@/data/uw-study-locations";
 import { sanitizeLocationRatingTags } from "@/data/location-rating-options";
 import { findStudyLocationById } from "@/lib/catalog";
@@ -336,7 +338,15 @@ export async function getLocations() {
       firstLocation.name.localeCompare(secondLocation.name)
     );
   } catch (error) {
-    console.warn("Unable to load saved locations, using built-in UW study spots.", error);
+    // Permission-denied is the expected signed-out case (e.g. direct web URL
+    // visits); the built-in list is the designed experience there, not a fault.
+    const isPermissionDenied =
+      error instanceof FirebaseError && error.code === "permission-denied";
+
+    if (!isPermissionDenied) {
+      console.warn("Unable to load saved locations, using built-in UW study spots.", error);
+    }
+
     return getBuiltInStudyLocations();
   }
 }
