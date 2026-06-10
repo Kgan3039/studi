@@ -5,6 +5,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  documentId,
   getDoc,
   getDocs,
   limit,
@@ -202,6 +203,71 @@ export async function getUserProfile(userId: string): Promise<UserProfile | null
   };
 }
 
+// ---------------------------------------------------------------------------
+// Profile batch fetch + short-lived cache.
+// Replaces every per-uid getDoc loop (sessions list, session detail,
+// conversation list). 10 uids per `in` query = 1 read per chunk member but a
+// single round trip; the cache deduplicates across screens and snapshot
+// re-fires.
+// ---------------------------------------------------------------------------
+
+const PROFILE_CACHE_TTL_MS = 5 * 60 * 1000;
+const profileCache = new Map<string, { profile: UserProfile | null; fetchedAt: number }>();
+
+export function invalidateProfileCache(uid?: string) {
+  if (uid) {
+    profileCache.delete(uid);
+    return;
+  }
+  profileCache.clear();
+}
+
+export async function getProfilesByIds(
+  userIds: string[]
+): Promise<Map<string, UserProfile | null>> {
+  const result = new Map<string, UserProfile | null>();
+  const now = Date.now();
+  const missing: string[] = [];
+
+  for (const uid of [...new Set(userIds)].filter(Boolean)) {
+    const cached = profileCache.get(uid);
+    if (cached && now - cached.fetchedAt < PROFILE_CACHE_TTL_MS) {
+      result.set(uid, cached.profile);
+    } else {
+      missing.push(uid);
+    }
+  }
+
+  for (let i = 0; i < missing.length; i += 10) {
+    const chunk = missing.slice(i, i + 10);
+    const snapshot = await getDocs(
+      query(collection(db, COLLECTIONS.users), where(documentId(), "in", chunk))
+    );
+
+    const found = new Set<string>();
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      const profile: UserProfile = {
+        uid: docSnap.id,
+        displayName: typeof data.displayName === "string" ? data.displayName : "",
+        classes: Array.isArray(data.classes) ? data.classes : [],
+      };
+      profileCache.set(docSnap.id, { profile, fetchedAt: now });
+      result.set(docSnap.id, profile);
+      found.add(docSnap.id);
+    });
+
+    for (const uid of chunk) {
+      if (!found.has(uid)) {
+        profileCache.set(uid, { profile: null, fetchedAt: now });
+        result.set(uid, null); // deleted user → render 'Student'
+      }
+    }
+  }
+
+  return result;
+}
+
 const MAX_CLASSES = 12;
 
 export async function updateUserClasses(userId: string, classes: string[]) {
@@ -395,16 +461,17 @@ export async function getSessionById(sessionId: string) {
     ...(sessionSnapshot.data() as Omit<StudySession, "sessionId">),
   };
 
-  const [location, hostProfile, attendeeProfiles] = await Promise.all([
+  const [location, profilesById] = await Promise.all([
     getDoc(doc(db, COLLECTIONS.locations, session.locationId)),
-    getUserProfile(session.hostId),
-    Promise.all(session.participantIds.map((participantId) => getUserProfile(participantId))),
+    getProfilesByIds([session.hostId, ...session.participantIds]),
   ]);
 
   return {
     ...session,
-    attendeeProfiles: attendeeProfiles.filter((participant): participant is UserProfile => !!participant),
-    hostProfile,
+    attendeeProfiles: session.participantIds
+      .map((participantId) => profilesById.get(participantId))
+      .filter((participant): participant is UserProfile => !!participant),
+    hostProfile: profilesById.get(session.hostId) ?? null,
     location: location.exists()
       ? ({
           locationId: location.id,
@@ -572,17 +639,10 @@ export function subscribeToUserConversations(
         ...(conversationDoc.data() as Omit<DirectConversation, "conversationId">),
       }))
 
-    const otherUserIds = [
-      ...new Set(
-        rawConversations.flatMap((conversation) =>
-          conversation.participantIds.filter((participantId) => participantId !== userId)
-        )
-      ),
-    ];
-    const profiles = await Promise.all(otherUserIds.map((participantId) => getUserProfile(participantId)));
-    const profilesById = new Map(
-      otherUserIds.map((participantId, index) => [participantId, profiles[index]] as const)
+    const otherUserIds = rawConversations.flatMap((conversation) =>
+      conversation.participantIds.filter((participantId) => participantId !== userId)
     );
+    const profilesById = await getProfilesByIds(otherUserIds);
 
     const conversations = rawConversations
       .map((conversation) => {

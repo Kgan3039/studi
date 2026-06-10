@@ -27,6 +27,7 @@ import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/au
 import { UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
 import {
   getUserProfile,
+  invalidateProfileCache,
   updateUserClasses,
   updateUserDisplayName,
 } from '@/lib/firestore';
@@ -159,6 +160,7 @@ export default function ProfileScreen() {
     try {
       setIsSaving(true);
       await updateUserDisplayName(currentUser.uid, displayName);
+      invalidateProfileCache(currentUser.uid);
       setNameStatus(`Profile name saved as ${displayName}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to save your name right now.';
