@@ -353,10 +353,23 @@ export async function getLocations() {
 
 const SESSIONS_PAGE_SIZE = 50;
 
+// How far back to scan for sessions that are still running (longest hostable
+// session is 3h; 6h leaves margin without meaningfully widening the query).
+const IN_PROGRESS_LOOKBACK_MS = 6 * 60 * 60 * 1000;
+
 export async function getUpcomingSessions(options?: {
   classIds?: string[];
+  /**
+   * Also return sessions already underway (started within the lookback
+   * window, not yet ended) — Today's "Happening now" hero. Defaults off so
+   * existing callers keep the original future-only behavior.
+   */
+  includeInProgress?: boolean;
 }): Promise<StudySession[]> {
   const now = Timestamp.now();
+  const windowStart = options?.includeInProgress
+    ? Timestamp.fromMillis(now.toMillis() - IN_PROGRESS_LOOKBACK_MS)
+    : now;
   // `in` queries cap at 10 entries; users with 11-12 classes see their first
   // 10 in the filtered view — the "All classes" view covers the gap.
   const classIds = (options?.classIds ?? []).slice(0, 10);
@@ -365,12 +378,12 @@ export async function getUpcomingSessions(options?: {
     classIds.length > 0
       ? [
           where("classId", "in", classIds),
-          where("startTime", ">=", now),
+          where("startTime", ">=", windowStart),
           orderBy("startTime", "asc"),
           limit(SESSIONS_PAGE_SIZE),
         ]
       : [
-          where("startTime", ">=", now),
+          where("startTime", ">=", windowStart),
           orderBy("startTime", "asc"),
           limit(SESSIONS_PAGE_SIZE),
         ];
@@ -393,7 +406,21 @@ export async function getUpcomingSessions(options?: {
     });
   });
 
-  return sessions.filter((s) => s.status !== "cancelled");
+  const cutoffMs = now.toMillis();
+
+  return sessions.filter((s) => {
+    if (s.status === "cancelled") {
+      return false;
+    }
+    if (!options?.includeInProgress) {
+      return true;
+    }
+    // With the widened window, drop sessions that already ended; keep future
+    // ones regardless (missing/odd endTime data must not hide them).
+    const startsInFuture = s.startTime.toMillis() >= cutoffMs;
+    const stillRunning = !!s.endTime && s.endTime.toMillis() > cutoffMs;
+    return startsInFuture || stillRunning;
+  });
 }
 
 export async function getSessionById(sessionId: string) {

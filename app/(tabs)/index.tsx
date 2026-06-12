@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
-  ActivityIndicator,
+  Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,33 +11,32 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { SessionCard } from '@/components/session-card';
-import { Avatar } from '@/components/ui/Avatar';
+import { formatSessionStart, formatSessionWindow } from '@/components/session-card';
+import { Avatar, AvatarStack } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionHeader } from '@/components/ui/SectionHeader';
-import {
-  Colors,
-  Elevation,
-  FontFamily,
-  Radius,
-  Space,
-  TypeScale,
-} from '@/constants/theme';
+import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
+import { Colors, Elevation, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   getLocations,
+  getProfilesByIds,
   getUpcomingSessions,
   getUserProfile,
+  joinSession,
   type StudySession,
   type UserProfile,
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
 type TodaySession = StudySession & { locationName: string };
+
+type HeroKind = 'live' | 'joined' | 'matched';
 
 function splitDisplayName(displayName: string | undefined) {
   const normalized = displayName?.trim() ?? '';
@@ -53,22 +53,146 @@ function splitDisplayName(displayName: string | undefined) {
   };
 }
 
-function getSetupSummary(profile: UserProfile | null) {
-  const hasName = !!profile?.displayName?.trim();
-  const hasClasses = (profile?.classes?.length ?? 0) > 0;
-
-  return {
-    completed: [hasName, hasClasses].filter(Boolean).length,
-    hasClasses,
-    hasName,
-  };
-}
-
 function timeOfDayGreeting(now: Date = new Date()) {
   const hour = now.getHours();
   if (hour < 12) return 'Good morning';
   if (hour < 17) return 'Good afternoon';
   return 'Good evening';
+}
+
+function isLive(session: StudySession, nowMs: number) {
+  return (
+    session.startTime.toMillis() <= nowMs &&
+    !!session.endTime &&
+    session.endTime.toMillis() > nowMs
+  );
+}
+
+/**
+ * Board HomeScreen hero (index.tsx ~218-241): eyebrow row with live dot and
+ * going count, lg course chip, sans title, location line, avatar stack +
+ * one primary action. No capacity/seats data exists, so the counter shows
+ * the going count instead of "3 / 5 seats".
+ */
+function HeroCard({
+  session,
+  kind,
+  attendeeNames,
+  joined,
+  joining,
+  onJoin,
+  onPress,
+}: {
+  session: TodaySession;
+  kind: HeroKind;
+  attendeeNames: string[];
+  joined: boolean;
+  joining: boolean;
+  onJoin: () => void;
+  onPress: () => void;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+  const going = session.participantIds.length;
+  const isFull = session.status === 'full';
+
+  const eyebrow =
+    kind === 'live' ? 'Happening now' : kind === 'joined' ? 'Your next session' : 'Up next';
+
+  const action = joined ? (
+    <Button label="✓ Going" variant="success" size="sm" onPress={onPress} />
+  ) : isFull ? (
+    <BadgeChip label="Full" tone="neutral" />
+  ) : (
+    <Button label="Join" size="sm" loading={joining} onPress={onJoin} />
+  );
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.heroCard,
+        Elevation.e1,
+        {
+          backgroundColor: palette.surface,
+          borderColor: palette.border,
+          opacity: pressed ? 0.92 : 1,
+        },
+      ]}>
+      <View style={styles.heroTopRow}>
+        <View style={styles.heroEyebrowRow}>
+          {kind === 'live' ? (
+            <View style={[styles.liveDot, { backgroundColor: palette.tint }]} />
+          ) : null}
+          <Text
+            style={[
+              TypeScale.eyebrow,
+              { color: kind === 'live' ? palette.tint : palette.icon },
+            ]}>
+            {eyebrow}
+          </Text>
+        </View>
+        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
+          {going} going
+        </Text>
+      </View>
+      <CourseChip code={session.classId} size="lg" />
+      <Text style={[styles.heroTitle, { color: palette.text }]} numberOfLines={2}>
+        {session.title}
+      </Text>
+      <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
+        {formatSessionWindow(session.startTime, session.endTime)} · {session.locationName}
+      </Text>
+      <View style={styles.heroFooter}>
+        <AvatarStack names={attendeeNames} max={3} size="sm" totalCount={going} />
+        {action}
+      </View>
+    </Pressable>
+  );
+}
+
+/**
+ * Board upcoming row (index.tsx ~247-269): standalone card, course chip +
+ * title + "location · time" left, big accent count + tiny uppercase label
+ * right. Board's number is seats-left; without capacity data it is the
+ * going count.
+ */
+function UpcomingRow({ session, onPress }: { session: TodaySession; onPress: () => void }) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.upcomingCard,
+        {
+          backgroundColor: palette.surface,
+          borderColor: palette.border,
+          opacity: pressed ? 0.85 : session.status === 'full' ? 0.6 : 1,
+        },
+      ]}>
+      <View style={styles.upcomingBody}>
+        <CourseChip code={session.classId} size="sm" />
+        <Text
+          style={[TypeScale.bodyStrong, styles.upcomingTitle, { color: palette.text }]}
+          numberOfLines={1}>
+          {session.title}
+        </Text>
+        <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+          {session.locationName} · {formatSessionStart(session.startTime)}
+        </Text>
+      </View>
+      <View style={styles.upcomingCount}>
+        <Text style={[styles.upcomingNumber, { color: palette.tint }]}>
+          {session.participantIds.length}
+        </Text>
+        <Text style={[styles.upcomingNumberLabel, { color: palette.icon }]}>going</Text>
+      </View>
+    </Pressable>
+  );
 }
 
 export default function HomeScreen() {
@@ -78,9 +202,12 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [isProfileLoading, setIsProfileLoading] = useState(false);
   const [sessions, setSessions] = useState<TodaySession[]>([]);
   const [sessionsError, setSessionsError] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [heroAttendeeNames, setHeroAttendeeNames] = useState<string[]>([]);
+  const [joiningHero, setJoiningHero] = useState(false);
+  const { toast, show: showToast } = useSuccessToast();
   // The (tabs) layout gate redirects signed-out/unverified users to the
   // (auth) flow; this flag only guards the brief frame before that happens.
   const isSignedIn = !!currentUser && currentUser.emailVerified;
@@ -105,13 +232,10 @@ export default function HomeScreen() {
       }
 
       try {
-        setIsProfileLoading(true);
         const loadedProfile = await getUserProfile(currentUser.uid);
         setProfile(loadedProfile);
       } catch {
         setProfile(null);
-      } finally {
-        setIsProfileLoading(false);
       }
     }
 
@@ -126,7 +250,7 @@ export default function HomeScreen() {
     try {
       setSessionsError('');
       const [loadedSessions, locations] = await Promise.all([
-        getUpcomingSessions(),
+        getUpcomingSessions({ includeInProgress: true }),
         getLocations(),
       ]);
       const locationsById = new Map(
@@ -151,44 +275,104 @@ export default function HomeScreen() {
   }, [loadSessions]);
 
   const savedName = splitDisplayName(profile?.displayName);
-  const setup = useMemo(() => getSetupSummary(profile), [profile]);
   const profileClasses = useMemo(
     () => (profile?.classes ?? []).map((classCode) => classCode.trim().toUpperCase()),
     [profile]
   );
 
-  const nextSession = useMemo(() => {
-    if (!currentUser) {
-      return undefined;
+  // Hero + rows: the board feed is personal — sessions for my classes plus
+  // anything I've already joined.
+  const { hero, heroKind, upcoming } = useMemo(() => {
+    const uid = currentUser?.uid ?? '';
+    const nowMs = Date.now();
+
+    const relevant = sessions.filter(
+      (session) =>
+        profileClasses.includes(session.classId.trim().toUpperCase()) ||
+        (uid && session.participantIds.includes(uid))
+    );
+
+    const liveSession = relevant.find((session) => isLive(session, nowMs));
+    const joinedSession = relevant.find(
+      (session) => uid && session.participantIds.includes(uid) && !isLive(session, nowMs)
+    );
+    const heroSession = liveSession ?? joinedSession ?? relevant[0];
+    const kind: HeroKind = liveSession
+      ? 'live'
+      : heroSession && uid && heroSession.participantIds.includes(uid)
+        ? 'joined'
+        : 'matched';
+
+    return {
+      hero: heroSession,
+      heroKind: kind,
+      upcoming: relevant
+        .filter((session) => session.sessionId !== heroSession?.sessionId)
+        .slice(0, 4),
+    };
+  }, [currentUser, profileClasses, sessions]);
+
+  // Resolve a few attendee names for the hero's avatar stack; the "+N" chip
+  // covers the rest without inventing initials.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!hero || hero.participantIds.length === 0) {
+      setHeroAttendeeNames([]);
+      return;
     }
-    return sessions.find((session) => session.participantIds.includes(currentUser.uid));
-  }, [currentUser, sessions]);
 
-  const matchedSessions = useMemo(
-    () =>
-      sessions.filter(
-        (session) =>
-          profileClasses.includes(session.classId.trim().toUpperCase()) &&
-          session.sessionId !== nextSession?.sessionId
-      ),
-    [nextSession, profileClasses, sessions]
-  );
+    getProfilesByIds(hero.participantIds.slice(0, 3))
+      .then((profiles) => {
+        if (cancelled) {
+          return;
+        }
+        setHeroAttendeeNames(
+          hero.participantIds
+            .slice(0, 3)
+            .map((uid) => profiles.get(uid)?.displayName)
+            .filter((name): name is string => !!name)
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHeroAttendeeNames([]);
+        }
+      });
 
-  const matchesToday = matchedSessions.filter(
-    (session) => session.startTime.toDate().toDateString() === new Date().toDateString()
-  ).length;
+    return () => {
+      cancelled = true;
+    };
+  }, [hero]);
 
-  const subline = setup.hasClasses
-    ? matchesToday > 0
-      ? `${matchesToday} session${matchesToday === 1 ? '' : 's'} match${
-          matchesToday === 1 ? 'es' : ''
-        } your classes today`
-      : matchedSessions.length > 0
-        ? `${matchedSessions.length} upcoming session${
-            matchedSessions.length === 1 ? '' : 's'
-          } match your classes`
-        : 'Nothing for your classes yet — set the first table'
-    : 'Add your classes to see sessions that match';
+  async function handleJoinHero() {
+    if (!currentUser || !hero) {
+      return;
+    }
+
+    try {
+      setJoiningHero(true);
+      const result = await joinSession(hero.sessionId, currentUser.uid);
+      await loadSessions();
+
+      if (result === 'joined') {
+        track('session_joined', { classId: hero.classId });
+        showToast('You’re in.', hero.title || 'See you at the table.');
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to join this session right now.';
+      Alert.alert('Join Session Error', message);
+    } finally {
+      setJoiningHero(false);
+    }
+  }
+
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    await loadSessions();
+    setIsRefreshing(false);
+  }
 
   const dateEyebrow = new Date()
     .toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
@@ -197,164 +381,121 @@ export default function HomeScreen() {
     return null;
   }
 
+  const heroJoined = !!hero && !!currentUser && hero.participantIds.includes(currentUser.uid);
+  const showEmpty = !hero && upcoming.length === 0;
+
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      <>
-          <View style={styles.header}>
-            <View style={styles.headerText}>
-              <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{dateEyebrow}</Text>
-              <Text
-                style={[styles.greeting, { color: palette.text }]}
-                numberOfLines={1}
-                adjustsFontSizeToFit>
-                {timeOfDayGreeting()}
-                {savedName.firstName ? `, ${savedName.firstName}` : ''}
-              </Text>
-              <Text style={[TypeScale.meta, { color: palette.icon }]}>{subline}</Text>
-            </View>
-            <Pressable accessibilityRole="button" onPress={() => router.push('/profile')}>
-              <Avatar
-                name={profile?.displayName || currentUser?.email || 'S'}
-                size="md"
-              />
-            </Pressable>
+    <View style={[styles.screen, { backgroundColor: palette.background }]}>
+      <ScrollView
+        style={styles.screen}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={palette.icon}
+          />
+        }
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
+        <View style={styles.header}>
+          <View style={styles.headerText}>
+            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{dateEyebrow}</Text>
+            <Text
+              style={[styles.greeting, { color: palette.text }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit>
+              {timeOfDayGreeting()}
+              {savedName.firstName ? `, ${savedName.firstName}` : ''}
+            </Text>
           </View>
+          <Pressable accessibilityRole="button" onPress={() => router.push('/profile')}>
+            <Avatar name={profile?.displayName || currentUser?.email || 'S'} size="md" />
+          </Pressable>
+        </View>
 
-          {sessionsError ? (
-            <Text style={[TypeScale.caption, { color: palette.icon }]}>{sessionsError}</Text>
-          ) : null}
+        {hero ? (
+          <HeroCard
+            session={hero}
+            kind={heroKind}
+            attendeeNames={heroAttendeeNames}
+            joined={heroJoined}
+            joining={joiningHero}
+            onJoin={handleJoinHero}
+            onPress={() => router.push(`/session/${hero.sessionId}`)}
+          />
+        ) : null}
 
+        {upcoming.length > 0 ? (
           <View style={styles.section}>
-            <SectionHeader eyebrow="Your next session" />
-            {nextSession ? (
-              <SessionCard
-                variant="hero"
-                session={nextSession}
-                locationName={nextSession.locationName}
-                // Only the signed-in user's profile is loaded here — their
-                // avatar plus a "+N" chip covers the rest without new reads.
-                attendeeNames={
-                  profile?.displayName ? [profile.displayName] : undefined
-                }
-                joined
-                onPress={() => router.push(`/session/${nextSession.sessionId}`)}
-              />
-            ) : (
-              <EmptyState
-                icon="calendar"
-                headline="Your week is wide open"
-                body={
-                  matchedSessions.length > 0
-                    ? `${matchedSessions.length} session${
-                        matchedSessions.length === 1 ? '' : 's'
-                      } match your classes right now.`
-                    : 'Join a session and it shows up here.'
-                }
-                actionLabel="Browse sessions"
-                onAction={() => router.push('/sessions')}
-                style={styles.emptyState}
-              />
-            )}
-          </View>
-
-          {matchedSessions.length > 0 ? (
-            <View style={styles.section}>
-              <SectionHeader
-                eyebrow="For your classes"
-                action={
-                  <Pressable accessibilityRole="button" onPress={() => router.push('/sessions')}>
-                    <Text style={[TypeScale.label, { color: palette.tint }]}>See all</Text>
-                  </Pressable>
-                }
-              />
-              <View
-                style={[
-                  styles.listCard,
-                  Elevation.e1,
-                  { backgroundColor: palette.surface, borderColor: palette.border },
-                ]}>
-                {matchedSessions.slice(0, 4).map((session, index) => (
-                  <View key={session.sessionId}>
-                    {index > 0 ? (
-                      <View style={[styles.divider, { backgroundColor: palette.border }]} />
-                    ) : null}
-                    <SessionCard
-                      variant="list"
-                      session={session}
-                      locationName={session.locationName}
-                      onPress={() => router.push(`/session/${session.sessionId}`)}
-                    />
-                  </View>
-                ))}
-              </View>
-            </View>
-          ) : null}
-
-          {profileClasses.length > 0 ? (
-            <View style={styles.section}>
-              <SectionHeader eyebrow="Your classes" />
-              <View style={styles.chipWrap}>
-                {profileClasses.map((classCode) => (
-                  <CourseChip
-                    key={classCode}
-                    code={classCode}
-                    onPress={() =>
-                      router.push({ pathname: '/sessions', params: { classId: classCode } })
-                    }
-                  />
-                ))}
-              </View>
-            </View>
-          ) : null}
-
-          <View style={styles.section}>
-            <Button
-              label={
-                profileClasses.length > 0
-                  ? `Host a session for ${profileClasses[0]}`
-                  : 'Host a session'
-              }
-              size="lg"
-              fullWidth
-              onPress={() =>
-                router.push(
-                  profileClasses.length > 0
-                    ? { pathname: '/create-session', params: { classId: profileClasses[0] } }
-                    : '/create-session'
-                )
+            <SectionHeader
+              eyebrow="Upcoming today"
+              action={
+                <Pressable accessibilityRole="button" onPress={() => router.push('/sessions')}>
+                  <Text style={[TypeScale.label, { color: palette.tint }]}>See all</Text>
+                </Pressable>
               }
             />
+            <View style={styles.upcomingList}>
+              {upcoming.map((session) => (
+                <UpcomingRow
+                  key={session.sessionId}
+                  session={session}
+                  onPress={() => router.push(`/session/${session.sessionId}`)}
+                />
+              ))}
+            </View>
           </View>
+        ) : null}
 
-          {setup.completed < 2 ? (
-            <Pressable
-              onPress={() => router.push('/profile')}
-              style={[
-                styles.setupCard,
-                Elevation.e1,
-                { backgroundColor: palette.surface, borderColor: palette.border },
-              ]}>
-              <View style={styles.setupCopy}>
-                <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Finish setup</Text>
-                <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                  {setup.hasClasses
-                    ? 'Add your name so classmates know who’s at the table.'
-                    : 'Add your classes to see sessions that match.'}
-                </Text>
-              </View>
-              <BadgeChip label={`${setup.completed}/2`} tone="filling" />
-            </Pressable>
-          ) : null}
-      </>
+        {showEmpty ? (
+          sessionsError ? (
+            <EmptyState
+              icon="seat"
+              headline="Something went off-script."
+              body={sessionsError}
+              actionLabel="Try again"
+              onAction={loadSessions}
+              style={styles.emptyState}
+            />
+          ) : profileClasses.length === 0 ? (
+            <EmptyState
+              icon="calendar"
+              headline="Make it yours"
+              body="Add your classes to see sessions that match."
+              actionLabel="Add classes"
+              onAction={() => router.push('/profile')}
+              style={styles.emptyState}
+            />
+          ) : (
+            <EmptyState
+              icon="seat"
+              headline="Quiet on State St."
+              body="No sessions for your classes right now. Someone has to set the first table."
+              actionLabel="Host one"
+              onAction={() => router.push('/create-session')}
+              style={styles.emptyState}
+            />
+          )
+        ) : null}
 
-      {isProfileLoading ? (
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator color={palette.tint} />
-        </View>
-      ) : null}
-    </ScrollView>
+        {profileClasses.length > 0 ? (
+          <View style={styles.section}>
+            <SectionHeader eyebrow="Your classes this week" />
+            <View style={styles.chipWrap}>
+              {profileClasses.map((classCode) => (
+                <CourseChip
+                  key={classCode}
+                  code={classCode}
+                  onPress={() =>
+                    router.push({ pathname: '/sessions', params: { classId: classCode } })
+                  }
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
+      </ScrollView>
+      <SuccessToast toast={toast} />
+    </View>
   );
 }
 
@@ -382,17 +523,79 @@ const styles = StyleSheet.create({
     fontSize: 29,
     lineHeight: 35,
   },
+  heroCard: {
+    borderRadius: Radius.xxl - 4,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    padding: Space.lg + 4,
+  },
+  heroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Space.sm,
+    marginBottom: Space.lg,
+  },
+  heroEyebrowRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm - 2,
+  },
+  liveDot: {
+    borderRadius: Radius.pill,
+    height: 6,
+    width: 6,
+  },
+  heroTitle: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 20,
+    lineHeight: 26,
+    marginTop: Space.md,
+    marginBottom: Space.xs,
+  },
+  heroFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Space.md,
+    marginTop: Space.lg,
+  },
   section: {
     gap: Space.md,
   },
-  listCard: {
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    paddingHorizontal: Space.md,
-    paddingVertical: Space.xs,
+  upcomingList: {
+    gap: Space.md - 2,
   },
-  divider: {
-    height: StyleSheet.hairlineWidth,
+  upcomingCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Space.md,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    padding: Space.lg,
+  },
+  upcomingBody: {
+    flexShrink: 1,
+    alignItems: 'flex-start',
+  },
+  upcomingTitle: {
+    marginTop: Space.sm,
+  },
+  upcomingCount: {
+    alignItems: 'center',
+    minWidth: 40,
+  },
+  upcomingNumber: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 18,
+    lineHeight: 22,
+  },
+  upcomingNumberLabel: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 9,
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+    marginTop: 1,
   },
   chipWrap: {
     flexDirection: 'row',
@@ -401,23 +604,5 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     paddingVertical: Space.lg,
-  },
-  setupCard: {
-    alignItems: 'center',
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    flexDirection: 'row',
-    gap: Space.md,
-    justifyContent: 'space-between',
-    padding: Space.lg,
-  },
-  setupCopy: {
-    flexShrink: 1,
-    gap: Space.xs,
-  },
-  loadingOverlay: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingBottom: Space.sm,
   },
 });
