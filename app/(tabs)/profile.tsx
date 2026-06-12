@@ -1,5 +1,4 @@
 import { useFocusEffect } from '@react-navigation/native';
-import { Image } from 'expo-image';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -8,21 +7,23 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Text,
   TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ExternalLink } from '@/components/external-link';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { BadgeChip } from '@/components/ui/BadgeChip';
+import { Button } from '@/components/ui/Button';
+import { CourseChip } from '@/components/ui/CourseChip';
 import { identifyUser, track } from '@/lib/analytics';
 import {
   STUDI_CONTACT_EMAIL,
   STUDI_PRIVACY_POLICY_URL,
   STUDI_SUPPORT_URL,
 } from '@/constants/app-info';
-import { Colors } from '@/constants/theme';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
 import { UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
@@ -105,7 +106,7 @@ export default function ProfileScreen() {
         setClasses(savedClasses);
         setNameStatus(
           profile?.displayName
-            ? `Profile name saved as ${profile.displayName}.`
+            ? `Saved as ${profile.displayName}.`
             : 'Add your first and last name to personalize Studi.'
         );
         setClassesStatus(
@@ -162,7 +163,7 @@ export default function ProfileScreen() {
       setIsSaving(true);
       await updateUserDisplayName(currentUser.uid, displayName);
       invalidateProfileCache(currentUser.uid);
-      setNameStatus(`Profile name saved as ${displayName}.`);
+      setNameStatus(`Saved as ${displayName}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to save your name right now.';
       setNameStatus(message);
@@ -281,11 +282,23 @@ export default function ProfileScreen() {
   }
 
   const isBusy = isSaving || isDeletingAccount || isReauthenticatingDelete;
+  const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
+  const avatarInitials =
+    (firstName.trim().slice(0, 1) + lastName.trim().slice(0, 1)).toUpperCase() ||
+    (currentUser?.email ?? 'S').slice(0, 1).toUpperCase();
+  const placeholderColor = colorScheme === 'dark' ? '#9F918B' : Brand.charcoal400;
+  const inputColors = {
+    backgroundColor: palette.surfaceMuted,
+    borderColor: palette.border,
+    color: palette.text,
+  };
 
   if (!currentUser && !isLoading) {
     return (
       <View style={[styles.loadingScreen, { backgroundColor: palette.background }]}>
-        <ThemedText type="subtitle">Sign in to view your profile</ThemedText>
+        <Text style={[TypeScale.heading, { color: palette.text }]}>
+          Sign in to view your profile
+        </Text>
       </View>
     );
   }
@@ -293,82 +306,46 @@ export default function ProfileScreen() {
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView style={[styles.hero, { backgroundColor: palette.surface }]}>
-        <Image
-          contentFit="contain"
-          source={require('../../assets/images/studi-wordmark.png')}
-          style={styles.heroLogo}
-        />
-        <ThemedText style={[styles.eyebrow, styles.heroEyebrow, { color: palette.tint }]}>
-          Your Studi profile
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Keep your name and classes up to date so sessions stay useful.
-        </ThemedText>
-      </ThemedView>
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
+      <Text style={[TypeScale.title, { color: palette.text }]}>You</Text>
 
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Account</ThemedText>
-          <View style={[styles.statusPill, { backgroundColor: palette.badge }]}>
-            <ThemedText type="defaultSemiBold">Signed in</ThemedText>
-          </View>
+      <View style={styles.identity}>
+        <View
+          style={[
+            styles.avatar,
+            { backgroundColor: colorScheme === 'dark' ? `${palette.tint}33` : Brand.red100 },
+          ]}>
+          <Text
+            style={[
+              styles.avatarInitials,
+              { color: colorScheme === 'dark' ? palette.tint : Brand.red700 },
+            ]}>
+            {avatarInitials}
+          </Text>
         </View>
-        <ThemedText type="subtitle">{currentUser?.email ?? 'UW account'}</ThemedText>
-        <ThemedText style={styles.mutedText}>
-          This is the email tied to your Firebase account.
-        </ThemedText>
-      </ThemedView>
+        <View style={styles.identityText}>
+          <Text style={[TypeScale.heading, { color: palette.text }]} numberOfLines={1}>
+            {displayName || currentUser?.email || 'Student'}
+          </Text>
+          <BadgeChip label="✓ Verified @wisc.edu" tone="lake" />
+          {displayName && currentUser?.email ? (
+            <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+              {currentUser.email}
+            </Text>
+          ) : null}
+        </View>
+      </View>
 
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Name</ThemedText>
-        </View>
-        <ThemedText type="subtitle">How your name appears</ThemedText>
-        <ThemedText style={styles.statusCopy}>{nameStatus}</ThemedText>
-        <View style={styles.inlineRow}>
-          <TextInput
-            autoCapitalize="words"
-            editable={!isSaving}
-            onChangeText={setFirstName}
-            placeholder="First name"
-            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-            style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
-            value={firstName}
-          />
-          <TextInput
-            autoCapitalize="words"
-            editable={!isSaving}
-            onChangeText={setLastName}
-            placeholder="Last name"
-            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-            style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
-            value={lastName}
-          />
-        </View>
-        <Pressable
-          disabled={isSaving}
-          onPress={handleSaveName}
-          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isSaving ? 0.6 : 1 }]}>
-          <ThemedText type="defaultSemiBold">Save Name</ThemedText>
-        </Pressable>
-      </ThemedView>
-
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.sectionLabel}>Classes</ThemedText>
-        <ThemedText type="subtitle">Courses you&apos;re taking</ThemedText>
-        <ThemedText style={styles.statusCopy}>{classesStatus}</ThemedText>
-        <ThemedText style={styles.mutedText}>
-          Search across {UW_COURSE_COUNT.toLocaleString()} official UW-Madison courses.
-        </ThemedText>
+      <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+        <Text style={[TypeScale.heading, { color: palette.text }]}>Your classes</Text>
+        <Text style={[TypeScale.caption, { color: palette.icon }]}>{classesStatus}</Text>
         <TextInput
           autoCapitalize="characters"
           editable={!isSaving}
           onChangeText={setCourseQuery}
-          placeholder="Search by course code or title"
-          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-          style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
+          placeholder={`Search ${UW_COURSE_COUNT.toLocaleString()} UW courses`}
+          placeholderTextColor={placeholderColor}
+          style={[styles.input, inputColors]}
           value={courseQuery}
         />
         {courseQuery.trim().length >= 2 ? (
@@ -379,125 +356,132 @@ export default function ProfileScreen() {
                   key={course.code}
                   disabled={isSaving}
                   onPress={() => handleAddCourse(course.code)}
-                  style={[
+                  style={({ pressed }) => [
                     styles.searchResultCard,
                     {
                       backgroundColor: palette.surfaceMuted,
-                      borderColor: palette.outline,
-                      opacity: isSaving ? 0.5 : 1,
+                      borderColor: palette.border,
+                      opacity: isSaving || pressed ? 0.6 : 1,
                     },
                   ]}>
-                  <ThemedText type="defaultSemiBold">{course.code}</ThemedText>
-                  <ThemedText>{course.title}</ThemedText>
-                  <ThemedText style={styles.searchMeta}>
+                  <Text style={[TypeScale.code, { color: palette.text }]}>{course.code}</Text>
+                  <Text style={[TypeScale.body, { color: palette.text }]} numberOfLines={1}>
+                    {course.title}
+                  </Text>
+                  <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
                     {course.subjectName} · {course.credits}
-                  </ThemedText>
+                  </Text>
                 </Pressable>
               ))
             ) : (
-              <ThemedText style={styles.mutedText}>No courses matched that search yet.</ThemedText>
+              <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                No courses matched that search yet.
+              </Text>
             )}
           </View>
-        ) : (
-          <ThemedText style={styles.mutedText}>
-            Start typing at least 2 characters to search the course catalog.
-          </ThemedText>
-        )}
-        <View style={styles.chipRow}>
-          {classes.map((classCode) => (
-            <Pressable
-              key={classCode}
-              disabled={isSaving}
-              onPress={() => toggleClassSelection(classCode)}
-              style={[
-                styles.chip,
-                {
-                  backgroundColor: palette.tint,
-                  borderColor: palette.tint,
-                  opacity: isSaving ? 0.5 : 1,
-                },
-              ]}>
-              <ThemedText
-                type="defaultSemiBold"
-                lightColor="#ffffff"
-                darkColor="#ffffff">
-                {classCode} ×
-              </ThemedText>
-            </Pressable>
-          ))}
-        </View>
-        <Pressable
-          disabled={isSaving}
-          onPress={handleSaveClasses}
-          style={[styles.primaryButton, { backgroundColor: palette.tint, opacity: isSaving ? 0.6 : 1 }]}>
-          <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-            Save Classes
-          </ThemedText>
-        </Pressable>
-      </ThemedView>
+        ) : null}
+        {classes.length > 0 ? (
+          <>
+            <View style={styles.chipRow}>
+              {classes.map((classCode) => (
+                <CourseChip
+                  key={classCode}
+                  code={classCode}
+                  selected
+                  onPress={isSaving ? undefined : () => toggleClassSelection(classCode)}
+                />
+              ))}
+            </View>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
+              Tap a class to remove it.
+            </Text>
+          </>
+        ) : null}
+        <Button label="Save classes" fullWidth loading={isSaving} onPress={handleSaveClasses} />
+      </View>
 
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>App Store review</ThemedText>
+      <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+        <Text style={[TypeScale.heading, { color: palette.text }]}>Your name</Text>
+        <Text style={[TypeScale.caption, { color: palette.icon }]}>{nameStatus}</Text>
+        <View style={styles.inlineRow}>
+          <TextInput
+            autoCapitalize="words"
+            editable={!isSaving}
+            onChangeText={setFirstName}
+            placeholder="First name"
+            placeholderTextColor={placeholderColor}
+            style={[styles.input, styles.flexInput, inputColors]}
+            value={firstName}
+          />
+          <TextInput
+            autoCapitalize="words"
+            editable={!isSaving}
+            onChangeText={setLastName}
+            placeholder="Last name"
+            placeholderTextColor={placeholderColor}
+            style={[styles.input, styles.flexInput, inputColors]}
+            value={lastName}
+          />
         </View>
-        <ThemedText type="subtitle">Privacy, support, and contact</ThemedText>
-        <ThemedText style={styles.mutedText}>
-          These links stay available from Profile for privacy review, support, and account help.
-        </ThemedText>
-        <View style={styles.reviewLinkList}>
+        <Button
+          label="Save name"
+          variant="secondary"
+          fullWidth
+          loading={isSaving}
+          onPress={handleSaveName}
+        />
+      </View>
+
+      <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+        <Text style={[TypeScale.heading, { color: palette.text }]}>Privacy and support</Text>
+        <View style={styles.linkList}>
           <ExternalLink href={STUDI_PRIVACY_POLICY_URL as Href & string} asChild>
-            <Pressable style={[styles.reviewLinkButton, { borderColor: palette.outline }]}>
-              <ThemedText type="defaultSemiBold">Privacy Policy</ThemedText>
-              <ThemedText style={styles.reviewLinkMeta}>Policy URL</ThemedText>
+            <Pressable style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.6 : 1 }]}>
+              <Text style={[TypeScale.label, { color: palette.text }]}>Privacy Policy</Text>
+              <Text style={[TypeScale.caption, { color: palette.icon }]}>›</Text>
             </Pressable>
           </ExternalLink>
+          <View style={[styles.linkDivider, { backgroundColor: palette.border }]} />
           <ExternalLink href={STUDI_SUPPORT_URL as Href & string} asChild>
-            <Pressable style={[styles.reviewLinkButton, { borderColor: palette.outline }]}>
-              <ThemedText type="defaultSemiBold">Support</ThemedText>
-              <ThemedText style={styles.reviewLinkMeta}>Support URL</ThemedText>
+            <Pressable style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.6 : 1 }]}>
+              <Text style={[TypeScale.label, { color: palette.text }]}>Support</Text>
+              <Text style={[TypeScale.caption, { color: palette.icon }]}>›</Text>
             </Pressable>
           </ExternalLink>
+          <View style={[styles.linkDivider, { backgroundColor: palette.border }]} />
           <ExternalLink href={buildMailtoHref(STUDI_CONTACT_EMAIL, 'Studi Contact')} asChild>
-            <Pressable style={[styles.reviewLinkButton, { borderColor: palette.outline }]}>
-              <ThemedText type="defaultSemiBold">Contact</ThemedText>
-              <ThemedText style={styles.reviewLinkMeta}>{STUDI_CONTACT_EMAIL}</ThemedText>
+            <Pressable style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.6 : 1 }]}>
+              <Text style={[TypeScale.label, { color: palette.text }]}>Contact</Text>
+              <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+                {STUDI_CONTACT_EMAIL}
+              </Text>
             </Pressable>
           </ExternalLink>
         </View>
-      </ThemedView>
+      </View>
 
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.sectionLabel}>Account actions</ThemedText>
-        <ThemedText type="subtitle">Manage your session</ThemedText>
-        <Pressable
-          disabled={isBusy}
+      <View style={styles.accountActions}>
+        <Button
+          label="Sign out"
+          variant="secondary"
+          fullWidth
+          loading={isBusy}
           onPress={handleSignOut}
-          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isBusy ? 0.6 : 1 }] }>
-          {isBusy ? (
-            <ActivityIndicator color={palette.text} />
-          ) : (
-            <ThemedText type="defaultSemiBold">Sign Out</ThemedText>
-          )}
-        </Pressable>
+        />
         <Pressable
           disabled={isBusy}
           onPress={confirmDeleteAccount}
-          style={[
-            styles.destructiveButton,
-            {
-              borderColor: palette.tint,
-              opacity: isBusy ? 0.6 : 1,
-            },
+          style={({ pressed }) => [
+            styles.deleteLink,
+            { opacity: isBusy || pressed ? 0.6 : 1 },
           ]}>
           {isDeletingAccount ? (
             <ActivityIndicator color={palette.tint} />
           ) : (
-            <ThemedText style={[styles.destructiveButtonText, { color: palette.tint }]}>
-              Delete Account
-            </ThemedText>
+            <Text style={[TypeScale.label, { color: palette.tint }]}>Delete account</Text>
           )}
         </Pressable>
-      </ThemedView>
+      </View>
 
       <Modal
         animationType="fade"
@@ -506,46 +490,33 @@ export default function ProfileScreen() {
         visible={showDeleteReauthModal}>
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalCard, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <ThemedText type="subtitle">Confirm with Password</ThemedText>
-            <ThemedText style={styles.mutedText}>
+            <Text style={[TypeScale.heading, { color: palette.text }]}>Confirm with password</Text>
+            <Text style={[TypeScale.body, { color: palette.icon }]}>
               For security, please re-enter your password for {deleteReauthEmail || 'your account'}.
-            </ThemedText>
+            </Text>
             <TextInput
               autoCapitalize="none"
               autoCorrect={false}
               editable={!isReauthenticatingDelete}
               onChangeText={setDeleteReauthPassword}
               placeholder="Password"
-              placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+              placeholderTextColor={placeholderColor}
               secureTextEntry
-              style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
+              style={[styles.input, inputColors]}
               value={deleteReauthPassword}
             />
             <View style={styles.modalActions}>
-              <Pressable
+              <Button
+                label="Cancel"
+                variant="secondary"
                 disabled={isReauthenticatingDelete}
                 onPress={closeDeleteReauthModal}
-                style={[
-                  styles.modalButton,
-                  { borderColor: palette.outline, opacity: isReauthenticatingDelete ? 0.6 : 1 },
-                ]}>
-                <ThemedText type="defaultSemiBold">Cancel</ThemedText>
-              </Pressable>
-              <Pressable
-                disabled={isReauthenticatingDelete}
+              />
+              <Button
+                label="Delete account"
+                loading={isReauthenticatingDelete}
                 onPress={handleDeleteWithReauthPassword}
-                style={[
-                  styles.modalButton,
-                  { borderColor: palette.tint, opacity: isReauthenticatingDelete ? 0.6 : 1 },
-                ]}>
-                {isReauthenticatingDelete ? (
-                  <ActivityIndicator color={palette.tint} />
-                ) : (
-                  <ThemedText style={{ color: palette.tint }} type="defaultSemiBold">
-                    Delete Account
-                  </ThemedText>
-                )}
-              </Pressable>
+              />
             </View>
           </View>
         </View>
@@ -559,197 +530,117 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     justifyContent: 'center',
-    padding: 24,
+    padding: Space.xl,
   },
   screen: {
     flex: 1,
   },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    gap: Space.lg,
+    padding: Space.lg + 4,
+    paddingBottom: Space.xxl + 4,
   },
-  hero: {
-    alignItems: 'center',
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
-  },
-  heroLogo: {
-    height: 96,
-    width: 300,
-  },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  heroEyebrow: {
-    textAlign: 'center',
-  },
-  heroText: {
-    lineHeight: 30,
-    maxWidth: 420,
-    textAlign: 'center',
-  },
-  card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-  },
-  sectionHeader: {
+  identity: {
     alignItems: 'center',
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: Space.lg,
   },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
+  avatar: {
+    alignItems: 'center',
+    borderRadius: Radius.card,
+    borderTopRightRadius: Radius.accentCorner,
+    height: 64,
+    justifyContent: 'center',
+    width: 64,
   },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  avatarInitials: {
+    fontFamily: FontFamily.code,
+    fontSize: 22,
+    letterSpacing: 0.5,
+    lineHeight: 28,
   },
-  statusCopy: {
-    opacity: 0.8,
+  identityText: {
+    flexShrink: 1,
+    gap: Space.xs + 2,
   },
-  mutedText: {
-    opacity: 0.8,
-  },
-  chip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    minHeight: 40,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+  card: {
+    borderRadius: Radius.card,
+    borderTopRightRadius: Radius.accentCorner,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.md,
+    padding: Space.lg + 4,
   },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-  },
-  wideChip: {
-    minHeight: 48,
+    gap: Space.sm + 2,
   },
   inlineRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 10,
+    gap: Space.sm + 2,
   },
   flexInput: {
     flex: 1,
   },
   input: {
-    borderRadius: 14,
-    borderWidth: 1,
-    fontSize: 16,
-    minHeight: 54,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  destructiveButton: {
-    alignSelf: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 38,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  destructiveButtonText: {
-    fontSize: 13,
-    letterSpacing: 0.2,
-  },
-  inlineButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 18,
+    borderRadius: Radius.chip + 4,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    fontFamily: FontFamily.body,
+    fontSize: 15,
+    minHeight: 52,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.md,
   },
   searchResults: {
-    gap: 10,
+    gap: Space.sm + 2,
   },
   searchResultCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    gap: 4,
-    padding: 14,
+    borderRadius: Radius.chip + 4,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.xs,
+    padding: Space.md + 2,
   },
-  searchMeta: {
-    fontSize: 13,
-    opacity: 0.7,
+  linkList: {
+    gap: 0,
   },
-  slotList: {
-    gap: 10,
-  },
-  primaryButton: {
+  linkRow: {
     alignItems: 'center',
-    borderRadius: 14,
-    justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+    minHeight: 48,
   },
-  secondaryButton: {
+  linkDivider: {
+    height: StyleSheet.hairlineWidth,
+  },
+  accountActions: {
+    gap: Space.md,
+  },
+  deleteLink: {
     alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
     justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
-  },
-  reviewLinkList: {
-    gap: 10,
-  },
-  reviewLinkButton: {
-    borderRadius: 14,
-    borderWidth: 1,
-    gap: 2,
-    justifyContent: 'center',
-    minHeight: 58,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  reviewLinkMeta: {
-    fontSize: 13,
-    opacity: 0.65,
+    minHeight: 40,
   },
   modalBackdrop: {
     alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
     flex: 1,
     justifyContent: 'center',
-    padding: 20,
+    padding: Space.lg + 4,
   },
   modalCard: {
-    borderRadius: 18,
-    borderWidth: 1,
-    gap: 12,
+    borderRadius: Radius.card,
+    borderTopRightRadius: Radius.accentCorner,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.md,
     maxWidth: 420,
-    padding: 18,
+    padding: Space.lg + 4,
     width: '100%',
   },
   modalActions: {
     flexDirection: 'row',
-    gap: 10,
+    gap: Space.sm + 2,
     justifyContent: 'flex-end',
-  },
-  modalButton: {
-    alignItems: 'center',
-    borderRadius: 12,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 42,
-    minWidth: 128,
-    paddingHorizontal: 12,
   },
 });

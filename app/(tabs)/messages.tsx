@@ -1,11 +1,17 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import { subscribeToUserConversations, type ConversationListItem } from '@/lib/firestore';
@@ -17,12 +23,13 @@ function formatTimestamp(value: unknown) {
   }
 
   const date = (value as { toDate: () => Date }).toDate();
-  return date.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  const now = new Date();
+
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 export default function MessagesScreen() {
@@ -56,10 +63,10 @@ export default function MessagesScreen() {
       setConversations(loadedConversations);
       setStatus(
         loadedConversations.length > 0
-          ? `You have ${loadedConversations.length} conversation${
+          ? `${loadedConversations.length} conversation${
               loadedConversations.length === 1 ? '' : 's'
-            }.`
-          : 'No conversations yet. Open a session and message an attendee to start one.'
+            }`
+          : 'Chats start when you join a session.'
       );
       setIsLoading(false);
     });
@@ -70,70 +77,83 @@ export default function MessagesScreen() {
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView style={[styles.hero, { backgroundColor: palette.hero }]}>
-        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Coordination</ThemedText>
-        <ThemedText type="title" style={styles.heroTitle}>
-          Messages
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Coordinate with session partners without leaving Studi.
-        </ThemedText>
-      </ThemedView>
-
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Inbox</ThemedText>
-          <View style={[styles.statusPill, { backgroundColor: palette.surfaceMuted }]}>
-            <ThemedText type="defaultSemiBold">{conversations.length} threads</ThemedText>
-          </View>
-        </View>
-        <ThemedText type="subtitle">Your recent conversations</ThemedText>
-        <ThemedText style={styles.statusText}>{status}</ThemedText>
-      </ThemedView>
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
+      <View style={styles.header}>
+        <Text style={[TypeScale.title, { color: palette.text }]}>Messages</Text>
+        <Text style={[TypeScale.caption, { color: palette.icon }]}>{status}</Text>
+      </View>
 
       {isLoading ? (
         <View style={styles.loadingArea}>
           <ActivityIndicator color={palette.tint} />
         </View>
       ) : conversations.length > 0 ? (
-        conversations.map((conversation) => {
-          const otherName = conversation.otherParticipant?.displayName || 'Student';
+        <View style={styles.threadList}>
+          {conversations.map((conversation) => {
+            const otherName = conversation.otherParticipant?.displayName || 'Student';
 
-          return (
-            <Pressable
-              key={conversation.conversationId}
-              onPress={() =>
-                router.push({
-                  pathname: '/conversation/[conversationId]',
-                  params: {
-                    conversationId: conversation.conversationId,
-                    otherUserId: conversation.otherParticipant?.uid ?? '',
-                    otherUserName: otherName,
+            return (
+              <Pressable
+                key={conversation.conversationId}
+                accessibilityRole="button"
+                onPress={() =>
+                  router.push({
+                    pathname: '/conversation/[conversationId]',
+                    params: {
+                      conversationId: conversation.conversationId,
+                      otherUserId: conversation.otherParticipant?.uid ?? '',
+                      otherUserName: otherName,
+                    },
+                  })
+                }
+                style={({ pressed }) => [
+                  styles.threadCard,
+                  {
+                    backgroundColor: palette.surface,
+                    borderColor: palette.border,
+                    opacity: pressed ? 0.85 : 1,
                   },
-                })
-              }>
-              <ThemedView style={[styles.card, styles.threadCard, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-                <View style={styles.sectionHeader}>
-                  <ThemedText type="defaultSemiBold">{otherName}</ThemedText>
-                  <ThemedText style={styles.timestamp}>
-                    {formatTimestamp(conversation.lastMessageAt || conversation.updatedAt)}
-                  </ThemedText>
+                ]}>
+                <View
+                  style={[
+                    styles.avatar,
+                    {
+                      backgroundColor:
+                        colorScheme === 'dark' ? `${palette.tint}33` : Brand.red100,
+                    },
+                  ]}>
+                  <Text
+                    style={[
+                      styles.avatarInitial,
+                      { color: colorScheme === 'dark' ? palette.tint : Brand.red700 },
+                    ]}>
+                    {otherName.slice(0, 1).toUpperCase()}
+                  </Text>
                 </View>
-                <ThemedText style={styles.statusText}>
-                  {conversation.lastMessagePreview || 'Say hello and coordinate your next session.'}
-                </ThemedText>
-              </ThemedView>
-            </Pressable>
-          );
-        })
+                <View style={styles.threadBody}>
+                  <View style={styles.threadHeader}>
+                    <Text style={[TypeScale.label, styles.threadName, { color: palette.text }]} numberOfLines={1}>
+                      {otherName}
+                    </Text>
+                    <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                      {formatTimestamp(conversation.lastMessageAt || conversation.updatedAt)}
+                    </Text>
+                  </View>
+                  <Text style={[TypeScale.body, styles.preview, { color: palette.icon }]} numberOfLines={1}>
+                    {conversation.lastMessagePreview || 'Say hi before you arrive.'}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
       ) : (
-        <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <ThemedText type="subtitle">No messages yet</ThemedText>
-          <ThemedText>
-            Open a session detail and start a conversation from there.
-          </ThemedText>
-        </ThemedView>
+        <EmptyState
+          headline="No conversations yet"
+          body="Chats start when you join a session."
+          actionLabel="Find a session"
+          onAction={() => router.push('/sessions')}
+        />
       )}
     </ScrollView>
   );
@@ -142,60 +162,53 @@ export default function MessagesScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    gap: Space.lg,
+    padding: Space.lg + 4,
+    paddingBottom: Space.xxl + 4,
   },
-  hero: {
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
+  header: {
+    gap: Space.xs,
   },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  heroTitle: { marginBottom: 4 },
-  heroText: {
-    lineHeight: 30,
-    maxWidth: 420,
-  },
-  card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
+  threadList: {
+    gap: Space.md,
   },
   threadCard: {
-    gap: 8,
+    alignItems: 'center',
+    borderRadius: Radius.card,
+    borderTopRightRadius: Radius.accentCorner,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flexDirection: 'row',
+    gap: Space.md,
+    padding: Space.lg,
   },
-  sectionHeader: {
+  avatar: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  avatarInitial: {
+    fontFamily: FontFamily.code,
+    fontSize: 17,
+    lineHeight: 22,
+  },
+  threadBody: {
+    flex: 1,
+    gap: 2,
+  },
+  threadHeader: {
     alignItems: 'center',
     flexDirection: 'row',
+    gap: Space.sm,
     justifyContent: 'space-between',
   },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
+  threadName: {
+    flexShrink: 1,
   },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  statusText: {
-    opacity: 0.82,
-  },
-  timestamp: {
-    fontSize: 13,
-    opacity: 0.7,
+  preview: {
+    fontSize: 14,
+    lineHeight: 20,
   },
   loadingArea: {
     alignItems: 'center',

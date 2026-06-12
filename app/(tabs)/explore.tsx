@@ -4,15 +4,15 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Text,
   TextInput,
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
+import { Button } from '@/components/ui/Button';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import {
   getAtmosphereFiltersForLocationTags,
   LOCATION_ATMOSPHERE_FILTERS,
@@ -104,7 +104,7 @@ export default function StudyLocationsScreen() {
       const suffix = loadedLocations.length === 1 ? '' : 's';
       setStatus(
         loadedLocations.length > 0
-          ? `Loaded ${loadedLocations.length} study location${suffix}.`
+          ? `${loadedLocations.length} study spot${suffix} around campus`
           : 'No study locations found yet.'
       );
     } catch (error) {
@@ -144,52 +144,44 @@ export default function StudyLocationsScreen() {
     );
   }
 
+  const filterChipColors = (isSelected: boolean) => ({
+    backgroundColor: isSelected
+      ? colorScheme === 'dark'
+        ? `${palette.tint}33`
+        : Brand.red100
+      : palette.surfaceMuted,
+  });
+  const filterChipTextColor = (isSelected: boolean) =>
+    isSelected ? (colorScheme === 'dark' ? palette.tint : Brand.red700) : palette.text;
+
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView
-        style={[
-          styles.hero,
-          { backgroundColor: palette.hero },
-        ]}>
-        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Campus spots</ThemedText>
-        <ThemedText type="title" style={styles.heroTitle}>
-          Study Locations
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Browse places around campus where students can meet, focus, and start study sessions.
-        </ThemedText>
-      </ThemedView>
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
+      <View style={styles.header}>
+        <Text style={[TypeScale.title, { color: palette.text }]}>Study spots</Text>
+        <Text style={[TypeScale.caption, { color: palette.icon }]}>{status}</Text>
+      </View>
 
-      <ThemedView
-        style={[
-          styles.card,
-          { backgroundColor: palette.surface, borderColor: palette.border },
-        ]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Actions</ThemedText>
-          <View
-            style={[
-              styles.statusPill,
-              { backgroundColor: palette.surfaceMuted },
-            ]}>
-            <ThemedText type="defaultSemiBold">{locations.length} loaded</ThemedText>
-          </View>
-        </View>
-        <ThemedText type="subtitle">Find your next study spot</ThemedText>
-        <ThemedText style={styles.statusText}>{status}</ThemedText>
+      <View style={styles.searchSection}>
         <TextInput
           autoCapitalize="words"
           onChangeText={setLocationQuery}
           placeholder="Search by library, building, area, or tag"
-          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-          style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
+          placeholderTextColor={colorScheme === 'dark' ? '#9F918B' : Brand.charcoal400}
+          style={[
+            styles.input,
+            {
+              backgroundColor: palette.surfaceMuted,
+              borderColor: palette.border,
+              color: palette.text,
+            },
+          ]}
           value={locationQuery}
         />
         <View style={styles.filters}>
           <View style={styles.filterHeader}>
-            <ThemedText style={styles.filterLabel}>Area</ThemedText>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>Area</Text>
             {hasActiveFilters ? (
               <Pressable
                 accessibilityRole="button"
@@ -198,9 +190,7 @@ export default function StudyLocationsScreen() {
                   setSelectedCampusArea(null);
                   setSelectedAtmosphere(null);
                 }}>
-                <ThemedText style={[styles.clearFilters, { color: palette.tint }]}>
-                  Clear all
-                </ThemedText>
+                <Text style={[TypeScale.label, { color: palette.tint }]}>Clear all</Text>
               </Pressable>
             ) : null}
           </View>
@@ -214,24 +204,15 @@ export default function StudyLocationsScreen() {
                   accessibilityState={{ selected: isSelected }}
                   key={campusArea ?? 'all-areas'}
                   onPress={() => setSelectedCampusArea(campusArea)}
-                  style={[
-                    styles.filterChip,
-                    {
-                      backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
-                      borderColor: isSelected ? palette.tint : palette.outline,
-                    },
-                  ]}>
-                  <ThemedText
-                    lightColor={isSelected ? '#ffffff' : undefined}
-                    darkColor={isSelected ? '#ffffff' : undefined}
-                    type="defaultSemiBold">
+                  style={[styles.filterChip, filterChipColors(isSelected)]}>
+                  <Text style={[TypeScale.label, { color: filterChipTextColor(isSelected) }]}>
                     {campusArea ?? 'All areas'}
-                  </ThemedText>
+                  </Text>
                 </Pressable>
               );
             })}
           </View>
-          <ThemedText style={styles.filterLabel}>Atmosphere</ThemedText>
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>Atmosphere</Text>
           <View style={styles.filterChipRow}>
             {LOCATION_ATMOSPHERE_FILTERS.map((atmosphere) => {
               const isSelected = selectedAtmosphere === atmosphere;
@@ -246,109 +227,28 @@ export default function StudyLocationsScreen() {
                       currentAtmosphere === atmosphere ? null : atmosphere
                     )
                   }
-                  style={[
-                    styles.filterChip,
-                    {
-                      backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
-                      borderColor: isSelected ? palette.tint : palette.outline,
-                    },
-                  ]}>
-                  <ThemedText
-                    lightColor={isSelected ? '#ffffff' : undefined}
-                    darkColor={isSelected ? '#ffffff' : undefined}
-                    type="defaultSemiBold">
+                  style={[styles.filterChip, filterChipColors(isSelected)]}>
+                  <Text style={[TypeScale.label, { color: filterChipTextColor(isSelected) }]}>
                     {atmosphere}
-                  </ThemedText>
+                  </Text>
                 </Pressable>
               );
             })}
           </View>
-          <ThemedText style={styles.filterHint}>
-            Atmosphere filters use location tags and tags students add in reviews.
-          </ThemedText>
         </View>
-        {hasLocationSearch ? (
-          <View style={styles.searchResults}>
-            <ThemedText style={styles.searchHint}>
-              {filteredLocations.length > 0
-                ? `${filteredLocations.length} matching study spot${
-                    filteredLocations.length === 1 ? '' : 's'
-                  }`
-                : 'No matching study spots yet'}
-            </ThemedText>
-            {filteredLocations.slice(0, 4).map((location) => (
-              <Pressable
-                key={`suggestion-${location.locationId}`}
-                onPress={() => setLocationQuery(location.name)}
-                style={[
-                  styles.searchSuggestion,
-                  {
-                    backgroundColor: palette.surfaceMuted,
-                    borderColor: palette.outline,
-                  },
-                ]}>
-                <View style={styles.searchSuggestionText}>
-                  <ThemedText type="defaultSemiBold">{location.name}</ThemedText>
-                  <ThemedText style={styles.locationArea}>
-                    {location.building} • {location.campusArea}
-                  </ThemedText>
-                </View>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-        <Pressable
-          onPress={() => router.push('/sessions')}
-          style={[
-            styles.secondaryButton,
-            {
-              borderColor: palette.outline,
-            },
-          ]}>
-          <ThemedText type="defaultSemiBold">Browse Available Sessions</ThemedText>
-        </Pressable>
-        <View style={styles.actionColumn}>
-          <Pressable
-            onPress={() => router.push('/create-session')}
-            style={[styles.createButton, { backgroundColor: palette.tint }]}>
-            <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-              Create a Study Session
-            </ThemedText>
-          </Pressable>
-        </View>
-        <Pressable
-          onPress={loadLocations}
-          style={[
-            styles.refreshButton,
-            {
-              borderColor: palette.outline,
-              opacity: isLoading ? 0.6 : 1,
-            },
-          ]}>
-          {isLoading ? (
-            <ActivityIndicator color={palette.text} />
-          ) : (
-            <ThemedText type="defaultSemiBold">Refresh Locations</ThemedText>
-          )}
-        </Pressable>
-      </ThemedView>
+      </View>
 
       {locations.length > 0 ? (
-        <ThemedView
+        <View
           style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <View style={styles.sectionHeader}>
-            <ThemedText style={styles.sectionLabel}>All Locations</ThemedText>
-            <View style={[styles.statusPill, { backgroundColor: palette.surfaceMuted }]}>
-              <ThemedText type="defaultSemiBold">{filteredLocations.length} spots</ThemedText>
-            </View>
-          </View>
-
           {filteredLocations.length === 0 ? (
             <View style={styles.emptySearch}>
-              <ThemedText type="subtitle">No spots match those filters</ThemedText>
-              <ThemedText style={styles.notesText}>
+              <Text style={[TypeScale.heading, { color: palette.text }]}>
+                No spots match those filters
+              </Text>
+              <Text style={[TypeScale.body, { color: palette.icon }]}>
                 Try another area or atmosphere, or clear all filters.
-              </ThemedText>
+              </Text>
             </View>
           ) : (
             filteredLocations.map((location, index) => {
@@ -365,94 +265,96 @@ export default function StudyLocationsScreen() {
                     }
                     style={styles.accordionHeader}>
                     <View style={styles.accordionHeaderLeft}>
-                      <ThemedText type="defaultSemiBold">{location.name}</ThemedText>
-                      <View style={styles.locationMetaRow}>
-                        <ThemedText style={styles.locationArea}>{location.campusArea}</ThemedText>
-                        {agg ? (
-                          <ThemedText style={styles.locationRatingPreview}>
-                            ★ {agg.averageStars} ({agg.totalRatings})
-                          </ThemedText>
-                        ) : null}
-                      </View>
+                      <Text style={[TypeScale.label, styles.locationName, { color: palette.text }]}>
+                        {location.name}
+                      </Text>
+                      <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                        {location.campusArea}
+                        {agg ? `  ·  ★ ${agg.averageStars} (${agg.totalRatings})` : ''}
+                      </Text>
                     </View>
-                    <ThemedText style={[styles.chevron, { color: palette.tint }]}>
+                    <Text style={[styles.chevron, { color: palette.tint }]}>
                       {isExpanded ? '▲' : '▼'}
-                    </ThemedText>
+                    </Text>
                   </Pressable>
 
                   {isExpanded && (
                     <View style={styles.accordionContent}>
-                      <ThemedText style={styles.notesText}>{location.notes}</ThemedText>
+                      <Text style={[TypeScale.body, { color: palette.icon }]}>
+                        {location.notes}
+                      </Text>
 
                       {agg ? (
                         <View style={styles.ratingRow}>
                           <View style={styles.starRow}>
                             {[1, 2, 3, 4, 5].map((star) => (
-                              <ThemedText
+                              <Text
                                 key={star}
                                 style={{
                                   color:
                                     star <= Math.round(agg.averageStars)
-                                      ? '#F5A623'
+                                      ? Brand.sunflower400
                                       : palette.outline,
                                   fontSize: 18,
                                   lineHeight: 24,
                                 }}>
                                 ★
-                              </ThemedText>
+                              </Text>
                             ))}
                           </View>
-                          <ThemedText type="defaultSemiBold">{agg.averageStars}</ThemedText>
-                          <ThemedText style={styles.ratingCount}>
+                          <Text style={[TypeScale.label, { color: palette.text }]}>
+                            {agg.averageStars}
+                          </Text>
+                          <Text style={[TypeScale.caption, { color: palette.icon }]}>
                             ({agg.totalRatings})
-                          </ThemedText>
+                          </Text>
                         </View>
                       ) : (
-                        <ThemedText style={styles.ratingEmpty}>
-                          No ratings yet — be the first!
-                        </ThemedText>
+                        <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                          No ratings yet — be the first.
+                        </Text>
                       )}
 
                       <View style={styles.tagRow}>
                         {location.tags.map((tag) => (
-                          <ThemedView
+                          <View
                             key={`${location.locationId}-${tag}`}
-                            style={[
-                              styles.tag,
-                              {
-                                backgroundColor: palette.surfaceMuted,
-                                borderColor: palette.outline,
-                              },
-                            ]}>
-                            <ThemedText type="defaultSemiBold">{tag}</ThemedText>
-                          </ThemedView>
+                            style={[styles.tag, { backgroundColor: palette.surfaceMuted }]}>
+                            <Text style={[TypeScale.label, { color: palette.text }]}>{tag}</Text>
+                          </View>
                         ))}
                       </View>
 
                       {agg && agg.topTags.length > 0 && (
                         <View style={styles.communityTagsSection}>
-                          <ThemedText style={styles.communityTagsLabel}>
+                          <Text style={[TypeScale.caption, { color: palette.icon }]}>
                             Student tags
-                          </ThemedText>
+                          </Text>
                           <View style={styles.tagRow}>
                             {agg.topTags.map((tag) => (
-                              <ThemedView
+                              <View
                                 key={`${location.locationId}-community-${tag}`}
                                 style={[
                                   styles.tag,
-                                  {
-                                    backgroundColor: palette.badge,
-                                    borderColor: palette.outline,
-                                  },
+                                  { backgroundColor: `${Brand.sunflower400}1A` },
                                 ]}>
-                                <ThemedText type="defaultSemiBold">{tag}</ThemedText>
-                              </ThemedView>
+                                <Text
+                                  style={[
+                                    TypeScale.label,
+                                    { color: colorScheme === 'dark' ? '#F0C36A' : '#A87514' },
+                                  ]}>
+                                  {tag}
+                                </Text>
+                              </View>
                             ))}
                           </View>
                         </View>
                       )}
 
-                      <Pressable
+                      <Button
+                        label="Rate this spot"
+                        variant="secondary"
+                        size="sm"
                         onPress={() =>
                           router.push({
                             pathname: '/rate-location',
@@ -462,26 +364,36 @@ export default function StudyLocationsScreen() {
                             },
                           })
                         }
-                        style={[styles.rateButton, { borderColor: palette.outline }]}>
-                        <ThemedText type="defaultSemiBold">Rate This Spot</ThemedText>
-                      </Pressable>
+                      />
                     </View>
                   )}
                 </View>
               );
             })
           )}
-        </ThemedView>
+        </View>
       ) : !isLoading ? (
-        <ThemedView
+        <View
           style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <ThemedText type="subtitle">No study spots available right now</ThemedText>
-          <ThemedText>
-            Studi could not load any official or saved study locations. Refresh once more or check
-            your Firestore connection.
-          </ThemedText>
-        </ThemedView>
+          <Text style={[TypeScale.heading, { color: palette.text }]}>
+            Can’t reach the library
+          </Text>
+          <Text style={[TypeScale.body, { color: palette.icon }]}>
+            Studi could not load any study locations. Check your connection and try again.
+          </Text>
+        </View>
       ) : null}
+
+      <View style={styles.actions}>
+        <Button label="Browse sessions" fullWidth onPress={() => router.push('/sessions')} />
+        <Button
+          label="Refresh spots"
+          variant="secondary"
+          fullWidth
+          loading={isLoading}
+          onPress={loadLocations}
+        />
+      </View>
     </ScrollView>
   );
 }
@@ -496,222 +408,103 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    gap: Space.lg,
+    padding: Space.lg + 4,
+    paddingBottom: Space.xxl + 4,
   },
-  hero: {
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
+  header: {
+    gap: Space.xs,
   },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  heroText: {
-    lineHeight: 30,
-    maxWidth: 420,
-  },
-  heroTitle: {
-    marginBottom: 4,
+  searchSection: {
+    gap: Space.md,
   },
   card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-  },
-  sectionHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
-  },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 48,
-    paddingHorizontal: 16,
-  },
-  createButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    justifyContent: 'center',
-    minHeight: 52,
-    paddingHorizontal: 16,
-  },
-  actionColumn: {
-    gap: 10,
-  },
-  locationArea: {
-    fontSize: 13,
-    opacity: 0.65,
-  },
-  notesText: {
-    opacity: 0.85,
-  },
-  accordionHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
-  },
-  accordionHeaderLeft: {
-    flex: 1,
-    gap: 2,
-    paddingRight: 12,
-  },
-  chevron: {
-    fontSize: 12,
-  },
-  accordionContent: {
-    gap: 12,
-    paddingBottom: 14,
-  },
-  divider: {
-    height: 1,
-  },
-  emptySearch: {
-    gap: 8,
-    paddingVertical: 8,
-  },
-  statusText: {
-    opacity: 0.82,
+    borderRadius: Radius.card,
+    borderTopRightRadius: Radius.accentCorner,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.sm,
+    padding: Space.lg + 4,
   },
   input: {
-    borderRadius: 14,
-    borderWidth: 1,
-    fontSize: 16,
-    minHeight: 54,
-    paddingHorizontal: 14,
+    borderRadius: Radius.chip + 4,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    fontFamily: FontFamily.body,
+    fontSize: 15,
+    minHeight: 52,
+    paddingHorizontal: Space.lg,
   },
   filters: {
-    gap: 10,
-    paddingTop: 4,
+    gap: Space.sm + 2,
   },
   filterHeader: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  filterLabel: {
-    fontSize: 12,
-    letterSpacing: 0.8,
-    opacity: 0.65,
-    textTransform: 'uppercase',
-  },
   filterChipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: Space.sm,
   },
   filterChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    minHeight: 36,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  filterHint: {
-    fontSize: 13,
-    opacity: 0.66,
-  },
-  clearFilters: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  refreshButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
+    borderRadius: Radius.pill,
+    minHeight: 34,
     justifyContent: 'center',
-    minHeight: 48,
-    paddingHorizontal: 16,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.xs + 2,
   },
-  searchHint: {
-    fontSize: 14,
-    opacity: 0.7,
-  },
-  searchResults: {
-    gap: 8,
-  },
-  searchSuggestion: {
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 12,
-  },
-  searchSuggestionText: {
-    gap: 2,
-  },
-  locationMetaRow: {
+  accordionHeader: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 12,
+    justifyContent: 'space-between',
+    paddingVertical: Space.md + 2,
   },
-  locationRatingPreview: {
-    color: '#D98700',
-    fontSize: 13,
+  accordionHeaderLeft: {
+    flex: 1,
+    gap: 2,
+    paddingRight: Space.md,
+  },
+  locationName: {
+    fontSize: 15,
+    lineHeight: 20,
+  },
+  chevron: {
+    fontSize: 12,
+  },
+  accordionContent: {
+    gap: Space.md,
+    paddingBottom: Space.md + 2,
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+  },
+  emptySearch: {
+    gap: Space.sm,
+    paddingVertical: Space.sm,
   },
   tag: {
-    borderRadius: 999,
-    borderWidth: 1,
-    minHeight: 36,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.xs + 2,
   },
   tagRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: Space.sm,
   },
   ratingRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 6,
+    gap: Space.xs + 2,
   },
   starRow: {
     flexDirection: 'row',
     gap: 2,
   },
-  ratingCount: {
-    opacity: 0.65,
-  },
-  ratingEmpty: {
-    opacity: 0.6,
-  },
   communityTagsSection: {
-    gap: 8,
+    gap: Space.sm,
   },
-  communityTagsLabel: {
-    fontSize: 11,
-    letterSpacing: 0.8,
-    opacity: 0.6,
-    textTransform: 'uppercase',
-  },
-  rateButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 44,
-    paddingHorizontal: 16,
+  actions: {
+    gap: Space.sm + 2,
   },
 });

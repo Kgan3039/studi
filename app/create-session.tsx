@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { Timestamp } from 'firebase/firestore';
 import {
   ActivityIndicator,
   Alert,
@@ -8,19 +9,28 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Text,
   TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { SessionCard } from '@/components/session-card';
+import { Button } from '@/components/ui/Button';
+import { CourseChip } from '@/components/ui/CourseChip';
 import { formatTimeLabel, TimeDropdown } from '@/components/time-dropdown';
-import { Colors } from '@/constants/theme';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
-import { createSession, getLocations, getUserProfile, type StudyLocation } from '@/lib/firestore';
+import {
+  createSession,
+  getLocationRatingAggregates,
+  getLocations,
+  getUserProfile,
+  type LocationRatingAggregate,
+  type StudyLocation,
+} from '@/lib/firestore';
 import {
   MAX_DAYS_IN_FUTURE,
   validateSessionSchedule,
@@ -95,6 +105,9 @@ export default function CreateSessionScreen() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [classes, setClasses] = useState<string[]>([]);
   const [locations, setLocations] = useState<StudyLocation[]>([]);
+  const [ratingAggregates, setRatingAggregates] = useState<Map<string, LocationRatingAggregate>>(
+    new Map()
+  );
   const [locationQuery, setLocationQuery] = useState('');
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedLocationId, setSelectedLocationId] = useState('');
@@ -192,7 +205,7 @@ export default function CreateSessionScreen() {
       );
       setStatus(
         profileClasses.length > 0 && loadedLocations.length > 0
-          ? 'Pick a class, location, and time to create a session.'
+          ? 'Pick a class, spot, and time — under 30 seconds.'
           : 'Add classes on your Profile and make sure study spots are available before creating sessions.'
       );
     } catch (error) {
@@ -201,6 +214,13 @@ export default function CreateSessionScreen() {
       setStatus(message);
     } finally {
       setIsLoading(false);
+    }
+
+    try {
+      const aggregates = await getLocationRatingAggregates();
+      setRatingAggregates(aggregates);
+    } catch {
+      // Ratings unavailable — locations still show
     }
   }, [currentUser, requestedClassId]);
 
@@ -261,7 +281,7 @@ export default function CreateSessionScreen() {
           (new Date(validatedSchedule.startTimeIso).getTime() - Date.now()) / 3_600_000
         ),
       });
-      setStatus(`Session created successfully. Session ID: ${sessionId}`);
+      setStatus('You’re at the table — classmates can join now.');
       setScheduleHint(`Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
       setSessionDate('');
       setStartTime('');
@@ -277,6 +297,35 @@ export default function CreateSessionScreen() {
     }
   }
 
+  // Live preview of the card classmates will see — also doubles as validation.
+  const previewSession = useMemo(() => {
+    if (!selectedClass || !sessionDate || !startTime || !endTime || endTime <= startTime) {
+      return null;
+    }
+
+    const start = new Date(`${sessionDate}T${startTime}:00`);
+    const end = new Date(`${sessionDate}T${endTime}:00`);
+
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      return null;
+    }
+
+    return {
+      sessionId: 'preview',
+      classId: selectedClass,
+      title: `${selectedClass} Study Session`,
+      startTime: Timestamp.fromDate(start),
+      endTime: Timestamp.fromDate(end),
+      status: 'open' as const,
+      participantIds: currentUser ? [currentUser.uid] : [],
+    };
+  }, [currentUser, endTime, selectedClass, sessionDate, startTime]);
+
+  const selectedLocation = locations.find(
+    (location) => location.locationId === selectedLocationId
+  );
+  const placeholderColor = colorScheme === 'dark' ? '#9F918B' : Brand.charcoal400;
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -287,268 +336,229 @@ export default function CreateSessionScreen() {
         style={styles.screen}
         contentContainerStyle={[
           styles.content,
-          { paddingBottom: insets.bottom + 56, paddingTop: insets.top + 12 },
+          { paddingBottom: insets.bottom + 56, paddingTop: Space.lg },
         ]}>
-      <ThemedView
-        style={[
-          styles.hero,
-          { backgroundColor: palette.hero },
-        ]}>
-        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Sessions</ThemedText>
-        <ThemedText type="title" style={styles.heroTitle}>
-          Create Session
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Start a study session your classmates can join by choosing a class, location, and time.
-        </ThemedText>
-      </ThemedView>
+        <View style={styles.header}>
+          <Text style={[TypeScale.title, { color: palette.text }]}>New session</Text>
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>{status}</Text>
+        </View>
 
-      <ThemedView
-        style={[
-          styles.card,
-          { backgroundColor: palette.surface, borderColor: palette.border },
-        ]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Overview</ThemedText>
+        <View style={styles.section}>
+          <Text style={[TypeScale.heading, { color: palette.text }]}>Class</Text>
+          {isLoading ? (
+            <ActivityIndicator color={palette.tint} />
+          ) : classes.length > 0 ? (
+            <View style={styles.chipRow}>
+              {classes.map((classCode) => (
+                <CourseChip
+                  key={classCode}
+                  code={classCode}
+                  selected={selectedClass === classCode}
+                  onPress={() => setSelectedClass(classCode)}
+                />
+              ))}
+            </View>
+          ) : (
+            <Text style={[TypeScale.body, { color: palette.icon }]}>
+              Add classes on your Profile tab first.
+            </Text>
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={[TypeScale.heading, { color: palette.text }]}>Where</Text>
+          <TextInput
+            autoCapitalize="words"
+            onChangeText={setLocationQuery}
+            placeholder="Search spots by name, building, or tag"
+            placeholderTextColor={placeholderColor}
+            style={[
+              styles.input,
+              {
+                backgroundColor: palette.surfaceMuted,
+                borderColor: palette.border,
+                color: palette.text,
+              },
+            ]}
+            value={locationQuery}
+          />
+          {isLoading ? (
+            <ActivityIndicator color={palette.tint} />
+          ) : filteredLocations.length > 0 ? (
+            <View style={styles.locationColumn}>
+              {filteredLocations.map((location) => {
+                const isSelected = selectedLocationId === location.locationId;
+                const aggregate = ratingAggregates.get(location.locationId);
+
+                return (
+                  <Pressable
+                    key={location.locationId}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isSelected }}
+                    onPress={() => setSelectedLocationId(location.locationId)}
+                    style={[
+                      styles.locationOption,
+                      {
+                        backgroundColor: isSelected
+                          ? colorScheme === 'dark'
+                            ? `${palette.tint}26`
+                            : Brand.red100
+                          : palette.surface,
+                        borderColor: isSelected ? palette.tint : palette.border,
+                      },
+                    ]}>
+                    <View style={styles.locationText}>
+                      <Text style={[TypeScale.label, { color: palette.text }]} numberOfLines={1}>
+                        {location.name}
+                      </Text>
+                      <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+                        {location.building}
+                        {aggregate ? `  ·  ★ ${aggregate.averageStars}` : ''}
+                      </Text>
+                    </View>
+                    {isSelected ? (
+                      <View style={[styles.seatDot, { backgroundColor: palette.tint }]} />
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : locationQuery.trim() ? (
+            <Text style={[TypeScale.body, { color: palette.icon }]}>
+              No saved study spots match that search yet.
+            </Text>
+          ) : (
+            <Text style={[TypeScale.body, { color: palette.icon }]}>
+              No study spots are available right now.
+            </Text>
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={[TypeScale.heading, { color: palette.text }]}>When</Text>
+
           <View
             style={[
-              styles.statusPill,
-              { backgroundColor: palette.surfaceMuted },
+              styles.calendar,
+              { backgroundColor: palette.surface, borderColor: palette.border },
             ]}>
-            <ThemedText type="defaultSemiBold">Host a session</ThemedText>
-          </View>
-        </View>
-        <ThemedText type="subtitle">Session status</ThemedText>
-        <ThemedText style={styles.statusText}>{status}</ThemedText>
-      </ThemedView>
+            <View style={styles.calendarHeader}>
+              <Pressable
+                disabled={!canGoToPreviousMonth}
+                onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, -1))}
+                style={[
+                  styles.monthButton,
+                  {
+                    borderColor: palette.border,
+                    opacity: canGoToPreviousMonth ? 1 : 0.35,
+                  },
+                ]}>
+                <Text style={[TypeScale.label, { color: palette.text }]}>{'<'}</Text>
+              </Pressable>
+              <Text style={[TypeScale.label, { color: palette.text }]}>
+                {formatMonthLabel(selectedCalendarMonth)}
+              </Text>
+              <Pressable
+                onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, 1))}
+                style={[styles.monthButton, { borderColor: palette.border }]}>
+                <Text style={[TypeScale.label, { color: palette.text }]}>{'>'}</Text>
+              </Pressable>
+            </View>
 
-      <ThemedView
-        style={[
-          styles.card,
-          { backgroundColor: palette.surface, borderColor: palette.border },
-        ]}>
-        <ThemedText style={styles.sectionLabel}>Step 1</ThemedText>
-        <ThemedText type="subtitle">Choose a class</ThemedText>
-        {isLoading ? (
-          <ActivityIndicator color={palette.text} />
-        ) : classes.length > 0 ? (
-          <View style={styles.chipRow}>
-            {classes.map((classCode) => {
-              const isSelected = selectedClass === classCode;
+            <View style={styles.weekdayRow}>
+              {CALENDAR_WEEKDAYS.map((weekday) => (
+                <Text key={weekday} style={[TypeScale.caption, styles.weekday, { color: palette.icon }]}>
+                  {weekday}
+                </Text>
+              ))}
+            </View>
 
-              return (
-                <Pressable
-                  key={classCode}
-                  onPress={() => setSelectedClass(classCode)}
-                  style={[
-                    styles.chip,
-                    {
-                        backgroundColor: isSelected
-                          ? palette.tint
-                          : palette.surfaceMuted,
-                      borderColor: isSelected
-                        ? palette.tint
-                          : palette.outline,
-                    },
-                  ]}>
-                  <ThemedText
-                    type="defaultSemiBold"
-                    lightColor={isSelected ? '#ffffff' : undefined}
-                    darkColor={isSelected ? '#ffffff' : undefined}>
-                    {classCode}
-                  </ThemedText>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : (
-          <ThemedText>Add classes on your Profile tab first.</ThemedText>
-        )}
-      </ThemedView>
+            <View style={styles.calendarGrid}>
+              {calendarDays.map((calendarDay) => {
+                const isSelected = sessionDate === calendarDay.isoDate;
+                const isPast = isPastCalendarDate(calendarDay.isoDate);
 
-      <ThemedView
-        style={[
-          styles.card,
-          { backgroundColor: palette.surface, borderColor: palette.border },
-        ]}>
-        <ThemedText style={styles.sectionLabel}>Step 2</ThemedText>
-        <ThemedText type="subtitle">Choose a location</ThemedText>
-        <TextInput
-          autoCapitalize="words"
-          onChangeText={setLocationQuery}
-          placeholder="Search study spots by name, building, area, or tag"
-          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-          style={[
-            styles.input,
-            {
-              borderColor: palette.outline,
-              color: palette.text,
-            },
-          ]}
-          value={locationQuery}
-        />
-        {isLoading ? (
-          <ActivityIndicator color={palette.text} />
-        ) : filteredLocations.length > 0 ? (
-          <View style={styles.locationColumn}>
-            {filteredLocations.map((location) => {
-              const isSelected = selectedLocationId === location.locationId;
-
-              return (
-                <Pressable
-                  key={location.locationId}
-                  onPress={() => setSelectedLocationId(location.locationId)}
-                  style={[
-                    styles.locationOption,
-                    {
-                      backgroundColor: isSelected
-                        ? colorScheme === 'dark'
-                          ? palette.badge
-                          : palette.badge
-                        : palette.surface,
-                      borderColor: isSelected
-                        ? palette.tint
-                          : palette.outline,
-                    },
-                  ]}>
-                  <ThemedText type="defaultSemiBold">{location.name}</ThemedText>
-                  <ThemedText>{location.building}</ThemedText>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : locationQuery.trim() ? (
-          <ThemedText>No saved study spots match that search yet.</ThemedText>
-        ) : (
-          <ThemedText>No study spots are available right now.</ThemedText>
-        )}
-      </ThemedView>
-
-      <ThemedView
-        style={[
-          styles.card,
-          { backgroundColor: palette.surface, borderColor: palette.border },
-        ]}>
-        <ThemedText style={styles.sectionLabel}>Step 3</ThemedText>
-        <ThemedText type="subtitle">Pick date and time</ThemedText>
-        <ThemedText style={styles.statusText}>
-          Studi will name the session from your selected class.
-        </ThemedText>
-
-        <View style={[styles.calendar, { borderColor: palette.outline }]}>
-          <View style={styles.calendarHeader}>
-            <Pressable
-              disabled={!canGoToPreviousMonth}
-              onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, -1))}
-              style={[
-                styles.monthButton,
-                {
-                  borderColor: palette.outline,
-                  opacity: canGoToPreviousMonth ? 1 : 0.35,
-                },
-              ]}>
-              <ThemedText type="defaultSemiBold">{'<'}</ThemedText>
-            </Pressable>
-            <ThemedText type="defaultSemiBold">{formatMonthLabel(selectedCalendarMonth)}</ThemedText>
-            <Pressable
-              onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, 1))}
-              style={[styles.monthButton, { borderColor: palette.outline }]}>
-              <ThemedText type="defaultSemiBold">{'>'}</ThemedText>
-            </Pressable>
-          </View>
-
-          <View style={styles.weekdayRow}>
-            {CALENDAR_WEEKDAYS.map((weekday) => (
-              <ThemedText key={weekday} style={styles.weekday}>
-                {weekday}
-              </ThemedText>
-            ))}
-          </View>
-
-          <View style={styles.calendarGrid}>
-            {calendarDays.map((calendarDay) => {
-              const isSelected = sessionDate === calendarDay.isoDate;
-              const isPast = isPastCalendarDate(calendarDay.isoDate);
-
-              return (
-                <Pressable
-                  disabled={isPast}
-                  key={calendarDay.isoDate}
-                  onPress={() => {
-                    setSessionDate(calendarDay.isoDate);
-                    setScheduleHint(
-                      `Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`
-                    );
-                  }}
-                  style={[
-                    styles.dateCell,
-                    {
-                      backgroundColor: isSelected ? palette.tint : 'transparent',
-                      opacity: calendarDay.inCurrentMonth && !isPast ? 1 : 0.34,
-                    },
-                  ]}>
-                  <ThemedText
-                    type={isSelected ? 'defaultSemiBold' : 'default'}
-                    lightColor={isSelected ? '#ffffff' : undefined}
-                    darkColor={isSelected ? '#ffffff' : undefined}>
-                    {calendarDay.label}
-                  </ThemedText>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-
-        <ThemedText type="defaultSemiBold">
-          Selected date: {sessionDate ? formatDateLabel(sessionDate) : 'Choose a date'}
-        </ThemedText>
-        <ThemedText style={styles.helperText}>{scheduleHint}</ThemedText>
-
-        <View style={styles.timeDropdownRow}>
-          <View style={styles.flexInput}>
-            <TimeDropdown
-              label="Start time"
-              onChange={(time) => {
-                setStartTime(time);
-                setEndTime((currentEndTime) =>
-                  currentEndTime && currentEndTime <= time ? '' : currentEndTime
+                return (
+                  <Pressable
+                    disabled={isPast}
+                    key={calendarDay.isoDate}
+                    onPress={() => {
+                      setSessionDate(calendarDay.isoDate);
+                      setScheduleHint(
+                        `Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`
+                      );
+                    }}
+                    style={[
+                      styles.dateCell,
+                      {
+                        backgroundColor: isSelected ? palette.tint : 'transparent',
+                        opacity: calendarDay.inCurrentMonth && !isPast ? 1 : 0.34,
+                      },
+                    ]}>
+                    <Text
+                      style={[
+                        isSelected ? TypeScale.label : TypeScale.body,
+                        { color: isSelected ? '#FFFFFF' : palette.text },
+                      ]}>
+                      {calendarDay.label}
+                    </Text>
+                  </Pressable>
                 );
-              }}
-              value={startTime}
-            />
+              })}
+            </View>
           </View>
-          <View style={styles.flexInput}>
-            <TimeDropdown
-              disabledOption={(time) => !!startTime && time <= startTime}
-              label="End time"
-              onChange={setEndTime}
-              value={endTime}
-            />
+
+          <Text style={[TypeScale.label, { color: palette.text }]}>
+            {sessionDate ? formatDateLabel(sessionDate) : 'Choose a date'}
+          </Text>
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>{scheduleHint}</Text>
+
+          <View style={styles.timeDropdownRow}>
+            <View style={styles.flexInput}>
+              <TimeDropdown
+                label="Start time"
+                onChange={(time) => {
+                  setStartTime(time);
+                  setEndTime((currentEndTime) =>
+                    currentEndTime && currentEndTime <= time ? '' : currentEndTime
+                  );
+                }}
+                value={startTime}
+              />
+            </View>
+            <View style={styles.flexInput}>
+              <TimeDropdown
+                disabledOption={(time) => !!startTime && time <= startTime}
+                label="End time"
+                onChange={setEndTime}
+                value={endTime}
+              />
+            </View>
           </View>
+
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>
+            {startTime && endTime
+              ? `Selected time: ${formatTimeLabel(startTime)}–${formatTimeLabel(endTime)}`
+              : 'Choose a start and end time.'}
+          </Text>
         </View>
 
-        <ThemedText style={styles.statusText}>
-          {startTime && endTime
-            ? `Selected time: ${formatTimeLabel(startTime)}-${formatTimeLabel(endTime)}`
-            : 'Choose a start and end time.'}
-        </ThemedText>
+        {previewSession ? (
+          <View style={styles.section}>
+            <Text style={[TypeScale.heading, { color: palette.text }]}>
+              What classmates will see
+            </Text>
+            <SessionCard session={previewSession} locationName={selectedLocation?.name} />
+          </View>
+        ) : null}
 
-        <Pressable
-          disabled={isSaving || isLoading}
+        <Button
+          label="Post session"
+          fullWidth
+          loading={isSaving}
+          disabled={isLoading}
           onPress={handleCreateSession}
-          style={[
-            styles.primaryButton,
-            { backgroundColor: palette.tint, opacity: isSaving || isLoading ? 0.6 : 1 },
-          ]}>
-          {isSaving ? (
-            <ActivityIndicator color="#ffffff" />
-          ) : (
-            <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-              Create Session
-            </ThemedText>
-          )}
-        </Pressable>
-      </ThemedView>
+        />
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -559,83 +569,30 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    gap: Space.xl,
+    padding: Space.lg + 4,
   },
-  hero: {
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
+  header: {
+    gap: Space.xs,
   },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  heroText: {
-    lineHeight: 30,
-    maxWidth: 420,
-  },
-  heroTitle: {
-    marginBottom: 4,
-  },
-  card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-  },
-  sectionHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
-  },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  statusText: {
-    opacity: 0.82,
-  },
-  helperText: {
-    fontSize: 13,
-    lineHeight: 18,
-    opacity: 0.72,
-  },
-  chip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    minHeight: 40,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+  section: {
+    gap: Space.md,
   },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: Space.sm + 2,
   },
   calendar: {
-    borderRadius: 18,
-    borderWidth: 1,
-    gap: 12,
-    padding: 14,
+    borderRadius: Radius.card,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.md,
+    padding: Space.md + 2,
   },
   calendarGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    rowGap: 8,
+    rowGap: Space.sm,
   },
   calendarHeader: {
     alignItems: 'center',
@@ -644,39 +601,46 @@ const styles = StyleSheet.create({
   },
   dateCell: {
     alignItems: 'center',
-    borderRadius: 999,
+    borderRadius: Radius.pill,
     height: 40,
     justifyContent: 'center',
     width: `${100 / 7}%`,
   },
   input: {
-    borderRadius: 14,
-    borderWidth: 1,
-    fontSize: 16,
+    borderRadius: Radius.chip + 4,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    fontFamily: FontFamily.body,
+    fontSize: 15,
     minHeight: 52,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.md,
   },
   locationColumn: {
-    gap: 10,
+    gap: Space.sm + 2,
   },
   locationOption: {
-    borderRadius: 16,
-    borderWidth: 1,
-    gap: 4,
-    padding: 14,
-  },
-  primaryButton: {
     alignItems: 'center',
-    borderRadius: 14,
-    justifyContent: 'center',
-    minHeight: 52,
-    paddingHorizontal: 16,
+    borderRadius: Radius.card,
+    borderTopRightRadius: Radius.accentCorner,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+    padding: Space.md + 2,
+  },
+  locationText: {
+    flexShrink: 1,
+    gap: 2,
+  },
+  seatDot: {
+    borderRadius: Radius.pill,
+    height: 10,
+    width: 10,
   },
   monthButton: {
     alignItems: 'center',
-    borderRadius: 999,
-    borderWidth: 1,
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
     height: 40,
     justifyContent: 'center',
     width: 40,
@@ -686,10 +650,9 @@ const styles = StyleSheet.create({
   },
   timeDropdownRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: Space.sm + 2,
   },
   weekday: {
-    opacity: 0.65,
     textAlign: 'center',
     width: `${100 / 7}%`,
   },

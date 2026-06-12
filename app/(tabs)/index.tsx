@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import {
@@ -7,14 +7,17 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Text,
   TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
+import { SessionCard } from '@/components/session-card';
+import { BadgeChip } from '@/components/ui/BadgeChip';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import {
@@ -23,8 +26,16 @@ import {
   signUp,
   subscribeToAuthState,
 } from '@/lib/auth';
-import { getUserProfile, type UserProfile } from '@/lib/firestore';
+import {
+  getLocations,
+  getUpcomingSessions,
+  getUserProfile,
+  type StudySession,
+  type UserProfile,
+} from '@/lib/firestore';
 import type { User } from 'firebase/auth';
+
+type TodaySession = StudySession & { locationName: string };
 
 function splitDisplayName(displayName: string | undefined) {
   const normalized = displayName?.trim() ?? '';
@@ -52,6 +63,12 @@ function getSetupSummary(profile: UserProfile | null) {
   };
 }
 
+const ONBOARDING_STEPS = [
+  { step: '1', title: 'Verify', copy: 'Sign up with your @wisc.edu email.' },
+  { step: '2', title: 'Pick classes', copy: 'Tell us what you’re taking this term.' },
+  { step: '3', title: 'Join a session', copy: 'Sit down with classmates who get it.' },
+] as const;
+
 export default function HomeScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
@@ -66,9 +83,8 @@ export default function HomeScreen() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isProfileLoading, setIsProfileLoading] = useState(false);
-  const [dashboardStatus, setDashboardStatus] = useState(
-    'Sign in to find and join study sessions for your classes.'
-  );
+  const [sessions, setSessions] = useState<TodaySession[]>([]);
+  const [sessionsError, setSessionsError] = useState('');
   const isSignedIn = !!currentUser && currentUser.emailVerified;
 
   useEffect(() => {
@@ -87,7 +103,7 @@ export default function HomeScreen() {
       }
 
       setProfile(null);
-      setDashboardStatus('Sign in to find and join study sessions for your classes.');
+      setSessions([]);
     });
 
     return unsubscribe;
@@ -103,21 +119,8 @@ export default function HomeScreen() {
         setIsProfileLoading(true);
         const loadedProfile = await getUserProfile(currentUser.uid);
         setProfile(loadedProfile);
-
-        if (!loadedProfile) {
-          setDashboardStatus('Finish your profile so Studi can recommend the right people and sessions.');
-          return;
-        }
-
-        const setup = getSetupSummary(loadedProfile);
-        setDashboardStatus(
-          setup.completed === 2
-            ? 'Your profile is ready. Browse sessions or create one for your class.'
-            : `You are ${setup.completed}/2 of the way through setup. Add your classes on Profile to see sessions for them.`
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unable to load your dashboard right now.';
-        setDashboardStatus(message);
+      } catch {
+        setProfile(null);
       } finally {
         setIsProfileLoading(false);
       }
@@ -125,6 +128,38 @@ export default function HomeScreen() {
 
     loadUserProfile();
   }, [currentUser]);
+
+  const loadSessions = useCallback(async () => {
+    if (!currentUser || !currentUser.emailVerified) {
+      return;
+    }
+
+    try {
+      setSessionsError('');
+      const [loadedSessions, locations] = await Promise.all([
+        getUpcomingSessions(),
+        getLocations(),
+      ]);
+      const locationsById = new Map(
+        locations.map((location) => [location.locationId, location] as const)
+      );
+
+      setSessions(
+        loadedSessions.map((session) => ({
+          ...session,
+          locationName: locationsById.get(session.locationId)?.name ?? session.locationId,
+        }))
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to load sessions right now.';
+      setSessionsError(message);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
 
   async function handleSubmitAuth() {
     try {
@@ -162,140 +197,204 @@ export default function HomeScreen() {
   }
 
   const savedName = splitDisplayName(profile?.displayName);
-  const welcomeName = savedName.firstName || 'Study';
   const setup = useMemo(() => getSetupSummary(profile), [profile]);
-  const classCount = profile?.classes.length ?? 0;
+  const profileClasses = useMemo(
+    () => (profile?.classes ?? []).map((classCode) => classCode.trim().toUpperCase()),
+    [profile]
+  );
+
+  const nextSession = useMemo(() => {
+    if (!currentUser) {
+      return undefined;
+    }
+    return sessions.find((session) => session.participantIds.includes(currentUser.uid));
+  }, [currentUser, sessions]);
+
+  const matchedSessions = useMemo(
+    () =>
+      sessions.filter(
+        (session) =>
+          profileClasses.includes(session.classId.trim().toUpperCase()) &&
+          session.sessionId !== nextSession?.sessionId
+      ),
+    [nextSession, profileClasses, sessions]
+  );
+
+  const matchesToday = matchedSessions.filter(
+    (session) => session.startTime.toDate().toDateString() === new Date().toDateString()
+  ).length;
+
+  const greeting = setup.hasClasses
+    ? matchesToday > 0
+      ? `Hey ${savedName.firstName || 'there'} — ${matchesToday} session${
+          matchesToday === 1 ? '' : 's'
+        } match${matchesToday === 1 ? 'es' : ''} your classes today`
+      : matchedSessions.length > 0
+        ? `Hey ${savedName.firstName || 'there'} — ${matchedSessions.length} upcoming session${
+            matchedSessions.length === 1 ? '' : 's'
+          } match your classes`
+        : `Hey ${savedName.firstName || 'there'} — nothing for your classes yet. Set the first table.`
+    : `Hey ${savedName.firstName || 'there'} — add your classes to see sessions that match`;
+
+  const placeholderColor = colorScheme === 'dark' ? '#9F918B' : Brand.charcoal400;
+  const inputStyle = [
+    styles.input,
+    {
+      backgroundColor: palette.surfaceMuted,
+      borderColor: palette.border,
+      color: palette.text,
+    },
+  ];
 
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView style={[styles.hero, { backgroundColor: palette.surface }]}>
-        <Image
-          contentFit="contain"
-          source={require('../../assets/images/studi-wordmark.png')}
-          style={styles.heroLogo}
-        />
-        <ThemedText style={[styles.eyebrow, styles.heroEyebrow, { color: palette.tint }]}>
-          UW-Madison Study Hub
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Find and join study sessions for your classes — or start one and let classmates come to
-          you.
-        </ThemedText>
-      </ThemedView>
-
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       {isSignedIn ? (
         <>
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Dashboard</ThemedText>
-              <View style={[styles.statusPill, { backgroundColor: palette.badge }]}>
-                <ThemedText type="defaultSemiBold">
-                  {setup.completed}/2 ready
-                </ThemedText>
-              </View>
-            </View>
-            <ThemedText type="subtitle">Welcome back, {welcomeName}</ThemedText>
-            <ThemedText style={styles.helperText}>{dashboardStatus}</ThemedText>
-            <View style={styles.metricsRow}>
-              <View style={[styles.metricCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText style={styles.metricValue}>{classCount}</ThemedText>
-                <ThemedText style={styles.metricLabel}>
-                  class{classCount === 1 ? '' : 'es'}
-                </ThemedText>
-              </View>
-              <View style={[styles.metricCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText style={styles.metricValue}>{profile ? 'On' : 'Off'}</ThemedText>
-                <ThemedText style={styles.metricLabel}>profile</ThemedText>
-              </View>
-            </View>
-          </ThemedView>
+          <View style={styles.header}>
+            <Text style={[TypeScale.title, { color: palette.text }]}>Today</Text>
+            <Text style={[TypeScale.body, styles.greeting, { color: palette.icon }]}>
+              {greeting}
+            </Text>
+          </View>
 
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Quick actions</ThemedText>
-            </View>
-            <ThemedText type="subtitle">Start from what you need right now</ThemedText>
-            <View style={styles.actionGrid}>
-              <Pressable
-                onPress={() => router.push('/sessions')}
-                style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText type="defaultSemiBold">Browse Sessions</ThemedText>
-                <ThemedText style={styles.actionCopy}>Find sessions already happening for your classes.</ThemedText>
-              </Pressable>
-              <Pressable
-                onPress={() => router.push('/messages')}
-                style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText type="defaultSemiBold">Open Messages</ThemedText>
-                <ThemedText style={styles.actionCopy}>Keep session plans and coordination in one place.</ThemedText>
-              </Pressable>
-              <Pressable
-                onPress={() => router.push('/explore')}
-                style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText type="defaultSemiBold">Browse Spots</ThemedText>
-                <ThemedText style={styles.actionCopy}>Search campus libraries, commons, and other study areas.</ThemedText>
-              </Pressable>
-            </View>
-            <Pressable
-              onPress={() => router.push('/create-session')}
-              style={[styles.primaryButton, { backgroundColor: palette.tint }]}>
-              <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-                Create a Study Session
-              </ThemedText>
-            </Pressable>
-          </ThemedView>
+          {sessionsError ? (
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>{sessionsError}</Text>
+          ) : null}
 
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Profile completion</ThemedText>
-              <View style={[styles.statusPill, { backgroundColor: palette.surfaceMuted }]}>
-                <ThemedText type="defaultSemiBold">Edit on Profile</ThemedText>
-              </View>
+          <View style={styles.section}>
+            <Text style={[TypeScale.heading, { color: palette.text }]}>Your next session</Text>
+            {nextSession ? (
+              <SessionCard
+                accent
+                session={nextSession}
+                locationName={nextSession.locationName}
+                joined
+                onPress={() => router.push(`/session/${nextSession.sessionId}`)}
+              />
+            ) : (
+              <EmptyState
+                headline="Your week is wide open"
+                body={
+                  matchedSessions.length > 0
+                    ? `${matchedSessions.length} session${
+                        matchedSessions.length === 1 ? '' : 's'
+                      } match your classes right now.`
+                    : 'Join a session and it shows up here.'
+                }
+                actionLabel="Browse sessions"
+                onAction={() => router.push('/sessions')}
+                style={styles.emptyState}
+              />
+            )}
+          </View>
+
+          {matchedSessions.length > 0 ? (
+            <View style={styles.section}>
+              <Text style={[TypeScale.heading, { color: palette.text }]}>For your classes</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.rail}>
+                {matchedSessions.slice(0, 8).map((session) => (
+                  <SessionCard
+                    key={session.sessionId}
+                    variant="compact"
+                    session={session}
+                    locationName={session.locationName}
+                    onPress={() => router.push(`/session/${session.sessionId}`)}
+                  />
+                ))}
+              </ScrollView>
             </View>
-            <ThemedText type="subtitle">Keep your profile accurate</ThemedText>
-            <View style={styles.checklist}>
-              <View style={styles.checklistItem}>
-                <ThemedText type="defaultSemiBold">{setup.hasName ? 'Done' : 'Next'}</ThemedText>
-                <ThemedText style={styles.checklistCopy}>
-                  {setup.hasName
-                    ? `Name saved as ${profile?.displayName || currentUser.email}.`
-                    : 'Add your first and last name so people see you clearly in sessions and chat.'}
-                </ThemedText>
-              </View>
-              <View style={styles.checklistItem}>
-                <ThemedText type="defaultSemiBold">{setup.hasClasses ? 'Done' : 'Next'}</ThemedText>
-                <ThemedText style={styles.checklistCopy}>
-                  {setup.hasClasses
-                    ? `${classCount} class${classCount === 1 ? '' : 'es'} selected.`
-                    : 'Choose classes on your Profile so Studi can show the right sessions.'}
-                </ThemedText>
-              </View>
-            </View>
+          ) : null}
+
+          <View style={styles.section}>
+            <Text style={[TypeScale.heading, { color: palette.text }]}>Quick start</Text>
+            <Button
+              label={
+                profileClasses.length > 0
+                  ? `+ Start a session for ${profileClasses[0]}`
+                  : '+ Start a session'
+              }
+              fullWidth
+              onPress={() =>
+                router.push(
+                  profileClasses.length > 0
+                    ? { pathname: '/create-session', params: { classId: profileClasses[0] } }
+                    : '/create-session'
+                )
+              }
+            />
+            <Button
+              label="Browse all sessions"
+              variant="secondary"
+              fullWidth
+              onPress={() => router.push('/sessions')}
+            />
+          </View>
+
+          {setup.completed < 2 ? (
             <Pressable
               onPress={() => router.push('/profile')}
-              style={[styles.secondaryButton, { borderColor: palette.outline }]}>
-              <ThemedText type="defaultSemiBold">Open Profile</ThemedText>
+              style={[
+                styles.setupCard,
+                { backgroundColor: palette.surface, borderColor: palette.border },
+              ]}>
+              <View style={styles.setupCopy}>
+                <Text style={[TypeScale.label, { color: palette.text }]}>Finish setup</Text>
+                <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                  {setup.hasClasses
+                    ? 'Add your name so classmates know who’s at the table.'
+                    : 'Add your classes to see sessions that match.'}
+                </Text>
+              </View>
+              <BadgeChip label={`${setup.completed}/2`} tone="sunflower" />
             </Pressable>
-          </ThemedView>
+          ) : null}
         </>
       ) : (
         <>
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Welcome</ThemedText>
-              <View style={[styles.statusPill, { backgroundColor: palette.badge }]}>
-                <ThemedText type="defaultSemiBold">Start here</ThemedText>
+          <View style={[styles.welcomeHero, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+            <Image
+              contentFit="contain"
+              source={require('../../assets/images/studi-wordmark.png')}
+              style={styles.heroLogo}
+            />
+            <BadgeChip label="✓ Verified @wisc.edu students only" tone="lake" />
+            <Text style={[TypeScale.body, styles.heroText, { color: palette.icon }]}>
+              Study sessions for your UW classes — find one happening soon, or set the table
+              yourself.
+            </Text>
+          </View>
+
+          <View style={styles.stepsRow}>
+            {ONBOARDING_STEPS.map((item) => (
+              <View
+                key={item.step}
+                style={[
+                  styles.stepCard,
+                  { backgroundColor: palette.surface, borderColor: palette.border },
+                ]}>
+                <View style={[styles.stepDot, { backgroundColor: palette.tint }]}>
+                  <Text style={styles.stepNumber}>{item.step}</Text>
+                </View>
+                <Text style={[TypeScale.label, { color: palette.text }]}>{item.title}</Text>
+                <Text style={[TypeScale.caption, { color: palette.icon }]}>{item.copy}</Text>
               </View>
-            </View>
-            <ThemedText type="subtitle">
-              {authMode === 'sign-in' ? 'Sign in with your UW email' : 'Create your Studi account'}
-            </ThemedText>
-            <ThemedText style={styles.helperText}>
+            ))}
+          </View>
+
+          <View style={[styles.authCard, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+            <Text style={[TypeScale.heading, { color: palette.text }]}>
+              {authMode === 'sign-in' ? 'Sign in' : 'Create your account'}
+            </Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
               {authMode === 'sign-in'
-                ? 'Use your @wisc.edu email and password to sign in.'
-                : 'Use your @wisc.edu email. We will send a verification link before you can enter the app.'}
-            </ThemedText>
+                ? 'Use your @wisc.edu email and password.'
+                : 'Use your @wisc.edu email. We’ll send a verification link first.'}
+            </Text>
 
             {authMode === 'sign-up' ? (
               <View style={styles.inlineRow}>
@@ -303,16 +402,16 @@ export default function HomeScreen() {
                   autoCapitalize="words"
                   onChangeText={setFirstName}
                   placeholder="First name"
-                  placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-                  style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
+                  placeholderTextColor={placeholderColor}
+                  style={[...inputStyle, styles.flexInput]}
                   value={firstName}
                 />
                 <TextInput
                   autoCapitalize="words"
                   onChangeText={setLastName}
                   placeholder="Last name"
-                  placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-                  style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
+                  placeholderTextColor={placeholderColor}
+                  style={[...inputStyle, styles.flexInput]}
                   value={lastName}
                 />
               </View>
@@ -324,8 +423,8 @@ export default function HomeScreen() {
               keyboardType="email-address"
               onChangeText={setEmail}
               placeholder="netid@wisc.edu"
-              placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-              style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
+              placeholderTextColor={placeholderColor}
+              style={inputStyle}
               value={email}
             />
 
@@ -333,55 +432,36 @@ export default function HomeScreen() {
               autoCapitalize="none"
               onChangeText={setPassword}
               placeholder="Password"
-              placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+              placeholderTextColor={placeholderColor}
               secureTextEntry
-              style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
+              style={inputStyle}
               value={password}
             />
 
-            <Pressable
-              disabled={isBusy}
+            <Button
+              label={authMode === 'sign-in' ? 'Sign in' : 'Create account'}
+              fullWidth
+              loading={isBusy}
               onPress={handleSubmitAuth}
-              style={[styles.primaryButton, { backgroundColor: palette.tint, opacity: isBusy ? 0.7 : 1 }]}>
-              {isBusy ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-                  {authMode === 'sign-in' ? 'Sign In' : 'Create Account'}
-                </ThemedText>
-              )}
-            </Pressable>
+            />
 
             <Pressable
               disabled={isBusy}
               onPress={() => setAuthMode(authMode === 'sign-in' ? 'sign-up' : 'sign-in')}
               style={styles.textLink}>
-              <ThemedText type="defaultSemiBold" style={{ color: palette.tint }}>
+              <Text style={[TypeScale.label, { color: palette.tint }]}>
                 {authMode === 'sign-in'
                   ? 'New to Studi? Create an account'
                   : 'Have an account? Sign in'}
-              </ThemedText>
+              </Text>
             </Pressable>
 
             {authMode === 'sign-in' ? (
               <Pressable disabled={isBusy} onPress={handleForgotPassword} style={styles.textLink}>
-                <ThemedText type="defaultSemiBold" style={{ color: palette.tint }}>
-                  Forgot password?
-                </ThemedText>
+                <Text style={[TypeScale.label, { color: palette.tint }]}>Forgot password?</Text>
               </Pressable>
             ) : null}
-          </ThemedView>
-
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>What happens next</ThemedText>
-            </View>
-            <ThemedText type="subtitle">Verify once, then a personalized dashboard</ThemedText>
-            <ThemedText style={styles.mutedText}>
-              New users verify their @wisc.edu email from a link we send, then land inside Studi
-              with access to profile editing, study spots, messages, and sessions.
-            </ThemedText>
-          </ThemedView>
+          </View>
         </>
       )}
 
@@ -399,78 +479,99 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    gap: Space.xl,
+    padding: Space.lg + 4,
+    paddingBottom: Space.xxl + 4,
   },
-  hero: {
+  header: {
+    gap: Space.xs,
+  },
+  greeting: {
+    maxWidth: 420,
+  },
+  section: {
+    gap: Space.md,
+  },
+  rail: {
+    gap: Space.md,
+    paddingRight: Space.lg,
+  },
+  emptyState: {
+    paddingVertical: Space.lg,
+  },
+  setupCard: {
     alignItems: 'center',
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
+    borderRadius: Radius.card,
+    borderTopRightRadius: Radius.accentCorner,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+    padding: Space.lg,
+  },
+  setupCopy: {
+    flexShrink: 1,
+    gap: Space.xs,
+  },
+  welcomeHero: {
+    alignItems: 'center',
+    borderRadius: Radius.card,
+    borderTopRightRadius: Radius.accentCorner,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.md,
+    padding: Space.xl,
   },
   heroLogo: {
-    height: 110,
-    width: 320,
-  },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  heroEyebrow: {
-    textAlign: 'center',
+    height: 96,
+    width: 300,
   },
   heroText: {
-    lineHeight: 32,
     maxWidth: 420,
     textAlign: 'center',
   },
-  card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-  },
-  sectionHeader: {
-    alignItems: 'center',
+  stepsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: Space.md,
   },
-  sectionLabel: {
+  stepCard: {
+    borderRadius: Radius.card,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flex: 1,
+    gap: Space.xs + 2,
+    padding: Space.md,
+  },
+  stepDot: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    height: 24,
+    justifyContent: 'center',
+    width: 24,
+  },
+  stepNumber: {
+    color: '#FFFFFF',
+    fontFamily: FontFamily.bodySemiBold,
     fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
+    lineHeight: 16,
   },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  helperText: {
-    lineHeight: 28,
-    opacity: 0.86,
-  },
-  mutedText: {
-    lineHeight: 28,
-    opacity: 0.82,
+  authCard: {
+    borderRadius: Radius.card,
+    borderTopRightRadius: Radius.accentCorner,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.md,
+    padding: Space.lg + 4,
   },
   input: {
-    borderRadius: 14,
-    borderWidth: 1,
-    fontSize: 16,
-    minHeight: 56,
-    paddingHorizontal: 16,
+    borderRadius: Radius.chip + 4,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    fontFamily: FontFamily.body,
+    fontSize: 15,
+    minHeight: 52,
+    paddingHorizontal: Space.lg,
   },
   inlineRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 10,
+    gap: Space.sm + 2,
   },
   flexInput: {
     flex: 1,
@@ -480,68 +581,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 32,
   },
-  primaryButton: {
-    alignItems: 'center',
-    borderRadius: 16,
-    justifyContent: 'center',
-    minHeight: 56,
-    paddingHorizontal: 18,
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    borderRadius: 16,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 52,
-    paddingHorizontal: 18,
-  },
-  metricsRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  metricCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    flex: 1,
-    gap: 4,
-    minHeight: 96,
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  metricValue: {
-    fontSize: 24,
-    fontWeight: '700',
-  },
-  metricLabel: {
-    opacity: 0.75,
-  },
-  actionGrid: {
-    gap: 12,
-  },
-  actionTile: {
-    borderRadius: 18,
-    borderWidth: 1,
-    gap: 6,
-    padding: 16,
-  },
-  actionCopy: {
-    lineHeight: 24,
-    opacity: 0.8,
-  },
-  checklist: {
-    gap: 14,
-  },
-  checklistItem: {
-    gap: 4,
-  },
-  checklistCopy: {
-    lineHeight: 24,
-    opacity: 0.82,
-  },
   loadingOverlay: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingBottom: 8,
+    paddingBottom: Space.sm,
   },
 });

@@ -1,11 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
+import { formatSessionWindow } from '@/components/session-card';
+import { BadgeChip } from '@/components/ui/BadgeChip';
+import { Button } from '@/components/ui/Button';
+import { SeatPips } from '@/components/ui/SeatPips';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -17,17 +28,6 @@ import {
   type StudySessionListItem,
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
-import type { Timestamp } from 'firebase/firestore';
-
-function formatSessionTime(timestamp: Timestamp) {
-  return timestamp.toDate().toLocaleString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
 
 function formatDisplayName(name: string | undefined) {
   if (name && name.trim().length > 0) {
@@ -164,142 +164,194 @@ export default function SessionDetailScreen() {
   const visibleAttendees = session
     ? session.attendeeProfiles.filter((attendee) => !blockedUserIds.includes(attendee.uid))
     : [];
+  const isFull = session?.status === 'full';
+  const isCancelled = session?.status === 'cancelled';
 
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView style={[styles.hero, { backgroundColor: palette.hero }]}>
-        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Session detail</ThemedText>
-        <ThemedText type="title" style={styles.heroTitle}>
-          {session?.title ?? 'Study Session'}
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Get the full session breakdown, see who is going, and decide whether this is the right
-          study group for you.
-        </ThemedText>
-      </ThemedView>
+    <View style={[styles.screen, { backgroundColor: palette.background }]}>
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={[styles.content, { paddingTop: Space.lg }]}>
+        {session ? (
+          <>
+            {/* The one allowed gradient (design-direction.md §1): session-detail header. */}
+            <LinearGradient
+              colors={[Brand.red600, Brand.red700]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0.6, y: 1 }}
+              style={styles.heroPanel}>
+              <View style={styles.heroChipRow}>
+                <View style={styles.heroCourseChip}>
+                  <Text style={[TypeScale.code, styles.heroCourseText]} numberOfLines={1}>
+                    {session.classId}
+                  </Text>
+                </View>
+                {isCancelled ? (
+                  <BadgeChip label="Cancelled" tone="neutral" />
+                ) : isFull ? (
+                  <BadgeChip label="Full" tone="sunflower" />
+                ) : null}
+              </View>
+              <Text style={[TypeScale.title, styles.heroTitle]} numberOfLines={2}>
+                {session.title}
+              </Text>
+              <Text style={[TypeScale.body, styles.heroTime]} numberOfLines={1}>
+                {formatSessionWindow(session.startTime, session.endTime)}
+              </Text>
+            </LinearGradient>
 
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Overview</ThemedText>
-          <View style={[styles.statusPill, { backgroundColor: palette.surfaceMuted }]}>
-            <ThemedText type="defaultSemiBold">{session?.status ?? 'loading'}</ThemedText>
+            <View
+              style={[
+                styles.card,
+                { backgroundColor: palette.surface, borderColor: palette.border },
+              ]}>
+              <Text style={[TypeScale.heading, { color: palette.text }]}>
+                {session.location?.name ?? session.locationId}
+              </Text>
+              <Text style={[TypeScale.body, { color: palette.icon }]}>
+                {session.location?.building ?? 'Campus location'}
+                {' · '}
+                {session.location?.campusArea ?? 'UW-Madison'}
+              </Text>
+              {session.location?.notes ? (
+                <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                  {session.location.notes}
+                </Text>
+              ) : null}
+              {session.location ? (
+                <Button
+                  label="Rate this spot"
+                  variant="secondary"
+                  size="sm"
+                  onPress={() =>
+                    router.push({
+                      pathname: '/rate-location',
+                      params: {
+                        locationId: session.locationId,
+                        locationName: session.location?.name ?? session.locationId,
+                      },
+                    })
+                  }
+                />
+              ) : null}
+            </View>
+
+            <View
+              style={[
+                styles.card,
+                { backgroundColor: palette.surface, borderColor: palette.border },
+              ]}>
+              <View style={styles.sectionHeader}>
+                <Text style={[TypeScale.heading, { color: palette.text }]}>
+                  Who’s going
+                </Text>
+                <SeatPips going={visibleAttendees.length} />
+              </View>
+              {visibleAttendees.length > 0 ? (
+                <View style={styles.attendeeList}>
+                  {visibleAttendees.map((attendee) => {
+                    const isHost = attendee.uid === session.hostId;
+
+                    return (
+                      <View key={attendee.uid} style={styles.attendeeRow}>
+                        <View
+                          style={[
+                            styles.avatar,
+                            {
+                              backgroundColor:
+                                colorScheme === 'dark' ? `${palette.tint}33` : Brand.red100,
+                            },
+                          ]}>
+                          <Text style={[styles.avatarInitial, { color: colorScheme === 'dark' ? palette.tint : Brand.red700 }]}>
+                            {(attendee.displayName || 'S').slice(0, 1).toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text style={[TypeScale.body, styles.attendeeName, { color: palette.text }]} numberOfLines={1}>
+                          {formatDisplayName(attendee.displayName)}
+                        </Text>
+                        {isHost ? (
+                          <Text style={[TypeScale.caption, { color: palette.icon }]}>host</Text>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={[TypeScale.body, { color: palette.icon }]}>
+                  Be the first at the table.
+                </Text>
+              )}
+            </View>
+
+            <Button
+              label="Message host"
+              variant="secondary"
+              fullWidth
+              loading={isOpeningHostChat}
+              onPress={handleOpenHostChat}
+            />
+
+            <View style={styles.statusRow}>
+              <Text style={[TypeScale.caption, styles.statusText, { color: palette.icon }]}>
+                {status}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isLoading}
+                onPress={loadSession}
+                style={({ pressed }) => ({ opacity: pressed || isLoading ? 0.5 : 1 })}>
+                {isLoading ? (
+                  <ActivityIndicator size="small" color={palette.tint} />
+                ) : (
+                  <Text style={[TypeScale.label, { color: palette.tint }]}>Refresh</Text>
+                )}
+              </Pressable>
+            </View>
+          </>
+        ) : (
+          <View
+            style={[
+              styles.card,
+              { backgroundColor: palette.surface, borderColor: palette.border },
+            ]}>
+            {isLoading ? (
+              <ActivityIndicator color={palette.tint} />
+            ) : (
+              <>
+                <Text style={[TypeScale.heading, { color: palette.text }]}>No session found</Text>
+                <Text style={[TypeScale.body, { color: palette.icon }]}>
+                  The session may have been removed, or the link is no longer valid.
+                </Text>
+              </>
+            )}
           </View>
-        </View>
-        <ThemedText type="subtitle">Session status</ThemedText>
-        <ThemedText style={styles.metaText}>{status}</ThemedText>
-        <Pressable
-          onPress={loadSession}
-          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isLoading ? 0.6 : 1 }]}>
-          {isLoading ? (
-            <ActivityIndicator color={palette.text} />
-          ) : (
-            <ThemedText type="defaultSemiBold">Refresh Details</ThemedText>
-          )}
-        </Pressable>
-      </ThemedView>
+        )}
+      </ScrollView>
 
       {session ? (
-        <>
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>At a glance</ThemedText>
-              <View style={[styles.statusPill, { backgroundColor: palette.badge }]}>
-                <ThemedText type="defaultSemiBold">{session.classId}</ThemedText>
-              </View>
-            </View>
-            <ThemedText type="subtitle">{session.location?.name ?? session.locationId}</ThemedText>
-            <ThemedText style={styles.metaText}>
-              {formatSessionTime(session.startTime)} to {formatSessionTime(session.endTime)}
-            </ThemedText>
-            <ThemedText style={styles.metaText}>
-              Host: {formatDisplayName(session.hostProfile?.displayName)}
-            </ThemedText>
-            <ThemedText style={styles.metaText}>
-              Building: {session.location?.building ?? 'Campus location'}
-            </ThemedText>
-            <ThemedText style={styles.metaText}>
-              Area: {session.location?.campusArea ?? 'UW-Madison'}
-            </ThemedText>
-            {session.location?.notes ? (
-              <ThemedText style={styles.notesText}>{session.location.notes}</ThemedText>
-            ) : null}
-            <Pressable
-              disabled={isOpeningHostChat}
-              onPress={handleOpenHostChat}
-              style={[
-                styles.secondaryButton,
-                { borderColor: palette.outline, opacity: isOpeningHostChat ? 0.65 : 1 },
-              ]}>
-              {isOpeningHostChat ? (
-                <ActivityIndicator color={palette.text} />
-              ) : (
-                <ThemedText type="defaultSemiBold">Message Host</ThemedText>
-              )}
-            </Pressable>
-            <Pressable
-              disabled={!!isParticipant || isJoining}
+        <View
+          style={[
+            styles.bottomBar,
+            {
+              backgroundColor: palette.surface,
+              borderTopColor: palette.border,
+              paddingBottom: Math.max(insets.bottom, Space.md),
+            },
+          ]}>
+          {isParticipant ? (
+            <Button label="✓ Going" variant="success" fullWidth />
+          ) : (
+            <Button
+              label={isFull ? 'Session full' : 'Join session'}
+              fullWidth
+              loading={isJoining}
+              disabled={isFull || isCancelled}
               onPress={handleJoinSession}
-              style={[
-                styles.primaryButton,
-                {
-                  backgroundColor: isParticipant ? '#8F7D78' : palette.tint,
-                  opacity: isJoining ? 0.65 : 1,
-                },
-              ]}>
-              {isJoining ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-                  {isParticipant ? 'You Joined This Session' : 'Join Session'}
-                </ThemedText>
-              )}
-            </Pressable>
-          </ThemedView>
-
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Attendees</ThemedText>
-              <View style={[styles.statusPill, { backgroundColor: palette.surfaceMuted }]}>
-                <ThemedText type="defaultSemiBold">
-                  {visibleAttendees.length} going
-                </ThemedText>
-              </View>
-            </View>
-            <ThemedText type="subtitle">Who is already in</ThemedText>
-            <View style={styles.attendeeList}>
-              {visibleAttendees.map((attendee) => (
-                <ThemedView
-                  key={attendee.uid}
-                  style={[
-                    styles.attendeeCard,
-                    { backgroundColor: palette.surfaceMuted, borderColor: palette.outline },
-                  ]}>
-                  <View style={[styles.avatar, { backgroundColor: palette.badge }]}>
-                    <ThemedText type="defaultSemiBold">
-                      {(attendee.displayName || 'S').slice(0, 1).toUpperCase()}
-                    </ThemedText>
-                  </View>
-                  <View style={styles.attendeeMeta}>
-                    <ThemedText type="defaultSemiBold">
-                      {formatDisplayName(attendee.displayName)}
-                    </ThemedText>
-                  </View>
-                </ThemedView>
-              ))}
-            </View>
-          </ThemedView>
-        </>
-      ) : (
-        <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <ThemedText type="subtitle">No Session Found</ThemedText>
-          <ThemedText style={styles.metaText}>
-            The session may have been removed, or the link is no longer valid.
-          </ThemedText>
-        </ThemedView>
-      )}
-    </ScrollView>
+            />
+          )}
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -308,95 +360,85 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    gap: Space.lg,
+    padding: Space.lg + 4,
+    paddingBottom: Space.xxl,
   },
-  hero: {
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
+  heroPanel: {
+    borderRadius: Radius.card,
+    borderTopRightRadius: Radius.accentCorner,
+    gap: Space.sm,
+    padding: Space.xl,
   },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
+  heroChipRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
+    justifyContent: 'space-between',
+  },
+  heroCourseChip: {
+    backgroundColor: Brand.cream50,
+    borderRadius: Radius.chip,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.xs + 1,
+  },
+  heroCourseText: {
+    color: Brand.red700,
   },
   heroTitle: {
-    marginBottom: 4,
+    color: Brand.cream50,
   },
-  heroText: {
-    lineHeight: 30,
-    maxWidth: 420,
+  heroTime: {
+    color: 'rgba(255, 248, 240, 0.85)',
   },
   card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
+    borderRadius: Radius.card,
+    borderTopRightRadius: Radius.accentCorner,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.sm + 2,
+    padding: Space.lg + 4,
   },
   sectionHeader: {
     alignItems: 'center',
     flexDirection: 'row',
+    gap: Space.md,
     justifyContent: 'space-between',
   },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
-  },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  metaText: {
-    opacity: 0.8,
-  },
-  notesText: {
-    lineHeight: 28,
-    opacity: 0.9,
-  },
-  primaryButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 52,
-    paddingHorizontal: 16,
-  },
   attendeeList: {
-    gap: 12,
+    gap: Space.md,
   },
-  attendeeCard: {
+  attendeeRow: {
     alignItems: 'center',
-    borderRadius: 18,
-    borderWidth: 1,
     flexDirection: 'row',
-    gap: 12,
-    padding: 14,
+    gap: Space.md,
   },
   avatar: {
     alignItems: 'center',
-    borderRadius: 999,
-    height: 44,
+    borderRadius: Radius.pill,
+    height: 40,
     justifyContent: 'center',
-    width: 44,
+    width: 40,
   },
-  attendeeMeta: {
-    flex: 1,
-    gap: 3,
+  avatarInitial: {
+    fontFamily: FontFamily.code,
+    fontSize: 16,
+    lineHeight: 20,
+  },
+  attendeeName: {
+    flexShrink: 1,
+  },
+  statusRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+  },
+  statusText: {
+    flexShrink: 1,
+  },
+  bottomBar: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: Space.lg + 4,
+    paddingTop: Space.md,
   },
 });
