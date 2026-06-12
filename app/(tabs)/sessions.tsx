@@ -1,12 +1,21 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SessionCard } from '@/components/session-card';
+import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
-import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -38,10 +47,52 @@ export default function SessionsScreen() {
   const [status, setStatus] = useState('Loading sessions...');
   const [isLoading, setIsLoading] = useState(true);
   const [joiningSessionId, setJoiningSessionId] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDept, setSelectedDept] = useState<string | null>(null);
+  const [todayOnly, setTodayOnly] = useState(false);
   const { toast, show: showToast } = useSuccessToast();
   const normalizedRequestedClass = requestedClassId?.trim().toUpperCase() ?? '';
 
-  const visibleSessions = sessions;
+  // Dept filter chips (board BrowseScreen) — derived from loaded sessions only.
+  const deptOptions = useMemo(
+    () =>
+      [
+        ...new Set(
+          sessions
+            .map((session) => session.classId.trim().split(/\s+/)[0]?.toUpperCase() ?? '')
+            .filter(Boolean)
+        ),
+      ].sort(),
+    [sessions]
+  );
+
+  // All filtering is client-side over the already-fetched list.
+  const visibleSessions = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const todayString = new Date().toDateString();
+
+    return sessions.filter((session) => {
+      if (normalizedQuery) {
+        const searchText =
+          `${session.classId} ${session.title} ${session.locationName} ${session.hostName}`.toLowerCase();
+        if (!searchText.includes(normalizedQuery)) {
+          return false;
+        }
+      }
+      if (
+        selectedDept &&
+        (session.classId.trim().split(/\s+/)[0]?.toUpperCase() ?? '') !== selectedDept
+      ) {
+        return false;
+      }
+      if (todayOnly && session.startTime.toDate().toDateString() !== todayString) {
+        return false;
+      }
+      return true;
+    });
+  }, [searchQuery, selectedDept, sessions, todayOnly]);
+
+  const hasNarrowingFilters = !!searchQuery.trim() || selectedDept !== null || todayOnly;
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -187,32 +238,69 @@ export default function SessionsScreen() {
         </Pressable>
       </View>
 
-      {filterOptions.length > 0 ? (
-        <View style={styles.filterRow}>
-          {filterOptions.map((option) => (
-            <Pressable
-              key={option.label}
-              accessibilityRole="button"
-              accessibilityState={{ selected: option.selected }}
-              onPress={option.onPress}
+      <TextInput
+        autoCapitalize="none"
+        onChangeText={setSearchQuery}
+        placeholder="Search course, title, place, or person"
+        placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
+        style={[
+          styles.searchInput,
+          {
+            backgroundColor: palette.surfaceMuted,
+            borderColor: palette.border,
+            color: palette.text,
+          },
+        ]}
+        value={searchQuery}
+      />
+
+      <View style={styles.filterRow}>
+        {[
+          ...filterOptions,
+          {
+            label: 'Today',
+            selected: todayOnly,
+            onPress: () => setTodayOnly((current) => !current),
+          },
+        ].map((option) => (
+          <Pressable
+            key={option.label}
+            accessibilityRole="button"
+            accessibilityState={{ selected: option.selected }}
+            onPress={option.onPress}
+            style={[
+              styles.filterPill,
+              option.selected
+                ? { backgroundColor: palette.tint }
+                : {
+                    backgroundColor: palette.surface,
+                    borderColor: palette.border,
+                    borderWidth: StyleSheet.hairlineWidth * 2,
+                  },
+            ]}>
+            <Text
               style={[
-                styles.filterPill,
-                option.selected
-                  ? { backgroundColor: palette.tint }
-                  : {
-                      backgroundColor: palette.surface,
-                      borderColor: palette.border,
-                      borderWidth: StyleSheet.hairlineWidth * 2,
-                    },
+                TypeScale.label,
+                { color: option.selected ? '#FFFFFF' : palette.icon },
               ]}>
-              <Text
-                style={[
-                  TypeScale.label,
-                  { color: option.selected ? '#FFFFFF' : palette.icon },
-                ]}>
-                {option.label}
-              </Text>
-            </Pressable>
+              {option.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {deptOptions.length > 1 ? (
+        <View style={styles.deptRow}>
+          {deptOptions.map((deptCode) => (
+            <CourseChip
+              key={deptCode}
+              code={deptCode}
+              size="sm"
+              selected={selectedDept === deptCode}
+              onPress={() =>
+                setSelectedDept((current) => (current === deptCode ? null : deptCode))
+              }
+            />
           ))}
         </View>
       ) : null}
@@ -243,8 +331,21 @@ export default function SessionsScreen() {
             );
           })}
         </View>
+      ) : hasNarrowingFilters && sessions.length > 0 ? (
+        <EmptyState
+          icon="seat"
+          headline="No sessions match those filters"
+          body="Try widening the time, class, or search."
+          actionLabel="Clear filters"
+          onAction={() => {
+            setSearchQuery('');
+            setSelectedDept(null);
+            setTodayOnly(false);
+          }}
+        />
       ) : (
         <EmptyState
+          icon="seat"
           headline={
             normalizedRequestedClass
               ? `No ${normalizedRequestedClass} sessions yet`
@@ -293,7 +394,20 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     gap: Space.xs,
   },
+  searchInput: {
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    fontFamily: FontFamily.body,
+    fontSize: 14,
+    minHeight: 44,
+    paddingHorizontal: Space.lg,
+  },
   filterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  deptRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Space.sm,

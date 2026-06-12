@@ -98,6 +98,26 @@ function isSessionStartInPast(date: string, time: string) {
   return new Date(`${date}T${time}:00`) <= new Date();
 }
 
+/** Board CreateTimeScreen quick picks — common evening-leaning start times. */
+const TIME_PRESETS = ['14:00', '15:00', '16:30', '18:00', '19:30', '21:00'];
+
+const DURATION_PRESETS = [
+  { label: '60 min', minutes: 60 },
+  { label: '90 min', minutes: 90 },
+  { label: '2 hr', minutes: 120 },
+  { label: '3 hr', minutes: 180 },
+] as const;
+
+/** "HH:MM" + minutes, or null when it would cross midnight (end must be same-day). */
+function addMinutesToTime(time: string, minutes: number): string | null {
+  const [hours, mins] = time.split(':').map(Number);
+  const total = hours * 60 + mins + minutes;
+  if (Number.isNaN(total) || total >= 24 * 60) {
+    return null;
+  }
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
 export default function CreateSessionScreen() {
   const { classId: requestedClassId } = useLocalSearchParams<{ classId?: string }>();
   const colorScheme = useColorScheme() ?? 'light';
@@ -521,6 +541,88 @@ export default function CreateSessionScreen() {
           </Text>
           <Text style={[TypeScale.caption, { color: palette.icon }]}>{scheduleHint}</Text>
 
+          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Quick picks</Text>
+          <View style={styles.presetGrid}>
+            {TIME_PRESETS.map((presetTime) => {
+              const isSelected = startTime === presetTime;
+              const isPast = !!sessionDate && isSessionStartInPast(sessionDate, presetTime);
+
+              return (
+                <Pressable
+                  key={presetTime}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected, disabled: isPast }}
+                  disabled={isPast}
+                  onPress={() => {
+                    setStartTime(presetTime);
+                    setEndTime((currentEndTime) =>
+                      currentEndTime && currentEndTime <= presetTime ? '' : currentEndTime
+                    );
+                  }}
+                  style={[
+                    styles.presetCell,
+                    isSelected
+                      ? {
+                          backgroundColor:
+                            colorScheme === 'dark' ? `${palette.tint}26` : Brand.accentSoft,
+                          borderColor: palette.tint,
+                        }
+                      : {
+                          backgroundColor: palette.surface,
+                          borderColor: palette.border,
+                          opacity: isPast ? 0.4 : 1,
+                        },
+                  ]}>
+                  <Text
+                    style={[
+                      TypeScale.label,
+                      { color: isSelected ? palette.tint : palette.text },
+                    ]}>
+                    {formatTimeLabel(presetTime)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Duration</Text>
+          <View style={styles.durationRow}>
+            {DURATION_PRESETS.map((duration) => {
+              const computedEnd = startTime
+                ? addMinutesToTime(startTime, duration.minutes)
+                : null;
+              const isSelected = !!computedEnd && endTime === computedEnd;
+              const isDisabled = !computedEnd;
+
+              return (
+                <Pressable
+                  key={duration.label}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected, disabled: isDisabled }}
+                  disabled={isDisabled}
+                  onPress={() => computedEnd && setEndTime(computedEnd)}
+                  style={[
+                    styles.durationPill,
+                    isSelected
+                      ? { backgroundColor: palette.tint, borderColor: palette.tint }
+                      : {
+                          backgroundColor: palette.surface,
+                          borderColor: palette.border,
+                          opacity: isDisabled ? 0.4 : 1,
+                        },
+                  ]}>
+                  <Text
+                    style={[
+                      TypeScale.label,
+                      { color: isSelected ? '#FFFFFF' : palette.icon },
+                    ]}>
+                    {duration.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
           <View style={styles.timeDropdownRow}>
             <View style={styles.flexInput}>
               <TimeDropdown
@@ -685,6 +787,33 @@ const styles = StyleSheet.create({
   },
   flexInput: {
     flex: 1,
+  },
+  presetGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  presetCell: {
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flexBasis: '30%',
+    flexGrow: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  durationRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  durationPill: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    justifyContent: 'center',
+    minHeight: 38,
+    paddingHorizontal: Space.lg,
   },
   timeDropdownRow: {
     flexDirection: 'row',

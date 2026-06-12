@@ -29,8 +29,9 @@ export default function TabLayout() {
         tabBarInactiveTintColor: palette.tabIconDefault,
         headerShown: false,
         tabBarButton: HapticTab,
+        // Board TabBar sits on the cream canvas (bg-background/95), not card white.
         tabBarStyle: {
-          backgroundColor: palette.surface,
+          backgroundColor: palette.background,
           borderTopColor: palette.border,
         },
         tabBarLabelStyle: {

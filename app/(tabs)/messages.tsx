@@ -137,6 +137,7 @@ export default function MessagesScreen() {
         </View>
       ) : (
         <EmptyState
+          icon="chat"
           headline="No messages yet"
           body="Chats start when you join a session."
           actionLabel="Find a session"

@@ -307,6 +307,7 @@ export default function HomeScreen() {
               />
             ) : (
               <EmptyState
+                icon="calendar"
                 headline="Your week is wide open"
                 body={
                   matchedSessions.length > 0

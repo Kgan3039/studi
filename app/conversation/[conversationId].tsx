@@ -28,6 +28,26 @@ import {
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
+function toDate(value: unknown): Date | null {
+  if (!value || typeof value !== 'object' || !('toDate' in value)) {
+    return null;
+  }
+  return (value as { toDate: () => Date }).toDate();
+}
+
+/** Board ChatScreen day separator: "Today · 2:14 PM", "Mon, Jun 9 · 4:00 PM". */
+function formatDaySeparator(date: Date) {
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const dayLabel =
+    date.toDateString() === now.toDateString()
+      ? 'Today'
+      : date.toDateString() === yesterday.toDateString()
+        ? 'Yesterday'
+        : date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  return `${dayLabel} · ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+}
+
 function formatTimestamp(value: unknown) {
   if (!value || typeof value !== 'object' || !('toDate' in value)) {
     return '';
@@ -193,11 +213,21 @@ export default function ConversationScreen() {
             const nextMessage = messages[index + 1];
             const showTime =
               !nextMessage || (currentUser?.uid === nextMessage.senderId) !== isCurrentUser;
+            const messageDate = toDate(message.createdAt);
+            const previousDate = index > 0 ? toDate(messages[index - 1].createdAt) : null;
+            const showDaySeparator =
+              !!messageDate &&
+              (!previousDate || previousDate.toDateString() !== messageDate.toDateString());
 
             return (
               <View
                 key={message.messageId}
                 style={[styles.messageGroup, isCurrentUser ? styles.mine : styles.theirs]}>
+                {showDaySeparator ? (
+                  <Text style={[styles.daySeparator, { color: palette.icon }]}>
+                    {formatDaySeparator(messageDate)}
+                  </Text>
+                ) : null}
                 <View
                   style={[
                     styles.bubble,
@@ -308,6 +338,16 @@ const styles = StyleSheet.create({
   },
   messageGroup: {
     gap: Space.xs,
+  },
+  daySeparator: {
+    alignSelf: 'center',
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 10,
+    letterSpacing: 0.8,
+    lineHeight: 13,
+    marginVertical: Space.sm,
+    textAlign: 'center',
+    textTransform: 'uppercase',
   },
   mine: {
     alignItems: 'flex-end',
