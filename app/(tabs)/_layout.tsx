@@ -5,7 +5,7 @@ import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, FontFamily } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { subscribeToAuthState } from '@/lib/auth';
+import { subscribeToAuthState, waitForAuthReady } from '@/lib/auth';
 
 type AuthGateState = 'pending' | 'signed-out' | 'unverified' | 'signed-in';
 
@@ -15,11 +15,24 @@ export default function TabLayout() {
   const [authState, setAuthState] = useState<AuthGateState>('pending');
 
   useEffect(() => {
-    const unsubscribe = subscribeToAuthState((user) => {
-      setAuthState(!user ? 'signed-out' : user.emailVerified ? 'signed-in' : 'unverified');
+    let unsubscribe: (() => void) | undefined;
+    let cancelled = false;
+
+    // Don't subscribe until the persisted session is restored — the early
+    // null emission would redirect signed-in users to welcome on cold start.
+    waitForAuthReady().then(() => {
+      if (cancelled) {
+        return;
+      }
+      unsubscribe = subscribeToAuthState((user) => {
+        setAuthState(!user ? 'signed-out' : user.emailVerified ? 'signed-in' : 'unverified');
+      });
     });
 
-    return unsubscribe;
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, []);
 
   // Hold rendering until Firebase resolves the persisted session so

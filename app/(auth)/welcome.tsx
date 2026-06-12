@@ -1,4 +1,5 @@
 import { useRouter } from 'expo-router';
+import { useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -6,12 +7,25 @@ import { AvatarStack } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { subscribeToAuthState } from '@/lib/auth';
 
 export default function WelcomeScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+
+  // Self-healing: if a persisted verified session finishes restoring while
+  // welcome is showing (cold-start race), bounce into the app.
+  useEffect(() => {
+    const unsubscribe = subscribeToAuthState((user) => {
+      if (user?.emailVerified) {
+        router.replace('/');
+      }
+    });
+
+    return unsubscribe;
+  }, [router]);
 
   return (
     <View

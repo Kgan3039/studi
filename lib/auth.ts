@@ -200,6 +200,16 @@ export function subscribeToAuthState(listener: (user: User | null) => void) {
   return onAuthStateChanged(auth, listener);
 }
 
+/**
+ * Resolves once Firebase has finished restoring any persisted session.
+ * Before this settles, onAuthStateChanged can emit null for a user who is
+ * actually signed in (AsyncStorage restore is async) — route gates must not
+ * treat that early null as signed-out.
+ */
+export function waitForAuthReady() {
+  return auth.authStateReady();
+}
+
 export async function logOut() {
   await signOut(auth);
   resetAnalyticsIdentity();
