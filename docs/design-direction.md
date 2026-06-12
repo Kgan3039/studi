@@ -1,5 +1,19 @@
 # Studi — Mobile UI Design Direction
 
+> **⚠️ Superseded (June 2026).** The visual source of truth is now the
+> **Lovable Expo handoff**: `docs/studi-expo-handoff.md` in the
+> `Kgan3039/studi-your-campus-study-hub` repo (plus its design boards in
+> `src/routes/index.tsx` and component library in
+> `src/components/studi/index.tsx`). That direction — *Soft Editorial
+> Utility* — replaces this document's Sora headings, dog-eared corner motif,
+> and `#C8102E` red with Cormorant Garamond editorial heroes, a fully
+> rounded/pill system, and crimson `#A31621` (see `constants/theme.ts`).
+> Product framing below (sessions-first, screen goals, §6 card anatomy,
+> §10 empty-state copy rules) still applies where the handoff is silent.
+> Copy constraint: no "Badger", no UW slogans/marks/Bucky/Motion W —
+> use neutral copy ("Study together," "Find your table," "Sessions for
+> your classes," "Meet classmates").
+
 A complete visual and product design direction for the Studi redesign.
 Branch: `ui-brand-redesign`. Grounded in the current Expo Router app
 (`app/(tabs)/` tabs: Home, Sessions, Messages, Profile, Explore; plus

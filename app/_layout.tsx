@@ -1,5 +1,8 @@
+import {
+  CormorantGaramond_500Medium,
+  CormorantGaramond_500Medium_Italic,
+} from '@expo-google-fonts/cormorant-garamond';
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-google-fonts/inter';
-import { Sora_600SemiBold, Sora_700Bold } from '@expo-google-fonts/sora';
 import { SpaceGrotesk_500Medium } from '@expo-google-fonts/space-grotesk';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import * as Sentry from '@sentry/react-native';
@@ -34,8 +37,8 @@ function RootLayout() {
   const colorScheme = useColorScheme();
   const pathname = usePathname();
   const [fontsLoaded, fontError] = useFonts({
-    Sora_600SemiBold,
-    Sora_700Bold,
+    CormorantGaramond_500Medium,
+    CormorantGaramond_500Medium_Italic,
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,
