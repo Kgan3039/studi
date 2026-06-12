@@ -64,6 +64,7 @@ function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
+        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="create-session" options={{ title: 'Create Session' }} />
         <Stack.Screen name="conversation/[conversationId]" options={{ title: 'Conversation' }} />

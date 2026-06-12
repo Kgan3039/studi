@@ -2,12 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,7 +18,6 @@ import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import {
-  Brand,
   Colors,
   Elevation,
   FontFamily,
@@ -29,13 +26,7 @@ import {
   TypeScale,
 } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { track } from '@/lib/analytics';
-import {
-  requestPasswordReset,
-  signIn,
-  signUp,
-  subscribeToAuthState,
-} from '@/lib/auth';
+import { subscribeToAuthState } from '@/lib/auth';
 import {
   getLocations,
   getUpcomingSessions,
@@ -85,36 +76,23 @@ export default function HomeScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [authMode, setAuthMode] = useState<'sign-in' | 'sign-up'>('sign-in');
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [isBusy, setIsBusy] = useState(false);
   const [isProfileLoading, setIsProfileLoading] = useState(false);
   const [sessions, setSessions] = useState<TodaySession[]>([]);
   const [sessionsError, setSessionsError] = useState('');
+  // The (tabs) layout gate redirects signed-out/unverified users to the
+  // (auth) flow; this flag only guards the brief frame before that happens.
   const isSignedIn = !!currentUser && currentUser.emailVerified;
-
-  useEffect(() => {
-    if (currentUser && !currentUser.emailVerified) {
-      router.replace('/verify-email');
-    }
-  }, [currentUser, router]);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
       setCurrentUser(user);
 
-      if (user?.email) {
-        setEmail(user.email);
-        return;
+      if (!user) {
+        setProfile(null);
+        setSessions([]);
       }
-
-      setProfile(null);
-      setSessions([]);
     });
 
     return unsubscribe;
@@ -172,41 +150,6 @@ export default function HomeScreen() {
     loadSessions();
   }, [loadSessions]);
 
-  async function handleSubmitAuth() {
-    try {
-      setIsBusy(true);
-      if (authMode === 'sign-in') {
-        await signIn(email, password);
-        track('sign_in_completed');
-      } else {
-        track('sign_up_started');
-        await signUp(email, password, firstName, lastName);
-        router.replace('/verify-email');
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to continue right now.';
-      Alert.alert(authMode === 'sign-in' ? 'Sign In Error' : 'Sign Up Error', message);
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  async function handleForgotPassword() {
-    try {
-      setIsBusy(true);
-      await requestPasswordReset(email);
-      Alert.alert(
-        'Check Your Email',
-        'If an account exists for that address, a password reset link is on its way.'
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to send a reset email.';
-      Alert.alert('Reset Error', message);
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
   const savedName = splitDisplayName(profile?.displayName);
   const setup = useMemo(() => getSetupSummary(profile), [profile]);
   const profileClasses = useMemo(
@@ -250,22 +193,15 @@ export default function HomeScreen() {
   const dateEyebrow = new Date()
     .toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 
-  const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
-  const inputStyle = [
-    styles.input,
-    {
-      backgroundColor: palette.surfaceMuted,
-      borderColor: palette.border,
-      color: palette.text,
-    },
-  ];
+  if (!isSignedIn) {
+    return null;
+  }
 
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      {isSignedIn ? (
-        <>
+      <>
           <View style={styles.header}>
             <View style={styles.headerText}>
               <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{dateEyebrow}</Text>
@@ -411,106 +347,9 @@ export default function HomeScreen() {
               <BadgeChip label={`${setup.completed}/2`} tone="filling" />
             </Pressable>
           ) : null}
-        </>
-      ) : (
-        <>
-          <View style={styles.welcome}>
-            <Text style={[styles.wordmark, { color: palette.tint }]}>Studi</Text>
-            <Text style={[styles.welcomeHeadline, { color: palette.text }]}>
-              Study together.
-            </Text>
-            <Text style={[TypeScale.body, styles.welcomeBody, { color: palette.icon }]}>
-              Find, join, and host study sessions for every class on your schedule.
-            </Text>
-            <BadgeChip label="Verified @wisc.edu students only" tone="info" />
-          </View>
+      </>
 
-          <View
-            style={[
-              styles.authCard,
-              Elevation.e1,
-              { backgroundColor: palette.surface, borderColor: palette.border },
-            ]}>
-            <Text style={[TypeScale.heading, { color: palette.text }]}>
-              {authMode === 'sign-in' ? 'Sign in' : 'Create your account'}
-            </Text>
-            <Text style={[TypeScale.caption, { color: palette.icon }]}>
-              {authMode === 'sign-in'
-                ? 'Use your @wisc.edu email and password.'
-                : 'Use your @wisc.edu email. We’ll send a verification link first.'}
-            </Text>
-
-            {authMode === 'sign-up' ? (
-              <View style={styles.inlineRow}>
-                <TextInput
-                  autoCapitalize="words"
-                  onChangeText={setFirstName}
-                  placeholder="First name"
-                  placeholderTextColor={placeholderColor}
-                  style={[...inputStyle, styles.flexInput]}
-                  value={firstName}
-                />
-                <TextInput
-                  autoCapitalize="words"
-                  onChangeText={setLastName}
-                  placeholder="Last name"
-                  placeholderTextColor={placeholderColor}
-                  style={[...inputStyle, styles.flexInput]}
-                  value={lastName}
-                />
-              </View>
-            ) : null}
-
-            <TextInput
-              autoCapitalize="none"
-              autoComplete="email"
-              keyboardType="email-address"
-              onChangeText={setEmail}
-              placeholder="netid@wisc.edu"
-              placeholderTextColor={placeholderColor}
-              style={inputStyle}
-              value={email}
-            />
-
-            <TextInput
-              autoCapitalize="none"
-              onChangeText={setPassword}
-              placeholder="Password"
-              placeholderTextColor={placeholderColor}
-              secureTextEntry
-              style={inputStyle}
-              value={password}
-            />
-
-            <Button
-              label={authMode === 'sign-in' ? 'Sign in' : 'Get started'}
-              size="lg"
-              fullWidth
-              loading={isBusy}
-              onPress={handleSubmitAuth}
-            />
-
-            <Pressable
-              disabled={isBusy}
-              onPress={() => setAuthMode(authMode === 'sign-in' ? 'sign-up' : 'sign-in')}
-              style={styles.textLink}>
-              <Text style={[TypeScale.label, { color: palette.tint }]}>
-                {authMode === 'sign-in'
-                  ? 'New to Studi? Create an account'
-                  : 'Have an account? Sign in'}
-              </Text>
-            </Pressable>
-
-            {authMode === 'sign-in' ? (
-              <Pressable disabled={isBusy} onPress={handleForgotPassword} style={styles.textLink}>
-                <Text style={[TypeScale.label, { color: palette.tint }]}>Forgot password?</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        </>
-      )}
-
-      {isProfileLoading && isSignedIn ? (
+      {isProfileLoading ? (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator color={palette.tint} />
         </View>
@@ -575,55 +414,6 @@ const styles = StyleSheet.create({
   setupCopy: {
     flexShrink: 1,
     gap: Space.xs,
-  },
-  welcome: {
-    alignItems: 'center',
-    gap: Space.md,
-    paddingTop: Space.xxl + 8,
-    paddingBottom: Space.sm,
-    paddingHorizontal: Space.lg,
-  },
-  wordmark: {
-    fontFamily: FontFamily.serifItalic,
-    fontSize: 30,
-    lineHeight: 36,
-  },
-  welcomeHeadline: {
-    fontFamily: FontFamily.serifItalic,
-    fontSize: 38,
-    lineHeight: 44,
-    textAlign: 'center',
-  },
-  welcomeBody: {
-    maxWidth: 280,
-    textAlign: 'center',
-  },
-  authCard: {
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    gap: Space.md,
-    padding: Space.lg + 4,
-  },
-  input: {
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    fontFamily: FontFamily.body,
-    fontSize: 15,
-    minHeight: 48,
-    paddingHorizontal: Space.lg,
-  },
-  inlineRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.sm + 2,
-  },
-  flexInput: {
-    flex: 1,
-  },
-  textLink: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 32,
   },
   loadingOverlay: {
     alignItems: 'center',

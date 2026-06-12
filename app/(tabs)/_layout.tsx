@@ -1,4 +1,4 @@
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 
 import { HapticTab } from '@/components/haptic-tab';
@@ -6,21 +6,35 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, FontFamily } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
-import type { User } from 'firebase/auth';
+
+type AuthGateState = 'pending' | 'signed-out' | 'unverified' | 'signed-in';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const palette = Colors[colorScheme ?? 'light'];
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const isSignedIn = !!currentUser && currentUser.emailVerified;
+  const [authState, setAuthState] = useState<AuthGateState>('pending');
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
-      setCurrentUser(user);
+      setAuthState(!user ? 'signed-out' : user.emailVerified ? 'signed-in' : 'unverified');
     });
 
     return unsubscribe;
   }, []);
+
+  // Hold rendering until Firebase resolves the persisted session so
+  // signed-in users don't flash through the welcome screen on cold start.
+  if (authState === 'pending') {
+    return null;
+  }
+
+  if (authState === 'signed-out') {
+    return <Redirect href="/welcome" />;
+  }
+
+  if (authState === 'unverified') {
+    return <Redirect href="/verify-email" />;
+  }
 
   return (
     <Tabs
@@ -49,7 +63,6 @@ export default function TabLayout() {
       <Tabs.Screen
         name="sessions"
         options={{
-          href: isSignedIn ? undefined : null,
           title: 'Sessions',
           tabBarIcon: ({ color }) => <IconSymbol size={26} name="calendar" color={color} />,
         }}
@@ -57,7 +70,6 @@ export default function TabLayout() {
       <Tabs.Screen
         name="messages"
         options={{
-          href: isSignedIn ? undefined : null,
           title: 'Messages',
           tabBarIcon: ({ color }) => <IconSymbol size={26} name="message.fill" color={color} />,
         }}
@@ -65,7 +77,6 @@ export default function TabLayout() {
       <Tabs.Screen
         name="profile"
         options={{
-          href: isSignedIn ? undefined : null,
           title: 'You',
           tabBarIcon: ({ color }) => <IconSymbol size={26} name="person.crop.circle.fill" color={color} />,
         }}
@@ -73,7 +84,6 @@ export default function TabLayout() {
       <Tabs.Screen
         name="explore"
         options={{
-          href: isSignedIn ? undefined : null,
           title: 'Spots',
           tabBarIcon: ({ color }) => <IconSymbol size={26} name="paperplane.fill" color={color} />,
         }}

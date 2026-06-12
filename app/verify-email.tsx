@@ -37,7 +37,7 @@ export default function VerifyEmailScreen() {
       setCurrentUser(user);
 
       if (!user) {
-        router.replace('/');
+        router.replace('/welcome');
       }
     });
 
@@ -71,7 +71,8 @@ export default function VerifyEmailScreen() {
       const result = await refreshVerificationState();
 
       if (result.verified) {
-        router.replace('/');
+        // Continue onboarding: pick classes, then display name, then tabs.
+        router.replace('/classes');
         return;
       }
 
@@ -104,7 +105,7 @@ export default function VerifyEmailScreen() {
 
   async function handleSignOut() {
     await logOut();
-    router.replace('/');
+    router.replace('/welcome');
   }
 
   return (
