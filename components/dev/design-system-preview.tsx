@@ -70,6 +70,7 @@ export function DesignSystemPreview() {
         locationName="College Library"
         capacity={5}
         locationRating={4.6}
+        hostName="Maya Patel"
         attendeeNames={['Maya P', 'Jordan K', 'Alex R']}
         accent
         onPress={() => {}}
@@ -79,6 +80,7 @@ export function DesignSystemPreview() {
         session={{ ...baseSession, sessionId: 'preview-2', classId: 'CHEM 103', title: 'Problem set 8', startTime: tonight }}
         isOnline
         capacity={6}
+        hostName="Jordan Kim"
         onPress={() => {}}
         onJoin={() => {}}
         joined

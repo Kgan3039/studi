@@ -218,7 +218,7 @@ export default function SessionsScreen() {
               key={session.sessionId}
               session={session}
               locationName={session.locationName}
-              attendeeNames={[session.hostName]}
+              hostName={session.hostName}
               joined={isParticipant}
               joining={joiningSessionId === session.sessionId}
               onPress={() => router.push(`/session/${session.sessionId}`)}

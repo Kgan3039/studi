@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { Colors, Space, TypeScale } from '@/constants/theme';
+import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export type SeatPipsProps = {
@@ -30,12 +30,14 @@ export function SeatPips({ going, capacity, showLabel = true, style }: SeatPipsP
   const spotsLeft = capacity !== undefined ? Math.max(capacity - going, 0) : undefined;
   const showPips = total > 0 && total <= MAX_PIPS;
 
-  const label =
+  const countLabel = `${going} going`;
+  const suffix =
     spotsLeft === undefined
-      ? `${going} going`
+      ? ''
       : spotsLeft === 0
-        ? `${going} going · Full`
-        : `${going} going · ${spotsLeft} ${spotsLeft === 1 ? 'spot' : 'spots'} left`;
+        ? ' · Full'
+        : ` · ${spotsLeft} ${spotsLeft === 1 ? 'spot' : 'spots'} left`;
+  const label = countLabel + suffix;
 
   return (
     <View style={[styles.row, style]} accessibilityLabel={label}>
@@ -58,7 +60,10 @@ export function SeatPips({ going, capacity, showLabel = true, style }: SeatPipsP
         </View>
       ) : null}
       {showLabel ? (
-        <Text style={[TypeScale.caption, { color: palette.icon }]}>{label}</Text>
+        <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+          <Text style={[styles.count, { color: palette.text }]}>{countLabel}</Text>
+          {suffix}
+        </Text>
       ) : null}
     </View>
   );
@@ -73,11 +78,16 @@ const styles = StyleSheet.create({
   pips: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Space.xs,
+    gap: Space.xs + 1,
   },
   pip: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  count: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 12,
+    lineHeight: 16,
   },
 });
