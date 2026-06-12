@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
@@ -14,10 +13,21 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SessionCard } from '@/components/session-card';
+import { Avatar } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
+import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { SectionHeader } from '@/components/ui/SectionHeader';
+import {
+  Brand,
+  Colors,
+  Elevation,
+  FontFamily,
+  Radius,
+  Space,
+  TypeScale,
+} from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import {
@@ -63,11 +73,12 @@ function getSetupSummary(profile: UserProfile | null) {
   };
 }
 
-const ONBOARDING_STEPS = [
-  { step: '1', title: 'Verify', copy: 'Sign up with your @wisc.edu email.' },
-  { step: '2', title: 'Pick classes', copy: 'Tell us what you’re taking this term.' },
-  { step: '3', title: 'Join a session', copy: 'Sit down with classmates who get it.' },
-] as const;
+function timeOfDayGreeting(now: Date = new Date()) {
+  const hour = now.getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -224,19 +235,22 @@ export default function HomeScreen() {
     (session) => session.startTime.toDate().toDateString() === new Date().toDateString()
   ).length;
 
-  const greeting = setup.hasClasses
+  const subline = setup.hasClasses
     ? matchesToday > 0
-      ? `Hey ${savedName.firstName || 'there'} — ${matchesToday} session${
-          matchesToday === 1 ? '' : 's'
-        } match${matchesToday === 1 ? 'es' : ''} your classes today`
+      ? `${matchesToday} session${matchesToday === 1 ? '' : 's'} match${
+          matchesToday === 1 ? 'es' : ''
+        } your classes today`
       : matchedSessions.length > 0
-        ? `Hey ${savedName.firstName || 'there'} — ${matchedSessions.length} upcoming session${
+        ? `${matchedSessions.length} upcoming session${
             matchedSessions.length === 1 ? '' : 's'
           } match your classes`
-        : `Hey ${savedName.firstName || 'there'} — nothing for your classes yet. Set the first table.`
-    : `Hey ${savedName.firstName || 'there'} — add your classes to see sessions that match`;
+        : 'Nothing for your classes yet — set the first table'
+    : 'Add your classes to see sessions that match';
 
-  const placeholderColor = colorScheme === 'dark' ? '#9F918B' : Brand.charcoal400;
+  const dateEyebrow = new Date()
+    .toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+
+  const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
   const inputStyle = [
     styles.input,
     {
@@ -253,10 +267,23 @@ export default function HomeScreen() {
       {isSignedIn ? (
         <>
           <View style={styles.header}>
-            <Text style={[TypeScale.title, { color: palette.text }]}>Today</Text>
-            <Text style={[TypeScale.body, styles.greeting, { color: palette.icon }]}>
-              {greeting}
-            </Text>
+            <View style={styles.headerText}>
+              <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{dateEyebrow}</Text>
+              <Text
+                style={[styles.greeting, { color: palette.text }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit>
+                {timeOfDayGreeting()}
+                {savedName.firstName ? `, ${savedName.firstName}` : ''}
+              </Text>
+              <Text style={[TypeScale.meta, { color: palette.icon }]}>{subline}</Text>
+            </View>
+            <Pressable accessibilityRole="button" onPress={() => router.push('/profile')}>
+              <Avatar
+                name={profile?.displayName || currentUser?.email || 'S'}
+                size="md"
+              />
+            </Pressable>
           </View>
 
           {sessionsError ? (
@@ -264,10 +291,10 @@ export default function HomeScreen() {
           ) : null}
 
           <View style={styles.section}>
-            <Text style={[TypeScale.heading, { color: palette.text }]}>Your next session</Text>
+            <SectionHeader eyebrow="Your next session" />
             {nextSession ? (
               <SessionCard
-                accent
+                variant="hero"
                 session={nextSession}
                 locationName={nextSession.locationName}
                 joined
@@ -292,32 +319,62 @@ export default function HomeScreen() {
 
           {matchedSessions.length > 0 ? (
             <View style={styles.section}>
-              <Text style={[TypeScale.heading, { color: palette.text }]}>For your classes</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.rail}>
-                {matchedSessions.slice(0, 8).map((session) => (
-                  <SessionCard
-                    key={session.sessionId}
-                    variant="compact"
-                    session={session}
-                    locationName={session.locationName}
-                    onPress={() => router.push(`/session/${session.sessionId}`)}
+              <SectionHeader
+                eyebrow="For your classes"
+                action={
+                  <Pressable accessibilityRole="button" onPress={() => router.push('/sessions')}>
+                    <Text style={[TypeScale.label, { color: palette.tint }]}>See all</Text>
+                  </Pressable>
+                }
+              />
+              <View
+                style={[
+                  styles.listCard,
+                  Elevation.e1,
+                  { backgroundColor: palette.surface, borderColor: palette.border },
+                ]}>
+                {matchedSessions.slice(0, 4).map((session, index) => (
+                  <View key={session.sessionId}>
+                    {index > 0 ? (
+                      <View style={[styles.divider, { backgroundColor: palette.border }]} />
+                    ) : null}
+                    <SessionCard
+                      variant="list"
+                      session={session}
+                      locationName={session.locationName}
+                      onPress={() => router.push(`/session/${session.sessionId}`)}
+                    />
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {profileClasses.length > 0 ? (
+            <View style={styles.section}>
+              <SectionHeader eyebrow="Your classes" />
+              <View style={styles.chipWrap}>
+                {profileClasses.map((classCode) => (
+                  <CourseChip
+                    key={classCode}
+                    code={classCode}
+                    onPress={() =>
+                      router.push({ pathname: '/sessions', params: { classId: classCode } })
+                    }
                   />
                 ))}
-              </ScrollView>
+              </View>
             </View>
           ) : null}
 
           <View style={styles.section}>
-            <Text style={[TypeScale.heading, { color: palette.text }]}>Quick start</Text>
             <Button
               label={
                 profileClasses.length > 0
-                  ? `+ Start a session for ${profileClasses[0]}`
-                  : '+ Start a session'
+                  ? `Host a session for ${profileClasses[0]}`
+                  : 'Host a session'
               }
+              size="lg"
               fullWidth
               onPress={() =>
                 router.push(
@@ -327,12 +384,6 @@ export default function HomeScreen() {
                 )
               }
             />
-            <Button
-              label="Browse all sessions"
-              variant="secondary"
-              fullWidth
-              onPress={() => router.push('/sessions')}
-            />
           </View>
 
           {setup.completed < 2 ? (
@@ -340,53 +391,40 @@ export default function HomeScreen() {
               onPress={() => router.push('/profile')}
               style={[
                 styles.setupCard,
+                Elevation.e1,
                 { backgroundColor: palette.surface, borderColor: palette.border },
               ]}>
               <View style={styles.setupCopy}>
-                <Text style={[TypeScale.label, { color: palette.text }]}>Finish setup</Text>
+                <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Finish setup</Text>
                 <Text style={[TypeScale.caption, { color: palette.icon }]}>
                   {setup.hasClasses
                     ? 'Add your name so classmates know who’s at the table.'
                     : 'Add your classes to see sessions that match.'}
                 </Text>
               </View>
-              <BadgeChip label={`${setup.completed}/2`} tone="sunflower" />
+              <BadgeChip label={`${setup.completed}/2`} tone="filling" />
             </Pressable>
           ) : null}
         </>
       ) : (
         <>
-          <View style={[styles.welcomeHero, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <Image
-              contentFit="contain"
-              source={require('../../assets/images/studi-wordmark.png')}
-              style={styles.heroLogo}
-            />
-            <BadgeChip label="✓ Verified @wisc.edu students only" tone="lake" />
-            <Text style={[TypeScale.body, styles.heroText, { color: palette.icon }]}>
-              Study sessions for your UW classes — find one happening soon, or set the table
-              yourself.
+          <View style={styles.welcome}>
+            <Text style={[styles.wordmark, { color: palette.tint }]}>Studi</Text>
+            <Text style={[styles.welcomeHeadline, { color: palette.text }]}>
+              Study together.
             </Text>
+            <Text style={[TypeScale.body, styles.welcomeBody, { color: palette.icon }]}>
+              Find, join, and host study sessions for every class on your schedule.
+            </Text>
+            <BadgeChip label="Verified @wisc.edu students only" tone="info" />
           </View>
 
-          <View style={styles.stepsRow}>
-            {ONBOARDING_STEPS.map((item) => (
-              <View
-                key={item.step}
-                style={[
-                  styles.stepCard,
-                  { backgroundColor: palette.surface, borderColor: palette.border },
-                ]}>
-                <View style={[styles.stepDot, { backgroundColor: palette.tint }]}>
-                  <Text style={styles.stepNumber}>{item.step}</Text>
-                </View>
-                <Text style={[TypeScale.label, { color: palette.text }]}>{item.title}</Text>
-                <Text style={[TypeScale.caption, { color: palette.icon }]}>{item.copy}</Text>
-              </View>
-            ))}
-          </View>
-
-          <View style={[styles.authCard, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+          <View
+            style={[
+              styles.authCard,
+              Elevation.e1,
+              { backgroundColor: palette.surface, borderColor: palette.border },
+            ]}>
             <Text style={[TypeScale.heading, { color: palette.text }]}>
               {authMode === 'sign-in' ? 'Sign in' : 'Create your account'}
             </Text>
@@ -439,7 +477,8 @@ export default function HomeScreen() {
             />
 
             <Button
-              label={authMode === 'sign-in' ? 'Sign in' : 'Create account'}
+              label={authMode === 'sign-in' ? 'Sign in' : 'Get started'}
+              size="lg"
               fullWidth
               loading={isBusy}
               onPress={handleSubmitAuth}
@@ -484,25 +523,43 @@ const styles = StyleSheet.create({
     paddingBottom: Space.xxl + 4,
   },
   header: {
-    gap: Space.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Space.md,
+  },
+  headerText: {
+    flexShrink: 1,
+    gap: Space.xs + 1,
   },
   greeting: {
-    maxWidth: 420,
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 29,
+    lineHeight: 35,
   },
   section: {
     gap: Space.md,
   },
-  rail: {
-    gap: Space.md,
-    paddingRight: Space.lg,
+  listCard: {
+    borderRadius: Radius.xl,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.xs,
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+  },
+  chipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
   },
   emptyState: {
     paddingVertical: Space.lg,
   },
   setupCard: {
     alignItems: 'center',
-    borderRadius: Radius.card,
-    borderTopRightRadius: Radius.accentCorner,
+    borderRadius: Radius.xl,
     borderWidth: StyleSheet.hairlineWidth * 2,
     flexDirection: 'row',
     gap: Space.md,
@@ -513,59 +570,40 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     gap: Space.xs,
   },
-  welcomeHero: {
+  welcome: {
     alignItems: 'center',
-    borderRadius: Radius.card,
-    borderTopRightRadius: Radius.accentCorner,
-    borderWidth: StyleSheet.hairlineWidth * 2,
     gap: Space.md,
-    padding: Space.xl,
+    paddingTop: Space.xxl + 8,
+    paddingBottom: Space.sm,
+    paddingHorizontal: Space.lg,
   },
-  heroLogo: {
-    height: 96,
-    width: 300,
+  wordmark: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 30,
+    lineHeight: 36,
   },
-  heroText: {
-    maxWidth: 420,
+  welcomeHeadline: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 38,
+    lineHeight: 44,
     textAlign: 'center',
   },
-  stepsRow: {
-    flexDirection: 'row',
-    gap: Space.md,
-  },
-  stepCard: {
-    borderRadius: Radius.card,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    flex: 1,
-    gap: Space.xs + 2,
-    padding: Space.md,
-  },
-  stepDot: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    height: 24,
-    justifyContent: 'center',
-    width: 24,
-  },
-  stepNumber: {
-    color: '#FFFFFF',
-    fontFamily: FontFamily.bodySemiBold,
-    fontSize: 12,
-    lineHeight: 16,
+  welcomeBody: {
+    maxWidth: 280,
+    textAlign: 'center',
   },
   authCard: {
-    borderRadius: Radius.card,
-    borderTopRightRadius: Radius.accentCorner,
+    borderRadius: Radius.xl,
     borderWidth: StyleSheet.hairlineWidth * 2,
     gap: Space.md,
     padding: Space.lg + 4,
   },
   input: {
-    borderRadius: Radius.chip + 4,
+    borderRadius: Radius.lg,
     borderWidth: StyleSheet.hairlineWidth * 2,
     fontFamily: FontFamily.body,
     fontSize: 15,
-    minHeight: 52,
+    minHeight: 48,
     paddingHorizontal: Space.lg,
   },
   inlineRow: {

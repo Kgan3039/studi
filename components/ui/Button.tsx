@@ -9,7 +9,7 @@ export type ButtonProps = {
   label: string;
   onPress?: () => void;
   variant?: ButtonVariant;
-  size?: 'md' | 'sm';
+  size?: 'lg' | 'md' | 'sm';
   loading?: boolean;
   disabled?: boolean;
   fullWidth?: boolean;
@@ -17,11 +17,11 @@ export type ButtonProps = {
 };
 
 /**
- * Direction D button (design-direction.md §1, §6).
- * - primary: red fill, the single primary action on a surface
- * - secondary: quiet outline
- * - success: moss 10%-tint chip ("✓ Going")
- * - ghost: text-only quiet action ("Leave")
+ * Pill button (handoff §2): fully rounded, min 44pt touch target on md/lg.
+ * - primary: accent crimson — board CTAs (Join, Post session)
+ * - secondary: surfaceAlt fill + hairline border
+ * - success: success-tint chip ("✓ Going")
+ * - ghost: text-only quiet action
  */
 export function Button({
   label,
@@ -36,12 +36,12 @@ export function Button({
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const isDark = colorScheme === 'dark';
-  const mossText = isDark ? '#7FB07F' : Brand.moss500;
+  const successText = isDark ? '#8FBF9F' : Brand.success;
 
   const colors: Record<ButtonVariant, { bg: string; text: string; border?: string }> = {
     primary: { bg: palette.tint, text: '#FFFFFF' },
-    secondary: { bg: 'transparent', text: palette.text, border: palette.outline },
-    success: { bg: `${Brand.moss500}1A`, text: mossText },
+    secondary: { bg: palette.surfaceMuted, text: palette.text, border: palette.border },
+    success: { bg: `${Brand.success}1A`, text: successText },
     ghost: { bg: 'transparent', text: palette.icon },
   };
   const { bg, text, border } = colors[variant];
@@ -55,12 +55,13 @@ export function Button({
       onPress={onPress}
       style={({ pressed }) => [
         styles.base,
-        size === 'sm' ? styles.sm : styles.md,
+        sizes[size],
         {
-          backgroundColor: pressed && variant === 'primary' ? Brand.red700 : bg,
+          backgroundColor: pressed && variant === 'primary' ? Brand.accentPressed : bg,
           borderColor: border,
           borderWidth: border ? StyleSheet.hairlineWidth * 2 : 0,
           opacity: blocked ? 0.5 : pressed && variant !== 'primary' ? 0.7 : 1,
+          transform: pressed ? [{ scale: 0.98 }] : undefined,
         },
         fullWidth && styles.fullWidth,
         style,
@@ -68,7 +69,9 @@ export function Button({
       {loading ? (
         <ActivityIndicator size="small" color={text} />
       ) : (
-        <Text style={[TypeScale.label, { color: text }]} numberOfLines={1}>
+        <Text
+          style={[size === 'lg' ? styles.lgText : TypeScale.label, { color: text }]}
+          numberOfLines={1}>
           {label}
         </Text>
       )}
@@ -76,22 +79,33 @@ export function Button({
   );
 }
 
+const sizes = StyleSheet.create({
+  lg: {
+    minHeight: 52,
+    paddingHorizontal: Space.xl + 4,
+  },
+  md: {
+    minHeight: 44,
+    paddingHorizontal: Space.lg + 4,
+  },
+  sm: {
+    minHeight: 36,
+    paddingHorizontal: Space.lg,
+  },
+});
+
 const styles = StyleSheet.create({
   base: {
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
     alignSelf: 'flex-start',
-    borderRadius: Radius.card,
-    borderTopRightRadius: Radius.accentCorner,
+    borderRadius: Radius.pill,
   },
-  md: {
-    minHeight: 48,
-    paddingHorizontal: Space.xl,
-  },
-  sm: {
-    minHeight: 36,
-    paddingHorizontal: Space.lg,
+  lgText: {
+    fontFamily: TypeScale.label.fontFamily,
+    fontSize: 15,
+    lineHeight: 20,
   },
   fullWidth: {
     alignSelf: 'stretch',

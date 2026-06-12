@@ -1,16 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SessionCard } from '@/components/session-card';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { BadgeChip } from '@/components/ui/BadgeChip';
-import { Button } from '@/components/ui/Button';
-import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Colors } from '@/constants/theme';
+import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -95,14 +90,10 @@ export default function SessionsScreen() {
       );
       setStatus(
         loadedSessions.length > 0
-          ? normalizedRequestedClass
-            ? `Loaded ${loadedSessions.length} upcoming session${
-                loadedSessions.length === 1 ? '' : 's'
-              } for ${normalizedRequestedClass}.`
-            : `Loaded ${loadedSessions.length} upcoming session${
-                loadedSessions.length === 1 ? '' : 's'
-              }.`
-          : 'No upcoming sessions yet.'
+          ? `${loadedSessions.length} upcoming session${loadedSessions.length === 1 ? '' : 's'}${
+              normalizedRequestedClass ? ` for ${normalizedRequestedClass}` : ''
+            }`
+          : 'No upcoming sessions yet'
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load sessions right now.';
@@ -144,115 +135,133 @@ export default function SessionsScreen() {
     }
   }
 
+  const filterOptions: { label: string; selected: boolean; onPress: () => void }[] =
+    normalizedRequestedClass
+      ? [
+          {
+            label: normalizedRequestedClass,
+            selected: true,
+            onPress: () => {},
+          },
+          {
+            label: 'All classes',
+            selected: false,
+            onPress: () => router.replace('/sessions'),
+          },
+        ]
+      : profileClasses.length > 0
+        ? [
+            {
+              label: 'My classes',
+              selected: !showAllClasses,
+              onPress: () => setShowAllClasses(false),
+            },
+            {
+              label: 'All classes',
+              selected: showAllClasses,
+              onPress: () => setShowAllClasses(true),
+            },
+          ]
+        : [];
+
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView
-        style={[
-          styles.hero,
-          { backgroundColor: palette.hero },
-        ]}>
-        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Sessions</ThemedText>
-        <ThemedText type="title" style={styles.heroTitle}>
-          Available Sessions
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Browse sessions students have already created and join one that fits your class and time.
-        </ThemedText>
-      </ThemedView>
-
-      <ThemedView
-        style={[
-          styles.card,
-          { backgroundColor: palette.surface, borderColor: palette.border },
-        ]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Overview</ThemedText>
-          <BadgeChip label={`${visibleSessions.length} open`} tone="moss" />
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
+      <View style={styles.header}>
+        <View style={styles.headerText}>
+          <Text style={[TypeScale.title, { color: palette.text }]}>Sessions</Text>
+          <Text style={[TypeScale.meta, { color: palette.icon }]}>{status}</Text>
         </View>
-        <ThemedText type="subtitle">
-          {normalizedRequestedClass
-            ? `Browse ${normalizedRequestedClass} sessions`
-            : 'Browse and join a session'}
-        </ThemedText>
-        <ThemedText style={styles.statusText}>{status}</ThemedText>
-        {!normalizedRequestedClass && profileClasses.length > 0 ? (
-          <View style={styles.chipRow}>
-            <CourseChip
-              code="My classes"
-              selected={!showAllClasses}
-              onPress={() => setShowAllClasses(false)}
-            />
-            <CourseChip
-              code="All classes"
-              selected={showAllClasses}
-              onPress={() => setShowAllClasses(true)}
-            />
-          </View>
-        ) : null}
-        {normalizedRequestedClass ? (
-          <Button
-            label="Show All Sessions"
-            variant="secondary"
-            fullWidth
-            onPress={() => router.replace('/sessions')}
-          />
-        ) : null}
-        <Button
-          label="Refresh Sessions"
-          variant="secondary"
-          fullWidth
-          loading={isLoading}
+        <Pressable
+          accessibilityRole="button"
+          disabled={isLoading}
           onPress={loadSessions}
-        />
-      </ThemedView>
+          style={({ pressed }) => ({ opacity: pressed || isLoading ? 0.5 : 1 })}>
+          <Text style={[TypeScale.label, { color: palette.tint }]}>
+            {isLoading ? 'Loading…' : 'Refresh'}
+          </Text>
+        </Pressable>
+      </View>
+
+      {filterOptions.length > 0 ? (
+        <View style={styles.filterRow}>
+          {filterOptions.map((option) => (
+            <Pressable
+              key={option.label}
+              accessibilityRole="button"
+              accessibilityState={{ selected: option.selected }}
+              onPress={option.onPress}
+              style={[
+                styles.filterPill,
+                option.selected
+                  ? { backgroundColor: palette.tint }
+                  : {
+                      backgroundColor: palette.surface,
+                      borderColor: palette.border,
+                      borderWidth: StyleSheet.hairlineWidth * 2,
+                    },
+              ]}>
+              <Text
+                style={[
+                  TypeScale.label,
+                  { color: option.selected ? '#FFFFFF' : palette.icon },
+                ]}>
+                {option.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
 
       {visibleSessions.length > 0 ? (
-        visibleSessions.map((session) => {
-          const isParticipant = currentUser ? session.participantIds.includes(currentUser.uid) : false;
-          const isFull = session.status === 'full';
+        <View style={styles.list}>
+          {visibleSessions.map((session) => {
+            const isParticipant = currentUser
+              ? session.participantIds.includes(currentUser.uid)
+              : false;
+            const isFull = session.status === 'full';
 
-          return (
-            <SessionCard
-              key={session.sessionId}
-              session={session}
-              locationName={session.locationName}
-              hostName={session.hostName}
-              joined={isParticipant}
-              joining={joiningSessionId === session.sessionId}
-              onPress={() => router.push(`/session/${session.sessionId}`)}
-              // No waitlist backend exists: hide Join on full sessions instead
-              // of showing a Waitlist action that would always fail.
-              onJoin={
-                isFull && !isParticipant ? undefined : () => handleJoinSession(session.sessionId)
-              }
-            />
-          );
-        })
+            return (
+              <SessionCard
+                key={session.sessionId}
+                session={session}
+                locationName={session.locationName}
+                hostName={session.hostName}
+                joined={isParticipant}
+                joining={joiningSessionId === session.sessionId}
+                onPress={() => router.push(`/session/${session.sessionId}`)}
+                // No waitlist backend exists: hide Join on full sessions instead
+                // of showing a Waitlist action that would always fail.
+                onJoin={
+                  isFull && !isParticipant ? undefined : () => handleJoinSession(session.sessionId)
+                }
+              />
+            );
+          })}
+        </View>
       ) : (
         <EmptyState
           headline={
             normalizedRequestedClass
               ? `No ${normalizedRequestedClass} sessions yet`
-              : 'No sessions yet'
+              : 'Quiet on State St.'
           }
           body={
             normalizedRequestedClass
-              ? `Create a ${normalizedRequestedClass} study session first, or come back later to join one.`
-              : 'Create a study session first, then come back here to join it.'
+              ? `Host the first ${normalizedRequestedClass} session, or come back later to join one.`
+              : 'No sessions for your classes right now. Someone has to set the first table.'
           }
-          actionLabel={
-            normalizedRequestedClass ? `Create ${normalizedRequestedClass} session` : undefined
-          }
-          onAction={
-            normalizedRequestedClass
-              ? () =>
-                  router.push({
+          actionLabel={normalizedRequestedClass ? 'Host one' : 'Host a session'}
+          onAction={() =>
+            router.push(
+              normalizedRequestedClass
+                ? {
                     pathname: '/create-session',
                     params: { classId: normalizedRequestedClass },
-                  })
-              : undefined
+                  }
+                : '/create-session'
+            )
           }
         />
       )}
@@ -265,54 +274,34 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    gap: Space.lg,
+    padding: Space.lg + 4,
+    paddingBottom: Space.xxl + 4,
   },
-  hero: {
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
-  },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  heroText: {
-    lineHeight: 30,
-    maxWidth: 420,
-  },
-  heroTitle: {
-    marginBottom: 4,
-  },
-  card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-  },
-  sectionHeader: {
-    alignItems: 'center',
+  header: {
     flexDirection: 'row',
+    alignItems: 'flex-end',
     justifyContent: 'space-between',
+    gap: Space.md,
   },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
+  headerText: {
+    flexShrink: 1,
+    gap: Space.xs,
   },
-  statusText: {
-    opacity: 0.82,
-  },
-  chipRow: {
+  filterRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: Space.sm,
+  },
+  filterPill: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.pill,
+    minHeight: 34,
+    paddingHorizontal: Space.md + 2,
+    paddingVertical: Space.xs + 2,
+  },
+  list: {
+    gap: Space.md,
   },
 });

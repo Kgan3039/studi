@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ExternalLink } from '@/components/external-link';
+import { Avatar } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
@@ -283,10 +284,7 @@ export default function ProfileScreen() {
 
   const isBusy = isSaving || isDeletingAccount || isReauthenticatingDelete;
   const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
-  const avatarInitials =
-    (firstName.trim().slice(0, 1) + lastName.trim().slice(0, 1)).toUpperCase() ||
-    (currentUser?.email ?? 'S').slice(0, 1).toUpperCase();
-  const placeholderColor = colorScheme === 'dark' ? '#9F918B' : Brand.charcoal400;
+  const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
   const inputColors = {
     backgroundColor: palette.surfaceMuted,
     borderColor: palette.border,
@@ -307,33 +305,17 @@ export default function ProfileScreen() {
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      <Text style={[TypeScale.title, { color: palette.text }]}>You</Text>
-
       <View style={styles.identity}>
-        <View
-          style={[
-            styles.avatar,
-            { backgroundColor: colorScheme === 'dark' ? `${palette.tint}33` : Brand.red100 },
-          ]}>
-          <Text
-            style={[
-              styles.avatarInitials,
-              { color: colorScheme === 'dark' ? palette.tint : Brand.red700 },
-            ]}>
-            {avatarInitials}
+        <Avatar name={displayName || currentUser?.email || 'Student'} size="xl" verified />
+        <Text style={[styles.identityName, { color: palette.text }]} numberOfLines={1}>
+          {displayName || currentUser?.email || 'Student'}
+        </Text>
+        <BadgeChip label="Verified @wisc.edu" tone="info" />
+        {displayName && currentUser?.email ? (
+          <Text style={[TypeScale.eyebrow, { color: palette.icon }]} numberOfLines={1}>
+            {currentUser.email}
           </Text>
-        </View>
-        <View style={styles.identityText}>
-          <Text style={[TypeScale.heading, { color: palette.text }]} numberOfLines={1}>
-            {displayName || currentUser?.email || 'Student'}
-          </Text>
-          <BadgeChip label="✓ Verified @wisc.edu" tone="lake" />
-          {displayName && currentUser?.email ? (
-            <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-              {currentUser.email}
-            </Text>
-          ) : null}
-        </View>
+        ) : null}
       </View>
 
       <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
@@ -542,26 +524,14 @@ const styles = StyleSheet.create({
   },
   identity: {
     alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.lg,
+    gap: Space.sm + 2,
+    paddingTop: Space.sm,
   },
-  avatar: {
-    alignItems: 'center',
-    borderRadius: Radius.card,
-    borderTopRightRadius: Radius.accentCorner,
-    height: 64,
-    justifyContent: 'center',
-    width: 64,
-  },
-  avatarInitials: {
-    fontFamily: FontFamily.code,
-    fontSize: 22,
-    letterSpacing: 0.5,
-    lineHeight: 28,
-  },
-  identityText: {
-    flexShrink: 1,
-    gap: Space.xs + 2,
+  identityName: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 28,
+    lineHeight: 34,
+    textAlign: 'center',
   },
   card: {
     borderRadius: Radius.card,

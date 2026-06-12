@@ -3,7 +3,21 @@ import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-na
 import { Brand, Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-export type BadgeTone = 'sunflower' | 'lake' | 'moss' | 'red' | 'neutral';
+/**
+ * Handoff Pill tones (§2) plus legacy Direction D aliases:
+ * sunflower → filling, lake → info, moss → success, red → now.
+ */
+export type BadgeTone =
+  | 'now'
+  | 'filling'
+  | 'quiet'
+  | 'info'
+  | 'success'
+  | 'neutral'
+  | 'sunflower'
+  | 'lake'
+  | 'moss'
+  | 'red';
 
 export type BadgeChipProps = {
   label: string;
@@ -11,34 +25,44 @@ export type BadgeChipProps = {
   style?: StyleProp<ViewStyle>;
 };
 
+const ALIASES: Partial<Record<BadgeTone, BadgeTone>> = {
+  sunflower: 'filling',
+  lake: 'info',
+  moss: 'success',
+  red: 'now',
+};
+
 /**
- * Status badge chip (design-direction.md §2 usage rules): accent colors
- * only ever appear as chips with their 10%-opacity tint as the fill.
- * sunflower = "starting soon", lake = online/info, moss = open/success.
+ * Status pill (handoff §2): uppercase 11pt bold, tracked. `now` is the solid
+ * crimson pill ("Happening now"); every other tone is a 10–15% tint fill.
  */
 export function BadgeChip({ label, tone = 'neutral', style }: BadgeChipProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const isDark = colorScheme === 'dark';
+  const resolved = ALIASES[tone] ?? tone;
 
-  const toneColors: Record<BadgeTone, string> = {
-    sunflower: isDark ? '#F0C36A' : '#A87514',
-    lake: isDark ? '#7FB3CC' : Brand.lake500,
-    moss: isDark ? '#7FB07F' : Brand.moss500,
-    red: palette.tint,
+  const toneText: Record<string, string> = {
+    now: '#FFFFFF',
+    filling: isDark ? '#D9A45C' : '#7A4F0F',
+    quiet: isDark ? '#7FB3B5' : '#1F5C5E',
+    info: isDark ? '#8FA8C9' : Brand.info,
+    success: isDark ? '#8FBF9F' : Brand.success,
     neutral: palette.icon,
   };
-  const toneFills: Record<BadgeTone, string> = {
-    sunflower: `${Brand.sunflower400}1A`,
-    lake: `${Brand.lake500}1A`,
-    moss: `${Brand.moss500}1A`,
-    red: `${palette.tint}1A`,
-    neutral: palette.surfaceMuted,
+  const toneFill: Record<string, string> = {
+    now: palette.tint,
+    filling: `${Brand.warning}26`,
+    quiet: '#1F5C5E1A',
+    info: `${Brand.info}1A`,
+    success: `${Brand.success}1F`,
+    neutral: isDark ? palette.surfaceMuted : 'rgba(31, 27, 22, 0.08)',
   };
 
   return (
-    <View style={[styles.chip, { backgroundColor: toneFills[tone] }, style]}>
-      <Text style={[TypeScale.label, { color: toneColors[tone] }]} numberOfLines={1}>
+    <View style={[styles.chip, { backgroundColor: toneFill[resolved] }, style]}>
+      {resolved === 'now' ? <View style={styles.nowDot} /> : null}
+      <Text style={[TypeScale.eyebrow, styles.label, { color: toneText[resolved] }]} numberOfLines={1}>
         {label}
       </Text>
     </View>
@@ -48,8 +72,20 @@ export function BadgeChip({ label, tone = 'neutral', style }: BadgeChipProps) {
 const styles = StyleSheet.create({
   chip: {
     alignSelf: 'flex-start',
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.xs + 2,
     borderRadius: Radius.pill,
-    paddingHorizontal: Space.md,
+    paddingHorizontal: Space.sm + 2,
     paddingVertical: Space.xs,
+  },
+  label: {
+    letterSpacing: 0.88,
+  },
+  nowDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FFFFFF',
   },
 });

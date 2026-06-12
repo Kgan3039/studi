@@ -12,7 +12,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/Button';
-import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { Brand, Colors, Elevation, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import {
   getAtmosphereFiltersForLocationTags,
   LOCATION_ATMOSPHERE_FILTERS,
@@ -144,15 +144,13 @@ export default function StudyLocationsScreen() {
     );
   }
 
+  // Board LocationsScreen: active filter pill is solid accent with white text.
   const filterChipColors = (isSelected: boolean) => ({
-    backgroundColor: isSelected
-      ? colorScheme === 'dark'
-        ? `${palette.tint}33`
-        : Brand.red100
-      : palette.surfaceMuted,
+    backgroundColor: isSelected ? palette.tint : palette.surface,
+    borderColor: palette.border,
+    borderWidth: isSelected ? 0 : StyleSheet.hairlineWidth * 2,
   });
-  const filterChipTextColor = (isSelected: boolean) =>
-    isSelected ? (colorScheme === 'dark' ? palette.tint : Brand.red700) : palette.text;
+  const filterChipTextColor = (isSelected: boolean) => (isSelected ? '#FFFFFF' : palette.icon);
 
   return (
     <ScrollView
@@ -239,10 +237,13 @@ export default function StudyLocationsScreen() {
       </View>
 
       {locations.length > 0 ? (
-        <View
-          style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+        <View style={styles.locationList}>
           {filteredLocations.length === 0 ? (
-            <View style={styles.emptySearch}>
+            <View
+              style={[
+                styles.card,
+                { backgroundColor: palette.surface, borderColor: palette.border },
+              ]}>
               <Text style={[TypeScale.heading, { color: palette.text }]}>
                 No spots match those filters
               </Text>
@@ -251,31 +252,40 @@ export default function StudyLocationsScreen() {
               </Text>
             </View>
           ) : (
-            filteredLocations.map((location, index) => {
+            filteredLocations.map((location) => {
               const isExpanded = expandedLocationId === location.locationId;
               const agg = ratingAggregates.get(location.locationId);
               return (
-                <View key={location.locationId}>
-                  {index > 0 && (
-                    <View style={[styles.divider, { backgroundColor: palette.border }]} />
-                  )}
+                <View
+                  key={location.locationId}
+                  style={[
+                    styles.card,
+                    Elevation.e1,
+                    { backgroundColor: palette.surface, borderColor: palette.border },
+                  ]}>
                   <Pressable
                     onPress={() =>
                       setExpandedLocationId(isExpanded ? null : location.locationId)
                     }
                     style={styles.accordionHeader}>
                     <View style={styles.accordionHeaderLeft}>
-                      <Text style={[TypeScale.label, styles.locationName, { color: palette.text }]}>
+                      <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
                         {location.name}
                       </Text>
                       <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                        {location.campusArea}
-                        {agg ? `  ·  ★ ${agg.averageStars} (${agg.totalRatings})` : ''}
+                        {location.building} · {location.campusArea}
                       </Text>
                     </View>
-                    <Text style={[styles.chevron, { color: palette.tint }]}>
-                      {isExpanded ? '▲' : '▼'}
-                    </Text>
+                    <View style={styles.accordionHeaderRight}>
+                      {agg ? (
+                        <Text style={[TypeScale.meta, { color: palette.icon }]}>
+                          ★ {agg.averageStars}
+                        </Text>
+                      ) : null}
+                      <Text style={[styles.chevron, { color: palette.tint }]}>
+                        {isExpanded ? '▲' : '▼'}
+                      </Text>
+                    </View>
                   </Pressable>
 
                   {isExpanded && (
@@ -453,34 +463,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.md,
     paddingVertical: Space.xs + 2,
   },
+  locationList: {
+    gap: Space.md,
+  },
   accordionHeader: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: Space.md + 2,
   },
   accordionHeaderLeft: {
     flex: 1,
     gap: 2,
     paddingRight: Space.md,
   },
-  locationName: {
-    fontSize: 15,
-    lineHeight: 20,
+  accordionHeaderRight: {
+    alignItems: 'flex-end',
+    gap: Space.xs,
   },
   chevron: {
     fontSize: 12,
   },
   accordionContent: {
     gap: Space.md,
-    paddingBottom: Space.md + 2,
-  },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-  },
-  emptySearch: {
-    gap: Space.sm,
-    paddingVertical: Space.sm,
+    paddingTop: Space.md,
   },
   tag: {
     borderRadius: Radius.pill,

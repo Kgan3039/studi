@@ -10,8 +10,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Avatar } from '@/components/ui/Avatar';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { Colors, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import { subscribeToUserConversations, type ConversationListItem } from '@/lib/firestore';
@@ -78,9 +79,10 @@ export default function MessagesScreen() {
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
+      {/* Utility screen — sans-only header (handoff §1.3). */}
       <View style={styles.header}>
-        <Text style={[TypeScale.title, { color: palette.text }]}>Messages</Text>
-        <Text style={[TypeScale.caption, { color: palette.icon }]}>{status}</Text>
+        <Text style={[TypeScale.h2, { color: palette.text }]}>Messages</Text>
+        <Text style={[TypeScale.meta, { color: palette.icon }]}>{status}</Text>
       </View>
 
       {isLoading ? (
@@ -88,8 +90,8 @@ export default function MessagesScreen() {
           <ActivityIndicator color={palette.tint} />
         </View>
       ) : conversations.length > 0 ? (
-        <View style={styles.threadList}>
-          {conversations.map((conversation) => {
+        <View>
+          {conversations.map((conversation, index) => {
             const otherName = conversation.otherParticipant?.displayName || 'Student';
 
             return (
@@ -107,39 +109,25 @@ export default function MessagesScreen() {
                   })
                 }
                 style={({ pressed }) => [
-                  styles.threadCard,
-                  {
-                    backgroundColor: palette.surface,
-                    borderColor: palette.border,
-                    opacity: pressed ? 0.85 : 1,
-                  },
+                  styles.threadRow,
+                  index > 0 && { borderTopColor: palette.border, borderTopWidth: StyleSheet.hairlineWidth },
+                  { opacity: pressed ? 0.7 : 1 },
                 ]}>
-                <View
-                  style={[
-                    styles.avatar,
-                    {
-                      backgroundColor:
-                        colorScheme === 'dark' ? `${palette.tint}33` : Brand.red100,
-                    },
-                  ]}>
-                  <Text
-                    style={[
-                      styles.avatarInitial,
-                      { color: colorScheme === 'dark' ? palette.tint : Brand.red700 },
-                    ]}>
-                    {otherName.slice(0, 1).toUpperCase()}
-                  </Text>
-                </View>
+                <Avatar name={otherName} size="md" />
                 <View style={styles.threadBody}>
                   <View style={styles.threadHeader}>
-                    <Text style={[TypeScale.label, styles.threadName, { color: palette.text }]} numberOfLines={1}>
+                    <Text
+                      style={[TypeScale.bodyStrong, styles.threadName, { color: palette.text }]}
+                      numberOfLines={1}>
                       {otherName}
                     </Text>
                     <Text style={[TypeScale.caption, { color: palette.icon }]}>
                       {formatTimestamp(conversation.lastMessageAt || conversation.updatedAt)}
                     </Text>
                   </View>
-                  <Text style={[TypeScale.body, styles.preview, { color: palette.icon }]} numberOfLines={1}>
+                  <Text
+                    style={[TypeScale.caption, styles.preview, { color: palette.icon }]}
+                    numberOfLines={1}>
                     {conversation.lastMessagePreview || 'Say hi before you arrive.'}
                   </Text>
                 </View>
@@ -149,7 +137,7 @@ export default function MessagesScreen() {
         </View>
       ) : (
         <EmptyState
-          headline="No conversations yet"
+          headline="No messages yet"
           body="Chats start when you join a session."
           actionLabel="Find a session"
           onAction={() => router.push('/sessions')}
@@ -169,29 +157,12 @@ const styles = StyleSheet.create({
   header: {
     gap: Space.xs,
   },
-  threadList: {
-    gap: Space.md,
-  },
-  threadCard: {
+  threadRow: {
     alignItems: 'center',
-    borderRadius: Radius.card,
-    borderTopRightRadius: Radius.accentCorner,
-    borderWidth: StyleSheet.hairlineWidth * 2,
     flexDirection: 'row',
     gap: Space.md,
-    padding: Space.lg,
-  },
-  avatar: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  avatarInitial: {
-    fontFamily: FontFamily.code,
-    fontSize: 17,
-    lineHeight: 22,
+    minHeight: 64,
+    paddingVertical: Space.md,
   },
   threadBody: {
     flex: 1,
@@ -207,8 +178,8 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   preview: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 13,
+    lineHeight: 18,
   },
   loadingArea: {
     alignItems: 'center',

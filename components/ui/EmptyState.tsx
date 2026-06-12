@@ -1,27 +1,24 @@
 import { type ReactNode } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { Brand, Colors, Space, TypeScale } from '@/constants/theme';
+import { Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 import { Button } from './Button';
 
 export type EmptyStateProps = {
-  /** ≤5 words (design-direction.md §10 copy rules). */
   headline: string;
-  /** One sentence, ideally with a live number. */
   body?: string;
-  /** Verb. Renders the single primary action. */
   actionLabel?: string;
   onAction?: () => void;
-  /** Replaces the default seat-dot motif once illustrations exist. */
+  /** Replaces the default icon disc (e.g. a glyph or illustration). */
   illustration?: ReactNode;
   style?: StyleProp<ViewStyle>;
 };
 
 /**
- * The one empty-state system (design-direction.md §10): never a dead end —
- * every empty state points at Sessions or Create.
+ * Empty state (handoff §2): icon disc + serif italic headline + one-sentence
+ * body + pill CTA. Required on every list; never a dead end.
  */
 export function EmptyState({
   headline,
@@ -36,14 +33,14 @@ export function EmptyState({
 
   return (
     <View style={[styles.container, style]}>
-      {illustration ?? (
-        <View style={styles.dots}>
-          <View style={[styles.dot, { backgroundColor: palette.tint }]} />
-          <View style={[styles.dot, { backgroundColor: Brand.sunflower400 }]} />
-          <View style={[styles.dot, { borderWidth: 1.5, borderColor: palette.outline }]} />
-        </View>
-      )}
-      <Text style={[TypeScale.heading, styles.headline, { color: palette.text }]}>{headline}</Text>
+      <View
+        style={[
+          styles.disc,
+          { backgroundColor: palette.surfaceMuted, borderColor: palette.border },
+        ]}>
+        {illustration ?? <View style={[styles.dot, { backgroundColor: palette.tint }]} />}
+      </View>
+      <Text style={[styles.headline, { color: palette.text }]}>{headline}</Text>
       {body ? (
         <Text style={[TypeScale.body, styles.body, { color: palette.icon }]}>{body}</Text>
       ) : null}
@@ -57,13 +54,17 @@ export function EmptyState({
 const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
-    paddingVertical: Space.xxl,
+    paddingVertical: Space.xxl + 8,
     paddingHorizontal: Space.xl,
     gap: Space.sm,
   },
-  dots: {
-    flexDirection: 'row',
-    gap: Space.sm,
+  disc: {
+    width: 56,
+    height: 56,
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: Space.sm,
   },
   dot: {
@@ -72,10 +73,15 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   headline: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 24,
+    lineHeight: 30,
     textAlign: 'center',
+    maxWidth: 260,
   },
   body: {
     textAlign: 'center',
+    maxWidth: 280,
   },
   action: {
     marginTop: Space.md,

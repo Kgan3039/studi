@@ -339,12 +339,13 @@ export default function CreateSessionScreen() {
           { paddingBottom: insets.bottom + 56, paddingTop: Space.lg },
         ]}>
         <View style={styles.header}>
+          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Host session</Text>
           <Text style={[TypeScale.title, { color: palette.text }]}>New session</Text>
           <Text style={[TypeScale.caption, { color: palette.icon }]}>{status}</Text>
         </View>
 
         <View style={styles.section}>
-          <Text style={[TypeScale.heading, { color: palette.text }]}>Class</Text>
+          <Text style={[styles.question, { color: palette.text }]}>Which class?</Text>
           {isLoading ? (
             <ActivityIndicator color={palette.tint} />
           ) : classes.length > 0 ? (
@@ -366,7 +367,7 @@ export default function CreateSessionScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={[TypeScale.heading, { color: palette.text }]}>Where</Text>
+          <Text style={[styles.question, { color: palette.text }]}>Where are you studying?</Text>
           <TextInput
             autoCapitalize="words"
             onChangeText={setLocationQuery}
@@ -402,7 +403,7 @@ export default function CreateSessionScreen() {
                         backgroundColor: isSelected
                           ? colorScheme === 'dark'
                             ? `${palette.tint}26`
-                            : Brand.red100
+                            : Brand.accentSoft
                           : palette.surface,
                         borderColor: isSelected ? palette.tint : palette.border,
                       },
@@ -435,7 +436,7 @@ export default function CreateSessionScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={[TypeScale.heading, { color: palette.text }]}>When</Text>
+          <Text style={[styles.question, { color: palette.text }]}>When does it start?</Text>
 
           <View
             style={[
@@ -545,8 +546,9 @@ export default function CreateSessionScreen() {
 
         {previewSession ? (
           <View style={styles.section}>
-            <Text style={[TypeScale.heading, { color: palette.text }]}>
-              What classmates will see
+            <Text style={[styles.question, { color: palette.text }]}>Looks good?</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
+              This is exactly how classmates will see it.
             </Text>
             <SessionCard session={previewSession} locationName={selectedLocation?.name} />
           </View>
@@ -554,6 +556,7 @@ export default function CreateSessionScreen() {
 
         <Button
           label="Post session"
+          size="lg"
           fullWidth
           loading={isSaving}
           disabled={isLoading}
@@ -574,6 +577,11 @@ const styles = StyleSheet.create({
   },
   header: {
     gap: Space.xs,
+  },
+  question: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 24,
+    lineHeight: 29,
   },
   section: {
     gap: Space.md,

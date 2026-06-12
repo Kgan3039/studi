@@ -1,37 +1,53 @@
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { Brand, Colors, Radius, Space, TypeScale } from '@/constants/theme';
+import { Colors, deptColorFor, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export type CourseChipProps = {
   code: string;
+  size?: 'sm' | 'md' | 'lg';
   selected?: boolean;
   onPress?: () => void;
   style?: StyleProp<ViewStyle>;
 };
 
 /**
- * Course-code chip — the brand's text signature (design-direction.md §3).
- * Always Space Grotesk, tracked out, uppercase: `CS 354`.
- * Selected state uses the red-100 fill (filter chips, class pickers).
+ * Dept-colored course chip (handoff §1.2, §2): pill with a dept dot and the
+ * code in the mono face. Department colors apply ONLY here and to dept dots.
+ * Unknown departments fall back to the foreground tint. Selected state adds
+ * a foreground ring (board: ring-2 ring-foreground).
  */
-export function CourseChip({ code, selected = false, onPress, style }: CourseChipProps) {
+export function CourseChip({ code, size = 'md', selected = false, onPress, style }: CourseChipProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const isDark = colorScheme === 'dark';
 
-  const backgroundColor = selected
-    ? isDark
-      ? `${palette.tint}33`
-      : Brand.red100
-    : palette.surfaceMuted;
-  const textColor = selected ? (isDark ? palette.tint : Brand.red700) : palette.text;
+  const dept = deptColorFor(code);
+  // Dark mode: dept hues are too dark for tinted text; use the lightened
+  // foreground with the dept dot carrying the color.
+  const tint = dept ?? palette.text;
+  const textColor = isDark ? palette.text : tint;
+  const backgroundColor = isDark ? `${tint}33` : `${tint}1A`;
+  const borderColor = isDark ? `${tint}4D` : `${tint}33`;
 
   const content = (
-    <Text style={[TypeScale.code, { color: textColor }]} numberOfLines={1}>
-      {code}
-    </Text>
+    <>
+      <View style={[styles.dot, dotSizes[size], { backgroundColor: tint }]} />
+      <Text
+        style={[TypeScale.code, textSizes[size], { color: textColor }]}
+        numberOfLines={1}>
+        {code}
+      </Text>
+    </>
   );
+
+  const chipStyle = [
+    styles.chip,
+    chipSizes[size],
+    { backgroundColor, borderColor },
+    selected && { borderColor: palette.text, borderWidth: 1.5 },
+    style,
+  ];
 
   if (onPress) {
     return (
@@ -39,20 +55,44 @@ export function CourseChip({ code, selected = false, onPress, style }: CourseChi
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onPress={onPress}
-        style={({ pressed }) => [styles.chip, { backgroundColor, opacity: pressed ? 0.7 : 1 }, style]}>
+        style={({ pressed }) => [...chipStyle, pressed && styles.pressed]}>
         {content}
       </Pressable>
     );
   }
 
-  return <View style={[styles.chip, { backgroundColor }, style]}>{content}</View>;
+  return <View style={chipStyle}>{content}</View>;
 }
+
+const chipSizes = StyleSheet.create({
+  sm: { minHeight: 24, paddingHorizontal: Space.sm + 2 },
+  md: { minHeight: 32, paddingHorizontal: Space.md },
+  lg: { minHeight: 40, paddingHorizontal: Space.lg },
+});
+
+const textSizes = StyleSheet.create({
+  sm: { fontSize: 11, lineHeight: 14 },
+  md: { fontSize: 13, lineHeight: 16 },
+  lg: { fontSize: 15, lineHeight: 18 },
+});
+
+const dotSizes = StyleSheet.create({
+  sm: { width: 5, height: 5, borderRadius: 2.5 },
+  md: { width: 6, height: 6, borderRadius: 3 },
+  lg: { width: 7, height: 7, borderRadius: 3.5 },
+});
 
 const styles = StyleSheet.create({
   chip: {
     alignSelf: 'flex-start',
-    borderRadius: Radius.chip,
-    paddingHorizontal: Space.md,
-    paddingVertical: Space.xs + 1,
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm - 2,
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+  },
+  dot: {},
+  pressed: {
+    opacity: 0.7,
   },
 });

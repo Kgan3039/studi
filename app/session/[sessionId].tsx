@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
@@ -13,10 +12,19 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { formatSessionWindow } from '@/components/session-card';
+import { Avatar } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
-import { SeatPips } from '@/components/ui/SeatPips';
-import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { CourseChip } from '@/components/ui/CourseChip';
+import {
+  Brand,
+  Colors,
+  Elevation,
+  FontFamily,
+  Radius,
+  Space,
+  TypeScale,
+} from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -166,6 +174,20 @@ export default function SessionDetailScreen() {
     : [];
   const isFull = session?.status === 'full';
   const isCancelled = session?.status === 'cancelled';
+  const hostName = formatDisplayName(session?.hostProfile?.displayName);
+
+  const startDate = session?.startTime.toDate();
+  const dateTileLabel = startDate
+    ? startDate.toDateString() === new Date().toDateString()
+      ? 'Today'
+      : startDate.toLocaleDateString('en-US', { weekday: 'short' })
+    : '';
+  const dateTileValue = startDate
+    ? startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : '';
+  const timeTileValue = startDate
+    ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    : '';
 
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
@@ -174,44 +196,84 @@ export default function SessionDetailScreen() {
         contentContainerStyle={[styles.content, { paddingTop: Space.lg }]}>
         {session ? (
           <>
-            {/* The one allowed gradient (design-direction.md §1): session-detail header. */}
-            <LinearGradient
-              colors={[Brand.red600, Brand.red700]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 0.6, y: 1 }}
-              style={styles.heroPanel}>
+            <View style={styles.heroBlock}>
               <View style={styles.heroChipRow}>
-                <View style={styles.heroCourseChip}>
-                  <Text style={[TypeScale.code, styles.heroCourseText]} numberOfLines={1}>
-                    {session.classId}
-                  </Text>
-                </View>
+                <CourseChip code={session.classId} size="lg" />
                 {isCancelled ? (
                   <BadgeChip label="Cancelled" tone="neutral" />
                 ) : isFull ? (
-                  <BadgeChip label="Full" tone="sunflower" />
+                  <BadgeChip label="Full" tone="neutral" />
                 ) : null}
               </View>
-              <Text style={[TypeScale.title, styles.heroTitle]} numberOfLines={2}>
-                {session.title}
-              </Text>
-              <Text style={[TypeScale.body, styles.heroTime]} numberOfLines={1}>
+              <Text style={[styles.heroTitle, { color: palette.text }]}>{session.title}</Text>
+              <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
                 {formatSessionWindow(session.startTime, session.endTime)}
+                {session.location?.name ? ` · ${session.location.name}` : ''}
               </Text>
-            </LinearGradient>
+            </View>
+
+            <View style={styles.tileRow}>
+              {[
+                { label: dateTileLabel, value: dateTileValue },
+                { label: 'Starts', value: timeTileValue },
+                {
+                  label: 'Going',
+                  value: `${visibleAttendees.length || session.participantIds.length}`,
+                },
+              ].map((tile) => (
+                <View
+                  key={tile.label}
+                  style={[
+                    styles.tile,
+                    Elevation.e1,
+                    { backgroundColor: palette.surface, borderColor: palette.border },
+                  ]}>
+                  <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{tile.label}</Text>
+                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>{tile.value}</Text>
+                </View>
+              ))}
+            </View>
 
             <View
               style={[
                 styles.card,
+                Elevation.e1,
                 { backgroundColor: palette.surface, borderColor: palette.border },
               ]}>
+              <View style={styles.hostRow}>
+                <Avatar name={hostName} size="lg" verified />
+                <View style={styles.hostText}>
+                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
+                    {hostName}
+                  </Text>
+                  <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                    Host · Verified UW student
+                  </Text>
+                </View>
+                <Button
+                  label="Message"
+                  variant="secondary"
+                  size="sm"
+                  loading={isOpeningHostChat}
+                  onPress={handleOpenHostChat}
+                />
+              </View>
+            </View>
+
+            <View
+              style={[
+                styles.card,
+                Elevation.e1,
+                { backgroundColor: palette.surface, borderColor: palette.border },
+              ]}>
+              <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Where</Text>
               <Text style={[TypeScale.heading, { color: palette.text }]}>
                 {session.location?.name ?? session.locationId}
               </Text>
               <Text style={[TypeScale.body, { color: palette.icon }]}>
                 {session.location?.building ?? 'Campus location'}
                 {' · '}
-                {session.location?.campusArea ?? 'UW-Madison'}
+                {session.location?.campusArea ?? 'UW–Madison'}
               </Text>
               {session.location?.notes ? (
                 <Text style={[TypeScale.caption, { color: palette.icon }]}>
@@ -221,7 +283,7 @@ export default function SessionDetailScreen() {
               {session.location ? (
                 <Button
                   label="Rate this spot"
-                  variant="secondary"
+                  variant="ghost"
                   size="sm"
                   onPress={() =>
                     router.push({
@@ -239,14 +301,12 @@ export default function SessionDetailScreen() {
             <View
               style={[
                 styles.card,
+                Elevation.e1,
                 { backgroundColor: palette.surface, borderColor: palette.border },
               ]}>
-              <View style={styles.sectionHeader}>
-                <Text style={[TypeScale.heading, { color: palette.text }]}>
-                  Who’s going
-                </Text>
-                <SeatPips going={visibleAttendees.length} />
-              </View>
+              <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
+                Going ({visibleAttendees.length})
+              </Text>
               {visibleAttendees.length > 0 ? (
                 <View style={styles.attendeeList}>
                   {visibleAttendees.map((attendee) => {
@@ -254,19 +314,14 @@ export default function SessionDetailScreen() {
 
                     return (
                       <View key={attendee.uid} style={styles.attendeeRow}>
-                        <View
-                          style={[
-                            styles.avatar,
-                            {
-                              backgroundColor:
-                                colorScheme === 'dark' ? `${palette.tint}33` : Brand.red100,
-                            },
-                          ]}>
-                          <Text style={[styles.avatarInitial, { color: colorScheme === 'dark' ? palette.tint : Brand.red700 }]}>
-                            {(attendee.displayName || 'S').slice(0, 1).toUpperCase()}
-                          </Text>
-                        </View>
-                        <Text style={[TypeScale.body, styles.attendeeName, { color: palette.text }]} numberOfLines={1}>
+                        <Avatar
+                          name={formatDisplayName(attendee.displayName)}
+                          size="md"
+                          verified
+                        />
+                        <Text
+                          style={[TypeScale.body, styles.attendeeName, { color: palette.text }]}
+                          numberOfLines={1}>
                           {formatDisplayName(attendee.displayName)}
                         </Text>
                         {isHost ? (
@@ -281,15 +336,13 @@ export default function SessionDetailScreen() {
                   Be the first at the table.
                 </Text>
               )}
+              <View style={styles.verifiedRow}>
+                <View style={[styles.verifiedDot, { backgroundColor: Brand.success }]} />
+                <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                  All attendees are verified UW students
+                </Text>
+              </View>
             </View>
-
-            <Button
-              label="Message host"
-              variant="secondary"
-              fullWidth
-              loading={isOpeningHostChat}
-              onPress={handleOpenHostChat}
-            />
 
             <View style={styles.statusRow}>
               <Text style={[TypeScale.caption, styles.statusText, { color: palette.icon }]}>
@@ -312,13 +365,16 @@ export default function SessionDetailScreen() {
           <View
             style={[
               styles.card,
+              Elevation.e1,
               { backgroundColor: palette.surface, borderColor: palette.border },
             ]}>
             {isLoading ? (
               <ActivityIndicator color={palette.tint} />
             ) : (
               <>
-                <Text style={[TypeScale.heading, { color: palette.text }]}>No session found</Text>
+                <Text style={[styles.emptyHeadline, { color: palette.text }]}>
+                  Something went off-script.
+                </Text>
                 <Text style={[TypeScale.body, { color: palette.icon }]}>
                   The session may have been removed, or the link is no longer valid.
                 </Text>
@@ -339,10 +395,11 @@ export default function SessionDetailScreen() {
             },
           ]}>
           {isParticipant ? (
-            <Button label="✓ Going" variant="success" fullWidth />
+            <Button label="✓ Going" variant="success" size="lg" fullWidth />
           ) : (
             <Button
               label={isFull ? 'Session full' : 'Join session'}
+              size="lg"
               fullWidth
               loading={isJoining}
               disabled={isFull || isCancelled}
@@ -364,45 +421,47 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl,
   },
-  heroPanel: {
-    borderRadius: Radius.card,
-    borderTopRightRadius: Radius.accentCorner,
-    gap: Space.sm,
-    padding: Space.xl,
+  heroBlock: {
+    gap: Space.sm + 2,
   },
   heroChipRow: {
-    alignItems: 'center',
     flexDirection: 'row',
-    gap: Space.sm,
+    alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  heroCourseChip: {
-    backgroundColor: Brand.cream50,
-    borderRadius: Radius.chip,
-    paddingHorizontal: Space.md,
-    paddingVertical: Space.xs + 1,
-  },
-  heroCourseText: {
-    color: Brand.red700,
+    gap: Space.sm,
   },
   heroTitle: {
-    color: Brand.cream50,
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 30,
+    lineHeight: 36,
   },
-  heroTime: {
-    color: 'rgba(255, 248, 240, 0.85)',
+  tileRow: {
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  tile: {
+    flex: 1,
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.xs,
+    paddingVertical: Space.md,
+    paddingHorizontal: Space.sm,
   },
   card: {
-    borderRadius: Radius.card,
-    borderTopRightRadius: Radius.accentCorner,
+    borderRadius: Radius.xl,
     borderWidth: StyleSheet.hairlineWidth * 2,
     gap: Space.sm + 2,
     padding: Space.lg + 4,
   },
-  sectionHeader: {
-    alignItems: 'center',
+  hostRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: Space.md,
-    justifyContent: 'space-between',
+  },
+  hostText: {
+    flex: 1,
+    gap: 2,
   },
   attendeeList: {
     gap: Space.md,
@@ -412,20 +471,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Space.md,
   },
-  avatar: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    height: 40,
-    justifyContent: 'center',
-    width: 40,
-  },
-  avatarInitial: {
-    fontFamily: FontFamily.code,
-    fontSize: 16,
-    lineHeight: 20,
-  },
   attendeeName: {
     flexShrink: 1,
+  },
+  verifiedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm - 2,
+    marginTop: Space.xs,
+  },
+  verifiedDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   statusRow: {
     alignItems: 'center',
@@ -435,6 +493,11 @@ const styles = StyleSheet.create({
   },
   statusText: {
     flexShrink: 1,
+  },
+  emptyHeadline: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 24,
+    lineHeight: 30,
   },
   bottomBar: {
     borderTopWidth: StyleSheet.hairlineWidth,

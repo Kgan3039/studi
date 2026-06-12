@@ -1,11 +1,20 @@
 import type { Timestamp } from 'firebase/firestore';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
+import { Avatar } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { SeatPips } from '@/components/ui/SeatPips';
-import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import {
+  Colors,
+  deptColorFor,
+  Elevation,
+  FontFamily,
+  Radius,
+  Space,
+  TypeScale,
+} from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { StudySession } from '@/lib/firestore';
 
@@ -36,10 +45,13 @@ export type SessionCardProps = {
   joined?: boolean;
   /** Join request in flight. */
   joining?: boolean;
-  /** Red left-edge stripe — "Your next session" treatment on Today. */
+  /** Legacy accent prop — hero variant supersedes it; kept for callers. */
   accent?: boolean;
-  /** compact: the small card for horizontal rails. */
-  variant?: 'full' | 'compact';
+  /**
+   * Handoff variants (§2): hero = dept-tinted header + serif title;
+   * full = standard card; compact = small card for rails; list = dense row.
+   */
+  variant?: 'hero' | 'full' | 'compact' | 'list';
   onPress?: () => void;
   onJoin?: () => void;
   style?: StyleProp<ViewStyle>;
@@ -72,8 +84,8 @@ function formatDayLabel(start: Date, now: Date) {
 }
 
 /**
- * Relative when close (design-direction.md §6): "in 45 min", "Today 4:00 PM",
- * "Tomorrow 10:00 AM", then "Mon, Jun 15 · 4:00 PM".
+ * Relative when close: "in 45 min", "Today 4:00 PM", "Tomorrow 10:00 AM",
+ * then "Mon, Jun 15 · 4:00 PM".
  */
 export function formatSessionStart(startTime: Timestamp, now: Date = new Date()) {
   const start = startTime.toDate();
@@ -118,8 +130,9 @@ function formatAttendees(names: string[]) {
 }
 
 /**
- * The core Direction D component (design-direction.md §6): course chip first,
- * one-line title, time + place, seat pips, one primary action.
+ * The core session component (handoff §2 SessionCard).
+ * Anatomy: dept course chip first, one-line title, time + place, going
+ * count, one primary action.
  */
 export function SessionCard({
   session,
@@ -153,9 +166,9 @@ export function SessionCard({
   ) : isFull ? (
     <BadgeChip label="Full" tone="neutral" />
   ) : startingSoon ? (
-    <BadgeChip label="Starting soon" tone="sunflower" />
+    <BadgeChip label="Starting soon" tone="now" />
   ) : isOnline ? (
-    <BadgeChip label="Online" tone="lake" />
+    <BadgeChip label="Online" tone="info" />
   ) : null;
 
   const timeLine = formatSessionWindow(session.startTime, session.endTime);
@@ -163,42 +176,96 @@ export function SessionCard({
     isOnline ? 'Online' : locationName,
     locationRating !== undefined && !isOnline ? `★ ${locationRating.toFixed(1)}` : undefined,
   ].filter(Boolean);
-  const placeLine = placeParts.join('  ·  ');
+  const metaLine = [timeLine, ...placeParts].join(' · ');
 
+  const dept = deptColorFor(session.classId) ?? palette.text;
   const hostFirstName = hostName?.trim().split(' ')[0];
-  const hostInitial = hostFirstName?.charAt(0).toUpperCase();
-  const hostAvatarColors = isDark
-    ? { backgroundColor: `${palette.tint}33`, color: palette.tint }
-    : { backgroundColor: Brand.red100, color: Brand.red700 };
 
-  const cardStyle = [
-    styles.card,
-    {
-      backgroundColor: palette.surface,
-      borderColor: palette.border,
-      opacity: isFull || isCancelled ? 0.6 : 1,
-    },
-    accent && { borderLeftWidth: 4, borderLeftColor: palette.tint },
-    variant === 'compact' && styles.compact,
-    style,
-  ];
+  const dimmed = isFull || isCancelled;
 
+  const joinAction =
+    onJoin && !isCancelled ? (
+      joined ? (
+        <Button label="✓ Going" variant="success" size="sm" onPress={onPress} />
+      ) : (
+        <Button
+          label="Join"
+          variant={isFull ? 'secondary' : 'primary'}
+          size="sm"
+          loading={joining}
+          disabled={isFull}
+          onPress={onJoin}
+        />
+      )
+    ) : null;
+
+  /* ---- list row (browse results) ---- */
+  if (variant === 'list') {
+    const [deptCode, ...numberParts] = session.classId.trim().split(/\s+/);
+    return (
+      <Pressable
+        accessibilityRole="button"
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.listRow,
+          { opacity: dimmed ? 0.6 : pressed ? 0.8 : 1 },
+          style,
+        ]}>
+        <View
+          style={[
+            styles.deptTile,
+            {
+              backgroundColor: isDark ? `${dept}33` : `${dept}1A`,
+              borderColor: isDark ? `${dept}4D` : `${dept}33`,
+            },
+          ]}>
+          <Text style={[styles.deptTileCode, { color: isDark ? palette.text : dept }]} numberOfLines={1}>
+            {deptCode}
+          </Text>
+          <Text style={[styles.deptTileNumber, { color: isDark ? palette.text : dept }]} numberOfLines={1}>
+            {numberParts.join(' ') || '—'}
+          </Text>
+        </View>
+        <View style={styles.listBody}>
+          <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
+            {session.title}
+          </Text>
+          <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+            {metaLine}
+          </Text>
+        </View>
+        <Text style={[TypeScale.meta, { color: palette.icon }]}>{going} going</Text>
+      </Pressable>
+    );
+  }
+
+  /* ---- compact rail card ---- */
   if (variant === 'compact') {
     return (
       <Pressable
         accessibilityRole="button"
         onPress={onPress}
-        style={({ pressed }) => [...cardStyle, pressed && styles.pressed]}>
-        <CourseChip code={session.classId} />
+        style={({ pressed }) => [
+          styles.card,
+          styles.compact,
+          Elevation.e1,
+          {
+            backgroundColor: palette.surface,
+            borderColor: palette.border,
+            opacity: dimmed ? 0.6 : pressed ? 0.85 : 1,
+          },
+          style,
+        ]}>
+        <CourseChip code={session.classId} size="sm" />
         <Text style={[TypeScale.label, styles.compactTitle, { color: palette.text }]} numberOfLines={1}>
           {session.title}
         </Text>
-        <Text style={[styles.compactTime, { color: palette.text }]} numberOfLines={1}>
+        <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
           {timeLine}
         </Text>
-        {placeLine ? (
+        {placeParts.length > 0 ? (
           <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-            {placeLine}
+            {placeParts.join(' · ')}
           </Text>
         ) : null}
         <SeatPips going={going} capacity={capacity} style={styles.compactPips} />
@@ -206,29 +273,88 @@ export function SessionCard({
     );
   }
 
+  /* ---- hero card (Today "next session") ---- */
+  if (variant === 'hero') {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.card,
+          styles.heroCard,
+          Elevation.e1,
+          {
+            backgroundColor: palette.surface,
+            borderColor: palette.border,
+            opacity: dimmed ? 0.6 : pressed ? 0.9 : 1,
+          },
+          style,
+        ]}>
+        <View
+          style={[
+            styles.heroStrip,
+            { backgroundColor: isDark ? `${dept}26` : `${dept}14` },
+          ]}>
+          <CourseChip code={session.classId} size="md" />
+          {badge}
+        </View>
+        <View style={styles.heroBody}>
+          <Text style={[styles.heroTitle, { color: palette.text }]} numberOfLines={2}>
+            {session.title}
+          </Text>
+          <Text style={[TypeScale.body, styles.heroMeta, { color: palette.icon }]} numberOfLines={1}>
+            {metaLine}
+          </Text>
+          <View style={styles.heroFooter}>
+            {hostFirstName ? (
+              <View style={styles.hostRow}>
+                <Avatar name={hostName ?? 'Student'} size="sm" verified />
+                <Text style={[TypeScale.meta, { color: palette.icon }]} numberOfLines={1}>
+                  Hosted by{' '}
+                  <Text style={{ color: palette.text, fontFamily: FontFamily.bodySemiBold }}>
+                    {hostFirstName}
+                  </Text>
+                </Text>
+              </View>
+            ) : (
+              <SeatPips going={going} capacity={capacity} />
+            )}
+            {joinAction ?? (
+              <Text style={[TypeScale.meta, { color: palette.icon }]}>{going} going</Text>
+            )}
+          </View>
+        </View>
+      </Pressable>
+    );
+  }
+
+  /* ---- full card (default) ---- */
   return (
     <Pressable
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [...cardStyle, pressed && styles.pressed]}>
+      style={({ pressed }) => [
+        styles.card,
+        styles.fullCard,
+        Elevation.e1,
+        accent && { borderLeftWidth: 3, borderLeftColor: palette.tint },
+        {
+          backgroundColor: palette.surface,
+          borderColor: palette.border,
+          opacity: dimmed ? 0.6 : pressed ? 0.85 : 1,
+        },
+        style,
+      ]}>
       <View style={styles.headerRow}>
-        <CourseChip code={session.classId} />
+        <CourseChip code={session.classId} size="sm" />
         {badge}
       </View>
-      <Text style={[TypeScale.heading, styles.title, { color: palette.text }]} numberOfLines={1}>
+      <Text style={[TypeScale.bodyStrong, styles.title, { color: palette.text }]} numberOfLines={1}>
         {session.title}
       </Text>
-      <View style={styles.metaBlock}>
-        <Text style={[styles.timeText, { color: palette.text }]} numberOfLines={1}>
-          {timeLine}
-        </Text>
-        {placeLine ? (
-          <Text style={[styles.placeText, { color: palette.icon }]} numberOfLines={1}>
-            {placeLine}
-          </Text>
-        ) : null}
-      </View>
-      <View style={[styles.divider, { backgroundColor: palette.border }]} />
+      <Text style={[TypeScale.caption, styles.metaText, { color: palette.icon }]} numberOfLines={1}>
+        {metaLine}
+      </Text>
       <View style={styles.footerRow}>
         <View style={styles.peopleBlock}>
           <SeatPips going={going} capacity={capacity} />
@@ -239,30 +365,14 @@ export function SessionCard({
           ) : null}
           {hostFirstName ? (
             <View style={styles.hostRow}>
-              <View style={[styles.hostAvatar, { backgroundColor: hostAvatarColors.backgroundColor }]}>
-                <Text style={[styles.hostInitial, { color: hostAvatarColors.color }]}>
-                  {hostInitial}
-                </Text>
-              </View>
+              <Avatar name={hostName ?? 'Student'} size="xs" />
               <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
                 Hosted by {hostFirstName}
               </Text>
             </View>
           ) : null}
         </View>
-        {onJoin && !isCancelled ? (
-          joined ? (
-            <Button label="✓ Going" variant="success" size="sm" onPress={onPress} />
-          ) : (
-            <Button
-              label={isFull ? 'Waitlist' : 'Join'}
-              variant={isFull ? 'secondary' : 'primary'}
-              size="sm"
-              loading={joining}
-              onPress={onJoin}
-            />
-          )
-        ) : null}
+        {joinAction}
       </View>
     </Pressable>
   );
@@ -270,22 +380,49 @@ export function SessionCard({
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: Radius.card,
-    borderTopRightRadius: Radius.accentCorner,
+    borderRadius: Radius.xl,
     borderWidth: StyleSheet.hairlineWidth * 2,
+  },
+  fullCard: {
     paddingHorizontal: Space.lg,
-    paddingVertical: Space.md + 2,
-    shadowColor: Brand.charcoal900,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 2,
+    paddingVertical: Space.lg - 2,
   },
   compact: {
     width: 180,
+    paddingHorizontal: Space.md + 2,
+    paddingVertical: Space.md,
+    gap: 3,
   },
-  pressed: {
-    opacity: 0.85,
+  heroCard: {
+    borderRadius: Radius.xxl - 4,
+    overflow: 'hidden',
+  },
+  heroStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Space.sm,
+    paddingHorizontal: Space.lg + 4,
+    paddingVertical: Space.md + 2,
+  },
+  heroBody: {
+    paddingHorizontal: Space.lg + 4,
+    paddingVertical: Space.lg + 2,
+  },
+  heroTitle: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 26,
+    lineHeight: 31,
+  },
+  heroMeta: {
+    marginTop: Space.sm,
+  },
+  heroFooter: {
+    marginTop: Space.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Space.md,
   },
   headerRow: {
     flexDirection: 'row',
@@ -294,29 +431,15 @@ const styles = StyleSheet.create({
     gap: Space.sm,
   },
   title: {
-    marginTop: Space.sm,
+    marginTop: Space.sm + 2,
   },
-  metaBlock: {
+  metaText: {
     marginTop: Space.xs,
-    gap: 2,
-  },
-  timeText: {
-    fontFamily: FontFamily.bodySemiBold,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  placeText: {
-    fontFamily: FontFamily.body,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    marginVertical: Space.md - 2,
   },
   footerRow: {
+    marginTop: Space.md,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     justifyContent: 'space-between',
     gap: Space.md,
   },
@@ -327,30 +450,43 @@ const styles = StyleSheet.create({
   hostRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Space.xs + 2,
+    gap: Space.sm,
   },
-  hostAvatar: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+  listRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+    paddingVertical: Space.md,
+    paddingHorizontal: Space.xs,
+  },
+  deptTile: {
+    width: 56,
+    height: 56,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 1,
   },
-  hostInitial: {
+  deptTileCode: {
     fontFamily: FontFamily.code,
     fontSize: 10,
-    lineHeight: 13,
+    lineHeight: 12,
+    letterSpacing: 0.8,
+  },
+  deptTileNumber: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 14,
+    lineHeight: 17,
+  },
+  listBody: {
+    flex: 1,
+    gap: 2,
   },
   compactTitle: {
-    marginTop: Space.sm,
-  },
-  compactTime: {
-    fontFamily: FontFamily.bodySemiBold,
-    fontSize: 12,
-    lineHeight: 16,
-    marginTop: 2,
+    marginTop: Space.sm - 2,
   },
   compactPips: {
-    marginTop: Space.sm,
+    marginTop: Space.sm - 2,
   },
 });
