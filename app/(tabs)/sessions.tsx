@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SessionCard } from '@/components/session-card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
@@ -37,6 +38,7 @@ export default function SessionsScreen() {
   const [status, setStatus] = useState('Loading sessions...');
   const [isLoading, setIsLoading] = useState(true);
   const [joiningSessionId, setJoiningSessionId] = useState('');
+  const { toast, show: showToast } = useSuccessToast();
   const normalizedRequestedClass = requestedClassId?.trim().toUpperCase() ?? '';
 
   const visibleSessions = sessions;
@@ -124,7 +126,7 @@ export default function SessionsScreen() {
           ...(joinedSession ? { classId: joinedSession.classId } : {}),
         });
         setStatus('Joined session successfully.');
-        Alert.alert('Joined Session', 'You were added to the session participant list.');
+        showToast('You’re in.', joinedSession?.title ?? 'See you at the table.');
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to join this session right now.';
@@ -165,9 +167,10 @@ export default function SessionsScreen() {
         : [];
 
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
+    <View style={[styles.screen, { backgroundColor: palette.background }]}>
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <View style={styles.header}>
         <View style={styles.headerText}>
           <Text style={[TypeScale.title, { color: palette.text }]}>Sessions</Text>
@@ -265,7 +268,9 @@ export default function SessionsScreen() {
           }
         />
       )}
-    </ScrollView>
+      </ScrollView>
+      <SuccessToast toast={toast} />
+    </View>
   );
 }
 

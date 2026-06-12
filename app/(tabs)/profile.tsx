@@ -27,7 +27,7 @@ import {
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
-import { UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
+import { UW_COURSE_CATALOG, UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
 import {
   getUserProfile,
   invalidateProfileCache,
@@ -80,6 +80,12 @@ export default function ProfileScreen() {
 
     return searchCourses(courseQuery, classes, 14);
   }, [classes, courseQuery]);
+  // Course titles for the saved-classes rows (board ProfileScreen) come from
+  // the bundled catalog — no extra reads.
+  const courseTitlesByCode = useMemo(
+    () => new Map(UW_COURSE_CATALOG.map((course) => [course.code, course.title] as const)),
+    []
+  );
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -363,21 +369,31 @@ export default function ProfileScreen() {
           </View>
         ) : null}
         {classes.length > 0 ? (
-          <>
-            <View style={styles.chipRow}>
-              {classes.map((classCode) => (
-                <CourseChip
-                  key={classCode}
-                  code={classCode}
-                  selected
-                  onPress={isSaving ? undefined : () => toggleClassSelection(classCode)}
-                />
-              ))}
-            </View>
-            <Text style={[TypeScale.caption, { color: palette.icon }]}>
-              Tap a class to remove it.
-            </Text>
-          </>
+          <View style={styles.classRows}>
+            {classes.map((classCode) => (
+              <View
+                key={classCode}
+                style={[styles.classRow, { borderColor: palette.border }]}>
+                <CourseChip code={classCode} size="sm" />
+                <Text
+                  style={[TypeScale.body, styles.classTitle, { color: palette.text }]}
+                  numberOfLines={1}>
+                  {courseTitlesByCode.get(classCode) ?? 'UW–Madison course'}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${classCode}`}
+                  disabled={isSaving}
+                  onPress={() => toggleClassSelection(classCode)}
+                  style={({ pressed }) => [
+                    styles.removeButton,
+                    { opacity: isSaving || pressed ? 0.4 : 1 },
+                  ]}>
+                  <Text style={[TypeScale.label, { color: palette.icon }]}>✕</Text>
+                </Pressable>
+              </View>
+            ))}
+          </View>
         ) : null}
         <Button label="Save classes" fullWidth loading={isSaving} onPress={handleSaveClasses} />
       </View>
@@ -540,10 +556,27 @@ const styles = StyleSheet.create({
     gap: Space.md,
     padding: Space.lg + 4,
   },
-  chipRow: {
+  classRows: {
+    gap: Space.sm,
+  },
+  classRow: {
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Space.sm + 2,
+    gap: Space.md,
+    minHeight: 52,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+  },
+  classTitle: {
+    flex: 1,
+  },
+  removeButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
+    minWidth: 32,
   },
   inlineRow: {
     alignItems: 'center',

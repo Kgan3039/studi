@@ -16,9 +16,11 @@ import { Avatar } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import {
   Brand,
   Colors,
+  deptColorFor,
   Elevation,
   FontFamily,
   Radius,
@@ -58,6 +60,7 @@ export default function SessionDetailScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isJoining, setIsJoining] = useState(false);
   const [isOpeningHostChat, setIsOpeningHostChat] = useState(false);
+  const { toast, show: showToast } = useSuccessToast();
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -131,7 +134,7 @@ export default function SessionDetailScreen() {
           track('session_joined', { classId: session.classId });
         }
         setStatus('Joined session successfully.');
-        Alert.alert('Joined Session', 'You were added to the attendee list.');
+        showToast('You’re in.', session?.title ?? 'See you at the table.');
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to join this session.';
@@ -177,17 +180,29 @@ export default function SessionDetailScreen() {
   const hostName = formatDisplayName(session?.hostProfile?.displayName);
 
   const startDate = session?.startTime.toDate();
+  const endDate = session?.endTime.toDate();
   const dateTileLabel = startDate
     ? startDate.toDateString() === new Date().toDateString()
       ? 'Today'
       : startDate.toLocaleDateString('en-US', { weekday: 'short' })
     : '';
-  const dateTileValue = startDate
-    ? startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    : '';
   const timeTileValue = startDate
     ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
     : '';
+  // Board DetailScreen shows a Duration tile — derived from existing times.
+  const durationMinutes =
+    startDate && endDate
+      ? Math.max(Math.round((endDate.getTime() - startDate.getTime()) / 60000), 0)
+      : 0;
+  const durationLabel =
+    durationMinutes <= 0
+      ? '—'
+      : durationMinutes < 120
+        ? `${durationMinutes} min`
+        : durationMinutes % 60 === 0
+          ? `${durationMinutes / 60} hr`
+          : `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m`;
+  const deptTint = session ? deptColorFor(session.classId) ?? palette.text : palette.text;
 
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
@@ -196,6 +211,21 @@ export default function SessionDetailScreen() {
         contentContainerStyle={[styles.content, { paddingTop: Space.lg }]}>
         {session ? (
           <>
+            {/* Header treatment approximating the board's banner — dept tint
+                stands in for location imagery the app doesn't have. */}
+            <View
+              style={[
+                styles.banner,
+                {
+                  backgroundColor:
+                    colorScheme === 'dark' ? `${deptTint}26` : `${deptTint}14`,
+                },
+              ]}>
+              <Text style={[TypeScale.eyebrow, { color: palette.icon }]} numberOfLines={1}>
+                {session.location?.name ?? session.locationId}
+                {session.location?.campusArea ? ` · ${session.location.campusArea}` : ''}
+              </Text>
+            </View>
             <View style={styles.heroBlock}>
               <View style={styles.heroChipRow}>
                 <CourseChip code={session.classId} size="lg" />
@@ -214,8 +244,8 @@ export default function SessionDetailScreen() {
 
             <View style={styles.tileRow}>
               {[
-                { label: dateTileLabel, value: dateTileValue },
-                { label: 'Starts', value: timeTileValue },
+                { label: dateTileLabel, value: timeTileValue },
+                { label: 'Duration', value: durationLabel },
                 {
                   label: 'Going',
                   value: `${visibleAttendees.length || session.participantIds.length}`,
@@ -408,6 +438,7 @@ export default function SessionDetailScreen() {
           )}
         </View>
       ) : null}
+      <SuccessToast toast={toast} bottomOffset={session ? 72 : 0} />
     </View>
   );
 }
@@ -420,6 +451,12 @@ const styles = StyleSheet.create({
     gap: Space.lg,
     padding: Space.lg + 4,
     paddingBottom: Space.xxl,
+  },
+  banner: {
+    borderRadius: Radius.xxl - 4,
+    justifyContent: 'flex-end',
+    minHeight: 96,
+    padding: Space.lg,
   },
   heroBlock: {
     gap: Space.sm + 2,

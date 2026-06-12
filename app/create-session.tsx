@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SessionCard } from '@/components/session-card';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { formatTimeLabel, TimeDropdown } from '@/components/time-dropdown';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -115,6 +116,8 @@ export default function CreateSessionScreen() {
   const [selectedCalendarMonth, setSelectedCalendarMonth] = useState(() => startOfMonth(new Date()));
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
+  const [focusText, setFocusText] = useState('');
+  const { toast, show: showToast } = useSuccessToast();
   const [status, setStatus] = useState('Sign in to create a study session.');
   const [scheduleHint, setScheduleHint] = useState(
     `Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`
@@ -264,13 +267,16 @@ export default function CreateSessionScreen() {
       return;
     }
 
+    // "Focus" maps onto the existing title field; default keeps prior behavior.
+    const sessionTitle = focusText.trim() || `${selectedClass} Study Session`;
+
     try {
       setIsSaving(true);
-      const sessionId = await createSession({
+      await createSession({
         classId: selectedClass,
         hostId: currentUser.uid,
         locationId: selectedLocationId,
-        title: `${selectedClass} Study Session`,
+        title: sessionTitle,
         startTime: new Date(validatedSchedule.startTimeIso),
         endTime: new Date(validatedSchedule.endTimeIso),
       });
@@ -286,7 +292,8 @@ export default function CreateSessionScreen() {
       setSessionDate('');
       setStartTime('');
       setEndTime('');
-      Alert.alert('Session Created', `Study session created with ID ${sessionId}.`);
+      setFocusText('');
+      showToast('Session posted', sessionTitle);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Unable to create the study session right now.';
@@ -313,13 +320,13 @@ export default function CreateSessionScreen() {
     return {
       sessionId: 'preview',
       classId: selectedClass,
-      title: `${selectedClass} Study Session`,
+      title: focusText.trim() || `${selectedClass} Study Session`,
       startTime: Timestamp.fromDate(start),
       endTime: Timestamp.fromDate(end),
       status: 'open' as const,
       participantIds: currentUser ? [currentUser.uid] : [],
     };
-  }, [currentUser, endTime, selectedClass, sessionDate, startTime]);
+  }, [currentUser, endTime, focusText, selectedClass, sessionDate, startTime]);
 
   const selectedLocation = locations.find(
     (location) => location.locationId === selectedLocationId
@@ -544,6 +551,28 @@ export default function CreateSessionScreen() {
           </Text>
         </View>
 
+        <View style={styles.section}>
+          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Focus (optional)</Text>
+          <TextInput
+            onChangeText={setFocusText}
+            placeholder="e.g. Pset 4 — pipelines & caching"
+            placeholderTextColor={placeholderColor}
+            style={[
+              styles.input,
+              {
+                backgroundColor: palette.surfaceMuted,
+                borderColor: palette.border,
+                color: palette.text,
+              },
+            ]}
+            value={focusText}
+          />
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>
+            Becomes the session title — leave blank for “{selectedClass || 'CLASS'} Study
+            Session”.
+          </Text>
+        </View>
+
         {previewSession ? (
           <View style={styles.section}>
             <Text style={[styles.question, { color: palette.text }]}>Looks good?</Text>
@@ -563,6 +592,7 @@ export default function CreateSessionScreen() {
           onPress={handleCreateSession}
         />
       </ScrollView>
+      <SuccessToast toast={toast} />
     </KeyboardAvoidingView>
   );
 }

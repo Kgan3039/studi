@@ -297,6 +297,11 @@ export default function HomeScreen() {
                 variant="hero"
                 session={nextSession}
                 locationName={nextSession.locationName}
+                // Only the signed-in user's profile is loaded here — their
+                // avatar plus a "+N" chip covers the rest without new reads.
+                attendeeNames={
+                  profile?.displayName ? [profile.displayName] : undefined
+                }
                 joined
                 onPress={() => router.push(`/session/${nextSession.sessionId}`)}
               />

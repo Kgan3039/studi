@@ -1,7 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { Avatar } from '@/components/ui/Avatar';
+import { Avatar, AvatarStack } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
@@ -306,7 +306,9 @@ export function SessionCard({
             {metaLine}
           </Text>
           <View style={styles.heroFooter}>
-            {hostFirstName ? (
+            {attendeeNames && attendeeNames.length > 0 ? (
+              <AvatarStack names={attendeeNames} totalCount={going} size="sm" />
+            ) : hostFirstName ? (
               <View style={styles.hostRow}>
                 <Avatar name={hostName ?? 'Student'} size="sm" verified />
                 <Text style={[TypeScale.meta, { color: palette.icon }]} numberOfLines={1}>

@@ -87,16 +87,22 @@ export type AvatarStackProps = {
   names: string[];
   max?: number;
   size?: AvatarSize;
+  /**
+   * Total people the stack represents when only some names are known
+   * (e.g. participantIds count with just the current user's name resolved).
+   * The "+N" chip covers the difference without inventing initials.
+   */
+  totalCount?: number;
   style?: StyleProp<ViewStyle>;
 };
 
 /** Overlapping avatar row with a "+N" chip (handoff §2). */
-export function AvatarStack({ names, max = 4, size = 'sm', style }: AvatarStackProps) {
+export function AvatarStack({ names, max = 4, size = 'sm', totalCount, style }: AvatarStackProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const px = SIZES[size];
   const shown = names.slice(0, max);
-  const extra = names.length - shown.length;
+  const extra = Math.max((totalCount ?? names.length) - shown.length, 0);
 
   return (
     <View style={[styles.stack, style]}>
