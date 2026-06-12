@@ -61,8 +61,10 @@ export function Button({
           borderColor: border,
           borderWidth: border ? StyleSheet.hairlineWidth * 2 : 0,
           opacity: blocked ? 0.5 : pressed && variant !== 'primary' ? 0.7 : 1,
-          transform: pressed ? [{ scale: 0.98 }] : undefined,
         },
+        // transform must be a valid array when present; omit the key entirely
+        // when unpressed (transform: undefined crashes RN's style processor).
+        pressed && { transform: [{ scale: 0.98 }] },
         fullWidth && styles.fullWidth,
         style,
       ]}>
