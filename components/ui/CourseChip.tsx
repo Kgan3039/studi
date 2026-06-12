@@ -29,7 +29,7 @@ export function CourseChip({ code, selected = false, onPress, style }: CourseChi
 
   const content = (
     <Text style={[TypeScale.code, { color: textColor }]} numberOfLines={1}>
-      {code.toUpperCase()}
+      {code}
     </Text>
   );
 
