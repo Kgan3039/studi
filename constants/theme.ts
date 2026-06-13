@@ -123,8 +123,12 @@ export const FontFamily = {
 export const TypeScale = {
   /** Onboarding hero, brand moments — serif italic. */
   display: { fontFamily: FontFamily.serifItalic, fontSize: 34, lineHeight: 40 },
-  /** Page hero / h1 — serif. */
-  title: { fontFamily: FontFamily.serif, fontSize: 28, lineHeight: 34 },
+  /**
+   * Page hero / h1. The Lovable boards render screen titles (Sessions,
+   * Study spots, create-session questions) in serif *italic* — the board is
+   * the pixel source of truth (handoff §0), so this is italic, not upright.
+   */
+  title: { fontFamily: FontFamily.serifItalic, fontSize: 28, lineHeight: 34 },
   /** Section titles / h2 — sans. */
   h2: { fontFamily: FontFamily.bodySemiBold, fontSize: 22, lineHeight: 28 },
   /** Card titles / h3 — sans. (Legacy name "heading".) */
