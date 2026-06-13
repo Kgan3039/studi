@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
@@ -178,6 +178,17 @@ export default function SessionDetailScreen() {
   const isFull = session?.status === 'full';
   const isCancelled = session?.status === 'cancelled';
   const hostName = formatDisplayName(session?.hostProfile?.displayName);
+  // Capacity is not in the data model (no seat count). The board's
+  // "Going (3 of 5)" / "2 left" collapses to the real going count plus the
+  // open/full/cancelled status — same substitution used on Today.
+  const goingCount = visibleAttendees.length || session?.participantIds.length || 0;
+  const joinStatusLabel = isParticipant
+    ? 'You’re going'
+    : isCancelled
+      ? 'Session cancelled'
+      : isFull
+        ? 'Session is full'
+        : 'A seat is open';
 
   const startDate = session?.startTime.toDate();
   const endDate = session?.endTime.toDate();
@@ -204,6 +215,19 @@ export default function SessionDetailScreen() {
           : `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m`;
   const deptTint = session ? deptColorFor(session.classId) ?? palette.text : palette.text;
 
+  // Board lists three authored "house rules"; per-session rules are not in the
+  // data model, so the spot's own notes + tags (the closest real guidance)
+  // stand in for them.
+  const houseRules = useMemo(() => {
+    if (!session?.location) {
+      return [];
+    }
+
+    return [session.location.notes ?? '', ...(session.location.tags ?? [])]
+      .map((rule) => rule.trim())
+      .filter((rule) => rule.length > 0);
+  }, [session]);
+
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
       <ScrollView
@@ -211,8 +235,8 @@ export default function SessionDetailScreen() {
         contentContainerStyle={[styles.content, { paddingTop: Space.lg }]}>
         {session ? (
           <>
-            {/* Header treatment approximating the board's banner — dept tint
-                stands in for location imagery the app doesn't have. */}
+            {/* 1. HERO — banner, course chip, title, time/location summary.
+                Dept tint stands in for the location imagery the app lacks. */}
             <View
               style={[
                 styles.banner,
@@ -242,28 +266,7 @@ export default function SessionDetailScreen() {
               </Text>
             </View>
 
-            <View style={styles.tileRow}>
-              {[
-                { label: dateTileLabel, value: timeTileValue },
-                { label: 'Duration', value: durationLabel },
-                {
-                  label: 'Going',
-                  value: `${visibleAttendees.length || session.participantIds.length}`,
-                },
-              ].map((tile) => (
-                <View
-                  key={tile.label}
-                  style={[
-                    styles.tile,
-                    Elevation.e1,
-                    { backgroundColor: palette.surface, borderColor: palette.border },
-                  ]}>
-                  <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{tile.label}</Text>
-                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>{tile.value}</Text>
-                </View>
-              ))}
-            </View>
-
+            {/* 2. HOST — host card, reputation/stats area, message action. */}
             <View
               style={[
                 styles.card,
@@ -276,6 +279,9 @@ export default function SessionDetailScreen() {
                   <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
                     {hostName}
                   </Text>
+                  {/* Reputation/stats area. Host rating, hosted count, and
+                      show-up % are not in the data model; the verified-UW
+                      trust signal is the available metric and stands in. */}
                   <Text style={[TypeScale.caption, { color: palette.icon }]}>
                     Host · Verified UW student
                   </Text>
@@ -288,6 +294,104 @@ export default function SessionDetailScreen() {
                   onPress={handleOpenHostChat}
                 />
               </View>
+            </View>
+
+            {/* 3. ATTENDANCE — attendee list, capacity state, join status. */}
+            <View
+              style={[
+                styles.card,
+                Elevation.e1,
+                { backgroundColor: palette.surface, borderColor: palette.border },
+              ]}>
+              <View style={styles.attendanceHeader}>
+                <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
+                  Going ({goingCount})
+                </Text>
+                <BadgeChip
+                  label={joinStatusLabel}
+                  tone={isParticipant ? 'success' : isFull || isCancelled ? 'neutral' : 'info'}
+                />
+              </View>
+              {visibleAttendees.length > 0 ? (
+                <View style={styles.attendeeList}>
+                  {visibleAttendees.map((attendee) => {
+                    const isHost = attendee.uid === session.hostId;
+
+                    return (
+                      <View key={attendee.uid} style={styles.attendeeRow}>
+                        <Avatar
+                          name={formatDisplayName(attendee.displayName)}
+                          size="md"
+                          verified
+                        />
+                        <Text
+                          style={[TypeScale.body, styles.attendeeName, { color: palette.text }]}
+                          numberOfLines={1}>
+                          {formatDisplayName(attendee.displayName)}
+                        </Text>
+                        {isHost ? (
+                          <Text style={[TypeScale.caption, { color: palette.icon }]}>host</Text>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={[TypeScale.body, { color: palette.icon }]}>
+                  Be the first at the table.
+                </Text>
+              )}
+              <View style={styles.verifiedRow}>
+                <View style={[styles.verifiedDot, { backgroundColor: Brand.success }]} />
+                <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                  All attendees are verified UW students
+                </Text>
+              </View>
+            </View>
+
+            {/* 4. SESSION INFORMATION — house rules + session details. */}
+            <View
+              style={[
+                styles.card,
+                Elevation.e1,
+                { backgroundColor: palette.surface, borderColor: palette.border },
+              ]}>
+              <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>House rules</Text>
+              {houseRules.length > 0 ? (
+                <View style={styles.ruleList}>
+                  {houseRules.map((rule) => (
+                    <View key={rule} style={styles.ruleRow}>
+                      <View style={[styles.ruleDot, { backgroundColor: palette.tint }]} />
+                      <Text style={[TypeScale.body, styles.ruleText, { color: palette.text }]}>
+                        {rule}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text style={[TypeScale.body, { color: palette.icon }]}>
+                  No house rules listed for this spot.
+                </Text>
+              )}
+            </View>
+
+            <View style={styles.tileRow}>
+              {[
+                { label: dateTileLabel, value: timeTileValue },
+                { label: 'Duration', value: durationLabel },
+                { label: 'Going', value: `${goingCount}` },
+              ].map((tile) => (
+                <View
+                  key={tile.label}
+                  style={[
+                    styles.tile,
+                    Elevation.e1,
+                    { backgroundColor: palette.surface, borderColor: palette.border },
+                  ]}>
+                  <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{tile.label}</Text>
+                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>{tile.value}</Text>
+                </View>
+              ))}
             </View>
 
             <View
@@ -326,52 +430,6 @@ export default function SessionDetailScreen() {
                   }
                 />
               ) : null}
-            </View>
-
-            <View
-              style={[
-                styles.card,
-                Elevation.e1,
-                { backgroundColor: palette.surface, borderColor: palette.border },
-              ]}>
-              <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
-                Going ({visibleAttendees.length})
-              </Text>
-              {visibleAttendees.length > 0 ? (
-                <View style={styles.attendeeList}>
-                  {visibleAttendees.map((attendee) => {
-                    const isHost = attendee.uid === session.hostId;
-
-                    return (
-                      <View key={attendee.uid} style={styles.attendeeRow}>
-                        <Avatar
-                          name={formatDisplayName(attendee.displayName)}
-                          size="md"
-                          verified
-                        />
-                        <Text
-                          style={[TypeScale.body, styles.attendeeName, { color: palette.text }]}
-                          numberOfLines={1}>
-                          {formatDisplayName(attendee.displayName)}
-                        </Text>
-                        {isHost ? (
-                          <Text style={[TypeScale.caption, { color: palette.icon }]}>host</Text>
-                        ) : null}
-                      </View>
-                    );
-                  })}
-                </View>
-              ) : (
-                <Text style={[TypeScale.body, { color: palette.icon }]}>
-                  Be the first at the table.
-                </Text>
-              )}
-              <View style={styles.verifiedRow}>
-                <View style={[styles.verifiedDot, { backgroundColor: Brand.success }]} />
-                <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                  All attendees are verified UW students
-                </Text>
-              </View>
             </View>
 
             <View style={styles.statusRow}>
@@ -414,6 +472,7 @@ export default function SessionDetailScreen() {
         )}
       </ScrollView>
 
+      {/* 5. PRIMARY CTA AREA. */}
       {session ? (
         <View
           style={[
@@ -500,6 +559,12 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
+  attendanceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Space.sm,
+  },
   attendeeList: {
     gap: Space.md,
   },
@@ -509,6 +574,22 @@ const styles = StyleSheet.create({
     gap: Space.md,
   },
   attendeeName: {
+    flexShrink: 1,
+  },
+  ruleList: {
+    gap: Space.sm,
+  },
+  ruleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.md,
+  },
+  ruleDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  ruleText: {
     flexShrink: 1,
   },
   verifiedRow: {
