@@ -174,7 +174,7 @@ export default function MessagesScreen() {
         <EmptyState
           icon="chat"
           headline="No messages yet"
-          body="Chats start when you join a session."
+          body="Open a session and tap Message to start a chat with the host."
           actionLabel="Find a session"
           onAction={() => router.push('/sessions')}
         />
