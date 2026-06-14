@@ -351,6 +351,73 @@ export async function getLocations() {
   }
 }
 
+/**
+ * Sessions are written with Firestore Timestamps (PR 5 migration), but legacy
+ * docs may still carry ISO strings or Dates for startTime/endTime. Normalize
+ * any of these into a Timestamp so UI code can safely call `.toDate()` /
+ * `.toMillis()`. Returns null for anything we can't make sense of, letting
+ * callers drop the field (or the whole session) instead of crashing.
+ */
+export function normalizeSessionTimestamp(value: unknown): Timestamp | null {
+  if (value instanceof Timestamp) {
+    return value;
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : Timestamp.fromDate(value);
+  }
+
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : Timestamp.fromDate(parsed);
+  }
+
+  // Plain {seconds, nanoseconds} shape — a Timestamp that lost its prototype
+  // (e.g. revived from JSON or written by an older non-SDK path).
+  if (
+    value &&
+    typeof value === "object" &&
+    typeof (value as { seconds?: unknown }).seconds === "number"
+  ) {
+    const { seconds, nanoseconds } = value as { seconds: number; nanoseconds?: unknown };
+    return new Timestamp(seconds, typeof nanoseconds === "number" ? nanoseconds : 0);
+  }
+
+  return null;
+}
+
+/**
+ * Maps a raw session doc into a typed StudySession, normalizing legacy
+ * timestamp shapes. Returns null when start/end can't be normalized — such a
+ * session can't be placed on any timeline, so callers drop it rather than let
+ * `.toDate()` throw downstream.
+ */
+function normalizeSessionDoc(
+  sessionId: string,
+  data: Record<string, unknown>
+): StudySession | null {
+  const startTime = normalizeSessionTimestamp(data.startTime);
+  const endTime = normalizeSessionTimestamp(data.endTime);
+
+  if (!startTime || !endTime) {
+    return null;
+  }
+
+  return {
+    sessionId,
+    classId: typeof data.classId === "string" ? data.classId : "",
+    hostId: typeof data.hostId === "string" ? data.hostId : "",
+    locationId: typeof data.locationId === "string" ? data.locationId : "",
+    title: typeof data.title === "string" ? data.title : "",
+    startTime,
+    endTime,
+    participantIds: Array.isArray(data.participantIds)
+      ? data.participantIds.filter((id): id is string => typeof id === "string")
+      : [],
+    status: (data.status as StudySessionStatus) ?? "open",
+  };
+}
+
 const SESSIONS_PAGE_SIZE = 50;
 
 // How far back to scan for sessions that are still running (longest hostable
@@ -392,18 +459,12 @@ export async function getUpcomingSessions(options?: {
   const sessions: StudySession[] = [];
 
   snapshot.forEach((docSnap) => {
-    const data = docSnap.data();
-    sessions.push({
-      sessionId: docSnap.id,
-      classId: data.classId ?? "",
-      hostId: data.hostId ?? "",
-      locationId: data.locationId ?? "",
-      title: data.title ?? "",
-      startTime: data.startTime,
-      endTime: data.endTime,
-      participantIds: Array.isArray(data.participantIds) ? data.participantIds : [],
-      status: data.status ?? "open",
-    });
+    // Legacy docs with unparseable start/end normalize to null and are dropped
+    // here rather than crashing the list when the UI calls `.toMillis()`.
+    const session = normalizeSessionDoc(docSnap.id, docSnap.data());
+    if (session) {
+      sessions.push(session);
+    }
   });
 
   const cutoffMs = now.toMillis();
@@ -430,10 +491,12 @@ export async function getSessionById(sessionId: string) {
     return null;
   }
 
-  const session = {
-    sessionId: sessionSnapshot.id,
-    ...(sessionSnapshot.data() as Omit<StudySession, "sessionId">),
-  };
+  // Drop legacy/broken docs whose timestamps can't be normalized — the detail
+  // screen treats a null result as "no longer exists" instead of crashing.
+  const session = normalizeSessionDoc(sessionSnapshot.id, sessionSnapshot.data());
+  if (!session) {
+    return null;
+  }
 
   const [location, profilesById] = await Promise.all([
     getDoc(doc(db, COLLECTIONS.locations, session.locationId)),
@@ -479,7 +542,8 @@ export async function joinSession(
     throw new Error("This session is no longer open.");
   }
 
-  if (data.startTime instanceof Timestamp && data.startTime.toMillis() < Date.now()) {
+  const startTime = normalizeSessionTimestamp(data.startTime);
+  if (startTime && startTime.toMillis() < Date.now()) {
     throw new Error("This session has already started.");
   }
 
@@ -494,6 +558,18 @@ export async function joinSession(
 export async function leaveSession(sessionId: string, userId: string) {
   await updateDoc(doc(db, COLLECTIONS.sessions, sessionId), {
     participantIds: arrayRemove(userId),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Marks a session cancelled. Thin wrapper over the existing host-edit rule
+ * path (isHostEdit allows the host to set status: 'cancelled'); no new backend
+ * behavior. Rules reject this for anyone but the host.
+ */
+export async function cancelSession(sessionId: string) {
+  await updateDoc(doc(db, COLLECTIONS.sessions, sessionId), {
+    status: "cancelled",
     updatedAt: serverTimestamp(),
   });
 }

@@ -31,12 +31,15 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
+  cancelSession,
   getBlockedUserIds,
   getOrCreateDirectConversation,
   getSessionById,
   joinSession,
+  leaveSession,
   type StudySessionListItem,
 } from '@/lib/firestore';
+import { FirebaseError } from 'firebase/app';
 import type { User } from 'firebase/auth';
 
 function formatDisplayName(name: string | undefined) {
@@ -59,6 +62,7 @@ export default function SessionDetailScreen() {
   const [status, setStatus] = useState('Loading session details...');
   const [isLoading, setIsLoading] = useState(true);
   const [isJoining, setIsJoining] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
   const [isOpeningHostChat, setIsOpeningHostChat] = useState(false);
   const { toast, show: showToast } = useSuccessToast();
 
@@ -145,6 +149,79 @@ export default function SessionDetailScreen() {
     }
   }
 
+  function describeSessionActionError(error: unknown, fallback: string) {
+    if (error instanceof FirebaseError && error.code === 'permission-denied') {
+      return 'You don’t have permission to do that. Refresh and try again.';
+    }
+    return error instanceof Error ? error.message : fallback;
+  }
+
+  async function handleLeaveSession() {
+    if (!sessionId || !currentUser) {
+      return;
+    }
+
+    try {
+      setIsLeaving(true);
+      await leaveSession(sessionId, currentUser.uid);
+      await loadSession();
+      if (session) {
+        track('session_left', { classId: session.classId });
+      }
+      setStatus('You left the session.');
+    } catch (error) {
+      const message = describeSessionActionError(error, 'Unable to leave this session.');
+      setStatus(message);
+      Alert.alert('Leave Session Error', message);
+    } finally {
+      setIsLeaving(false);
+    }
+  }
+
+  function confirmLeaveSession() {
+    Alert.alert(
+      'Leave session?',
+      'You can rejoin later while a seat is open.',
+      [
+        { text: 'Stay', style: 'cancel' },
+        { text: 'Leave', style: 'destructive', onPress: handleLeaveSession },
+      ],
+    );
+  }
+
+  async function handleCancelSession() {
+    if (!sessionId) {
+      return;
+    }
+
+    try {
+      setIsLeaving(true);
+      await cancelSession(sessionId);
+      await loadSession();
+      if (session) {
+        track('session_cancelled', { classId: session.classId });
+      }
+      setStatus('Session cancelled.');
+    } catch (error) {
+      const message = describeSessionActionError(error, 'Unable to cancel this session.');
+      setStatus(message);
+      Alert.alert('Cancel Session Error', message);
+    } finally {
+      setIsLeaving(false);
+    }
+  }
+
+  function confirmCancelSession() {
+    Alert.alert(
+      'Cancel session?',
+      'Everyone going will see this session as cancelled. This can’t be undone.',
+      [
+        { text: 'Keep session', style: 'cancel' },
+        { text: 'Cancel session', style: 'destructive', onPress: handleCancelSession },
+      ],
+    );
+  }
+
   async function handleOpenHostChat() {
     if (!currentUser || !session) {
       return;
@@ -172,6 +249,7 @@ export default function SessionDetailScreen() {
   const isParticipant = currentUser && session
     ? session.participantIds.includes(currentUser.uid)
     : false;
+  const isHost = currentUser && session ? session.hostId === currentUser.uid : false;
   const visibleAttendees = session
     ? session.attendeeProfiles.filter((attendee) => !blockedUserIds.includes(attendee.uid))
     : [];
@@ -483,8 +561,31 @@ export default function SessionDetailScreen() {
               paddingBottom: Math.max(insets.bottom, Space.md),
             },
           ]}>
-          {isParticipant ? (
-            <Button label="✓ Going" variant="success" size="lg" fullWidth />
+          {isHost ? (
+            !isCancelled ? (
+              <Button
+                label="Cancel session"
+                variant="secondary"
+                size="lg"
+                fullWidth
+                loading={isLeaving}
+                onPress={confirmCancelSession}
+              />
+            ) : (
+              <Button label="Session cancelled" variant="secondary" size="lg" fullWidth disabled />
+            )
+          ) : isParticipant ? (
+            <View style={styles.ctaStack}>
+              <Button label="✓ Going" variant="success" size="lg" fullWidth />
+              <Button
+                label="Leave session"
+                variant="ghost"
+                size="md"
+                fullWidth
+                loading={isLeaving}
+                onPress={confirmLeaveSession}
+              />
+            </View>
           ) : (
             <Button
               label={isFull ? 'Session full' : 'Join session'}
@@ -621,5 +722,8 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: Space.lg + 4,
     paddingTop: Space.md,
+  },
+  ctaStack: {
+    gap: Space.xs,
   },
 });

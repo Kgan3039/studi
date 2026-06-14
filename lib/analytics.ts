@@ -38,6 +38,7 @@ export type AnalyticsEvent =
   | "session_joined"
   | "session_viewed"
   | "session_left"
+  | "session_cancelled"
   | "message_sent"
   | "conversation_started"
   | "report_submitted"
