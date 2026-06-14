@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -23,6 +24,7 @@ import { subscribeToAuthState } from '@/lib/auth';
 import {
   getLocationRatingAggregates,
   getLocations,
+  getUpcomingSessions,
   type LocationRatingAggregate,
   type StudyLocation,
 } from '@/lib/firestore';
@@ -39,21 +41,23 @@ export default function StudyLocationsScreen() {
   const [ratingAggregates, setRatingAggregates] = useState<Map<string, LocationRatingAggregate>>(
     new Map()
   );
-  const [expandedLocationId, setExpandedLocationId] = useState<string | null>(null);
+  // Board card line "N sessions today" — a real count grouped from the
+  // existing getUpcomingSessions read (no new data source / model).
+  const [sessionsTodayByLocation, setSessionsTodayByLocation] = useState<Map<string, number>>(
+    new Map()
+  );
   const [locationQuery, setLocationQuery] = useState('');
-  const [selectedCampusArea, setSelectedCampusArea] = useState<string | null>(null);
+  // Board LocationsScreen has a single horizontal pill rail. The earlier
+  // two-section Area + Atmosphere filter block collapses to one rail; the
+  // atmosphere tags match the board's "Quiet / Coffee / Group rooms" pills.
+  // Campus area is no longer a filter but still shows on every card.
   const [selectedAtmosphere, setSelectedAtmosphere] = useState<LocationAtmosphereFilter | null>(
     null
   );
-  const [status, setStatus] = useState('Loading study locations...');
+  const [status, setStatus] = useState('Loading study spots...');
   const [isLoading, setIsLoading] = useState(true);
-  const hasLocationSearch = locationQuery.trim().length > 0;
-  const hasActiveFilters =
-    hasLocationSearch || selectedCampusArea !== null || selectedAtmosphere !== null;
-  const campusAreas = useMemo(
-    () => [...new Set(locations.map((location) => location.campusArea))].sort(),
-    [locations]
-  );
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const filteredLocations = useMemo(() => {
     const normalizedQuery = locationQuery.trim().toLowerCase();
 
@@ -66,26 +70,19 @@ export default function StudyLocationsScreen() {
       ]
         .join(' ')
         .toLowerCase();
-      const searchText = [
-        location.name,
-        location.building,
-        location.campusArea,
-        descriptorText,
-      ]
+      const searchText = [location.name, location.building, location.campusArea, descriptorText]
         .join(' ')
         .toLowerCase();
       const matchesQuery = !normalizedQuery || searchText.includes(normalizedQuery);
-      const matchesArea = !selectedCampusArea || location.campusArea === selectedCampusArea;
       const atmosphereFilters = getAtmosphereFiltersForLocationTags([
         ...(Array.isArray(location.tags) ? location.tags : []),
         ...(aggregate?.reviewTags ?? []),
       ]);
-      const matchesAtmosphere =
-        !selectedAtmosphere || atmosphereFilters.has(selectedAtmosphere);
+      const matchesAtmosphere = !selectedAtmosphere || atmosphereFilters.has(selectedAtmosphere);
 
-      return matchesQuery && matchesArea && matchesAtmosphere;
+      return matchesQuery && matchesAtmosphere;
     });
-  }, [locationQuery, locations, ratingAggregates, selectedAtmosphere, selectedCampusArea]);
+  }, [locationQuery, locations, ratingAggregates, selectedAtmosphere]);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -120,6 +117,20 @@ export default function StudyLocationsScreen() {
     } catch {
       // Ratings unavailable — locations still show
     }
+
+    try {
+      const upcoming = await getUpcomingSessions({ includeInProgress: true });
+      const today = new Date().toDateString();
+      const counts = new Map<string, number>();
+      upcoming.forEach((session) => {
+        if (session.startTime.toDate().toDateString() === today) {
+          counts.set(session.locationId, (counts.get(session.locationId) ?? 0) + 1);
+        }
+      });
+      setSessionsTodayByLocation(counts);
+    } catch {
+      // Session counts unavailable — cards still show name/rating/tags
+    }
   }, []);
 
   useFocusEffect(
@@ -136,6 +147,12 @@ export default function StudyLocationsScreen() {
     }
   }, [authResolved, currentUser, router]);
 
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    await loadLocations();
+    setIsRefreshing(false);
+  }
+
   if (!authResolved || !currentUser) {
     return (
       <View style={[styles.loadingScreen, { backgroundColor: palette.background }]}>
@@ -144,117 +161,81 @@ export default function StudyLocationsScreen() {
     );
   }
 
-  // Board LocationsScreen: active filter pill is solid accent with white text.
-  const filterChipColors = (isSelected: boolean) => ({
+  // Board: active rail pill is solid accent with white text.
+  const railChipColors = (isSelected: boolean) => ({
     backgroundColor: isSelected ? palette.tint : palette.surface,
     borderColor: palette.border,
     borderWidth: isSelected ? 0 : StyleSheet.hairlineWidth * 2,
   });
-  const filterChipTextColor = (isSelected: boolean) => (isSelected ? '#FFFFFF' : palette.icon);
+  const railChipTextColor = (isSelected: boolean) => (isSelected ? '#FFFFFF' : palette.icon);
 
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={handleRefresh}
+          tintColor={palette.icon}
+        />
+      }>
       <View style={styles.header}>
         <Text style={[TypeScale.title, { color: palette.text }]}>Study spots</Text>
         <Text style={[TypeScale.caption, { color: palette.icon }]}>{status}</Text>
       </View>
 
-      <View style={styles.searchSection}>
-        <TextInput
-          autoCapitalize="words"
-          onChangeText={setLocationQuery}
-          placeholder="Search by library, building, area, or tag"
-          placeholderTextColor={colorScheme === 'dark' ? '#9F918B' : Brand.charcoal400}
-          style={[
-            styles.input,
-            {
-              backgroundColor: palette.surfaceMuted,
-              borderColor: palette.border,
-              color: palette.text,
-            },
-          ]}
-          value={locationQuery}
-        />
-        <View style={styles.filters}>
-          <View style={styles.filterHeader}>
-            <Text style={[TypeScale.caption, { color: palette.icon }]}>Area</Text>
-            {hasActiveFilters ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  setLocationQuery('');
-                  setSelectedCampusArea(null);
-                  setSelectedAtmosphere(null);
-                }}>
-                <Text style={[TypeScale.label, { color: palette.tint }]}>Clear all</Text>
-              </Pressable>
-            ) : null}
-          </View>
-          <View style={styles.filterChipRow}>
-            {[null, ...campusAreas].map((campusArea) => {
-              const isSelected = selectedCampusArea === campusArea;
+      {/* Search is kept (already implemented) but visually subordinate — the
+          board's Locations screen leads with the pill rail, not search. */}
+      <TextInput
+        autoCapitalize="words"
+        onChangeText={setLocationQuery}
+        placeholder="Search spots"
+        placeholderTextColor={colorScheme === 'dark' ? '#9F918B' : Brand.charcoal400}
+        style={[styles.search, { backgroundColor: palette.surfaceMuted, color: palette.text }]}
+        value={locationQuery}
+      />
 
-              return (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: isSelected }}
-                  key={campusArea ?? 'all-areas'}
-                  onPress={() => setSelectedCampusArea(campusArea)}
-                  style={[styles.filterChip, filterChipColors(isSelected)]}>
-                  <Text style={[TypeScale.label, { color: filterChipTextColor(isSelected) }]}>
-                    {campusArea ?? 'All areas'}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>Atmosphere</Text>
-          <View style={styles.filterChipRow}>
-            {LOCATION_ATMOSPHERE_FILTERS.map((atmosphere) => {
-              const isSelected = selectedAtmosphere === atmosphere;
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.rail}>
+        {[null, ...LOCATION_ATMOSPHERE_FILTERS].map((atmosphere) => {
+          const isSelected = selectedAtmosphere === atmosphere;
 
-              return (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: isSelected }}
-                  key={atmosphere}
-                  onPress={() =>
-                    setSelectedAtmosphere((currentAtmosphere) =>
-                      currentAtmosphere === atmosphere ? null : atmosphere
-                    )
-                  }
-                  style={[styles.filterChip, filterChipColors(isSelected)]}>
-                  <Text style={[TypeScale.label, { color: filterChipTextColor(isSelected) }]}>
-                    {atmosphere}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-      </View>
+          return (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected }}
+              key={atmosphere ?? 'all-spots'}
+              onPress={() => setSelectedAtmosphere(atmosphere)}
+              style={[styles.railChip, railChipColors(isSelected)]}>
+              <Text style={[TypeScale.label, { color: railChipTextColor(isSelected) }]}>
+                {atmosphere ?? 'All'}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
 
       {locations.length > 0 ? (
-        <View style={styles.locationList}>
-          {filteredLocations.length === 0 ? (
-            <View
-              style={[
-                styles.card,
-                { backgroundColor: palette.surface, borderColor: palette.border },
-              ]}>
-              <Text style={[TypeScale.heading, { color: palette.text }]}>
-                No spots match those filters
-              </Text>
-              <Text style={[TypeScale.body, { color: palette.icon }]}>
-                Try another area or atmosphere, or clear all filters.
-              </Text>
-            </View>
-          ) : (
-            filteredLocations.map((location) => {
-              const isExpanded = expandedLocationId === location.locationId;
+        filteredLocations.length === 0 ? (
+          <View
+            style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+            <Text style={[TypeScale.heading, { color: palette.text }]}>
+              No spots match those filters
+            </Text>
+            <Text style={[TypeScale.body, { color: palette.icon }]}>
+              Try another atmosphere, or clear the search.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.locationList}>
+            {filteredLocations.map((location) => {
               const agg = ratingAggregates.get(location.locationId);
+              const sessionsToday = sessionsTodayByLocation.get(location.locationId) ?? 0;
+              const ownTags = Array.isArray(location.tags) ? location.tags : [];
+
               return (
                 <View
                   key={location.locationId}
@@ -263,12 +244,8 @@ export default function StudyLocationsScreen() {
                     Elevation.e1,
                     { backgroundColor: palette.surface, borderColor: palette.border },
                   ]}>
-                  <Pressable
-                    onPress={() =>
-                      setExpandedLocationId(isExpanded ? null : location.locationId)
-                    }
-                    style={styles.accordionHeader}>
-                    <View style={styles.accordionHeaderLeft}>
+                  <View style={styles.cardTopRow}>
+                    <View style={styles.cardHeading}>
                       <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
                         {location.name}
                       </Text>
@@ -276,134 +253,88 @@ export default function StudyLocationsScreen() {
                         {location.building} · {location.campusArea}
                       </Text>
                     </View>
-                    <View style={styles.accordionHeaderRight}>
+                    <View style={styles.cardRating}>
                       {agg ? (
-                        <Text style={[TypeScale.meta, { color: palette.icon }]}>
-                          ★ {agg.averageStars}
-                        </Text>
-                      ) : null}
-                      <Text style={[styles.chevron, { color: palette.tint }]}>
-                        {isExpanded ? '▲' : '▼'}
-                      </Text>
-                    </View>
-                  </Pressable>
-
-                  {isExpanded && (
-                    <View style={styles.accordionContent}>
-                      <Text style={[TypeScale.body, { color: palette.icon }]}>
-                        {location.notes}
-                      </Text>
-
-                      {agg ? (
-                        <View style={styles.ratingRow}>
-                          <View style={styles.starRow}>
-                            {[1, 2, 3, 4, 5].map((star) => (
-                              <Text
-                                key={star}
-                                style={{
-                                  color:
-                                    star <= Math.round(agg.averageStars)
-                                      ? Brand.sunflower400
-                                      : palette.outline,
-                                  fontSize: 18,
-                                  lineHeight: 24,
-                                }}>
-                                ★
-                              </Text>
-                            ))}
-                          </View>
-                          <Text style={[TypeScale.label, { color: palette.text }]}>
-                            {agg.averageStars}
+                        <>
+                          <Text style={[TypeScale.meta, { color: palette.text }]}>
+                            ★ {agg.averageStars}
                           </Text>
                           <Text style={[TypeScale.caption, { color: palette.icon }]}>
                             ({agg.totalRatings})
                           </Text>
-                        </View>
+                        </>
                       ) : (
-                        <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                          No ratings yet — be the first.
-                        </Text>
+                        <Text style={[TypeScale.caption, { color: palette.icon }]}>New</Text>
                       )}
-
-                      <View style={styles.tagRow}>
-                        {location.tags.map((tag) => (
-                          <View
-                            key={`${location.locationId}-${tag}`}
-                            style={[styles.tag, { backgroundColor: palette.surfaceMuted }]}>
-                            <Text style={[TypeScale.label, { color: palette.text }]}>{tag}</Text>
-                          </View>
-                        ))}
-                      </View>
-
-                      {agg && agg.topTags.length > 0 && (
-                        <View style={styles.communityTagsSection}>
-                          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                            Student tags
-                          </Text>
-                          <View style={styles.tagRow}>
-                            {agg.topTags.map((tag) => (
-                              <View
-                                key={`${location.locationId}-community-${tag}`}
-                                style={[
-                                  styles.tag,
-                                  { backgroundColor: `${Brand.sunflower400}1A` },
-                                ]}>
-                                <Text
-                                  style={[
-                                    TypeScale.label,
-                                    { color: colorScheme === 'dark' ? '#F0C36A' : '#A87514' },
-                                  ]}>
-                                  {tag}
-                                </Text>
-                              </View>
-                            ))}
-                          </View>
-                        </View>
-                      )}
-
-                      <Button
-                        label="Rate this spot"
-                        variant="secondary"
-                        size="sm"
-                        onPress={() =>
-                          router.push({
-                            pathname: '/rate-location',
-                            params: {
-                              locationId: location.locationId,
-                              locationName: location.name,
-                            },
-                          })
-                        }
-                      />
                     </View>
-                  )}
+                  </View>
+
+                  {location.notes ? (
+                    <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={2}>
+                      {location.notes}
+                    </Text>
+                  ) : null}
+
+                  {ownTags.length > 0 || (agg?.topTags.length ?? 0) > 0 ? (
+                    <View style={styles.tagRow}>
+                      {ownTags.map((tag) => (
+                        <View
+                          key={`${location.locationId}-${tag}`}
+                          style={[styles.tag, { backgroundColor: palette.surfaceMuted }]}>
+                          <Text style={[TypeScale.label, { color: palette.text }]}>{tag}</Text>
+                        </View>
+                      ))}
+                      {agg?.topTags.map((tag) => (
+                        <View
+                          key={`${location.locationId}-community-${tag}`}
+                          style={[styles.tag, { backgroundColor: `${Brand.sunflower400}1A` }]}>
+                          <Text
+                            style={[
+                              TypeScale.label,
+                              { color: colorScheme === 'dark' ? '#F0C36A' : '#A87514' },
+                            ]}>
+                            {tag}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  <View style={styles.cardFooter}>
+                    <Text style={[TypeScale.meta, { color: palette.icon }]}>
+                      {sessionsToday > 0
+                        ? `${sessionsToday} session${sessionsToday === 1 ? '' : 's'} today`
+                        : 'No sessions today'}
+                    </Text>
+                    <Button
+                      label="Rate this spot"
+                      variant="secondary"
+                      size="sm"
+                      onPress={() =>
+                        router.push({
+                          pathname: '/rate-location',
+                          params: {
+                            locationId: location.locationId,
+                            locationName: location.name,
+                          },
+                        })
+                      }
+                    />
+                  </View>
                 </View>
               );
-            })
-          )}
-        </View>
+            })}
+          </View>
+        )
       ) : !isLoading ? (
         <View
           style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <Text style={[TypeScale.heading, { color: palette.text }]}>
-            Can’t reach the library
-          </Text>
+          <Text style={[TypeScale.heading, { color: palette.text }]}>Can’t reach the library</Text>
           <Text style={[TypeScale.body, { color: palette.icon }]}>
             Studi could not load any study locations. Check your connection and try again.
           </Text>
         </View>
       ) : null}
-
-      <View style={styles.actions}>
-        <Button label="Browse sessions" fullWidth onPress={() => router.push('/sessions')} />
-        <Button
-          label="Refresh spots"
-          variant="secondary"
-          fullWidth
-          loading={isLoading}
-          onPress={loadLocations}
-        />
-      </View>
     </ScrollView>
   );
 }
@@ -425,67 +356,48 @@ const styles = StyleSheet.create({
   header: {
     gap: Space.xs,
   },
-  searchSection: {
-    gap: Space.md,
-  },
-  card: {
-    borderRadius: Radius.card,
-    borderTopRightRadius: Radius.accentCorner,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    gap: Space.sm,
-    padding: Space.lg + 4,
-  },
-  input: {
-    borderRadius: Radius.chip + 4,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+  search: {
+    borderRadius: Radius.xl,
     fontFamily: FontFamily.body,
-    fontSize: 15,
-    minHeight: 52,
+    fontSize: 14,
+    minHeight: 44,
     paddingHorizontal: Space.lg,
+    paddingVertical: Space.sm + 2,
   },
-  filters: {
-    gap: Space.sm + 2,
-  },
-  filterHeader: {
-    alignItems: 'center',
+  rail: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  filterChipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: Space.sm,
+    paddingRight: Space.lg,
   },
-  filterChip: {
+  railChip: {
     borderRadius: Radius.pill,
-    minHeight: 34,
     justifyContent: 'center',
+    minHeight: 34,
     paddingHorizontal: Space.md,
     paddingVertical: Space.xs + 2,
   },
   locationList: {
     gap: Space.md,
   },
-  accordionHeader: {
-    alignItems: 'center',
+  card: {
+    borderRadius: Radius.card,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.sm,
+    padding: Space.lg,
+  },
+  cardTopRow: {
+    alignItems: 'flex-start',
     flexDirection: 'row',
+    gap: Space.md,
     justifyContent: 'space-between',
   },
-  accordionHeaderLeft: {
+  cardHeading: {
     flex: 1,
     gap: 2,
-    paddingRight: Space.md,
   },
-  accordionHeaderRight: {
+  cardRating: {
     alignItems: 'flex-end',
-    gap: Space.xs,
-  },
-  chevron: {
-    fontSize: 12,
-  },
-  accordionContent: {
-    gap: Space.md,
-    paddingTop: Space.md,
+    gap: 2,
   },
   tag: {
     borderRadius: Radius.pill,
@@ -497,19 +409,11 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: Space.sm,
   },
-  ratingRow: {
+  cardFooter: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: Space.xs + 2,
-  },
-  starRow: {
-    flexDirection: 'row',
-    gap: 2,
-  },
-  communityTagsSection: {
-    gap: Space.sm,
-  },
-  actions: {
-    gap: Space.sm + 2,
+    justifyContent: 'space-between',
+    gap: Space.md,
+    marginTop: Space.xs,
   },
 });
