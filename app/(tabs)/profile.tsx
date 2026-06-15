@@ -1,5 +1,4 @@
 import { useFocusEffect } from '@react-navigation/native';
-import { Image } from 'expo-image';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -8,29 +7,48 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Text,
   TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { TimeDropdown } from '@/components/time-dropdown';
-import { STUDI_SUPPORT_EMAIL } from '@/constants/app-info';
-import { Colors } from '@/constants/theme';
+import { ExternalLink } from '@/components/external-link';
+import { Avatar } from '@/components/ui/Avatar';
+import { Button } from '@/components/ui/Button';
+import { CourseChip } from '@/components/ui/CourseChip';
+import { SectionHeader } from '@/components/ui/SectionHeader';
+import { identifyUser, track } from '@/lib/analytics';
+import {
+  STUDI_CONTACT_EMAIL,
+  STUDI_PRIVACY_POLICY_URL,
+  STUDI_SUPPORT_URL,
+} from '@/constants/app-info';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
-import { UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
+import { UW_COURSE_CATALOG, UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
 import {
+  getLocationRatingAggregates,
+  getLocations,
+  getUpcomingSessions,
   getUserProfile,
-  updateUserAvailability,
+  invalidateProfileCache,
   updateUserClasses,
   updateUserDisplayName,
-  type AvailabilitySlot,
-  type Socials,
+  type LocationRatingAggregate,
+  type StudyLocation,
+  type StudySession,
 } from '@/lib/firestore';
-import { type Href, useRouter } from 'expo-router';
+import { type Href } from 'expo-router';
 import type { User } from 'firebase/auth';
+
+// How many saved-location rows the board renders (ProfileScreen ~1815).
+const SAVED_LOCATIONS_SHOWN = 3;
+
+type ProfileStat = { value: string; label: string };
+
+type SavedLocation = { name: string; rating: number | null };
 
 function splitDisplayName(displayName: string | undefined) {
   const normalized = displayName?.trim() ?? '';
@@ -46,134 +64,18 @@ function splitDisplayName(displayName: string | undefined) {
   };
 }
 
-function formatTime(minutes: number) {
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  const period = hours >= 12 ? 'PM' : 'AM';
-  const displayHour = hours % 12 === 0 ? 12 : hours % 12;
-  return `${displayHour}:${mins.toString().padStart(2, '0')} ${period}`;
-}
-
-function formatDay(day: string) {
-  return day.charAt(0).toUpperCase() + day.slice(1);
-}
-
-function formatAvailabilitySlot(slot: AvailabilitySlot) {
-  if (slot.date) {
-    const date = new Date(`${slot.date}T12:00:00`);
-    const formattedDate = date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      weekday: 'short',
-    });
-
-    return `${formattedDate} · ${formatTime(slot.startMinutes)}-${formatTime(slot.endMinutes)}`;
-  }
-
-  return `${formatDay(slot.day)} ${formatTime(slot.startMinutes)}-${formatTime(slot.endMinutes)}`;
-}
-
-function isSameSlot(first: AvailabilitySlot, second: AvailabilitySlot) {
-  return (
-    (first.date && second.date ? first.date === second.date : first.day === second.day) &&
-    first.startMinutes === second.startMinutes &&
-    first.endMinutes === second.endMinutes
-  );
-}
-
-function formatDateLabel(date: string) {
-  return new Date(`${date}T12:00:00`).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    weekday: 'short',
-  });
-}
-
-function getAvailabilityDayFromDate(date: string) {
-  const day = new Date(`${date}T12:00:00`).getDay();
-  return (['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][day] ?? 'mon') as AvailabilitySlot['day'];
-}
-
-function buildUpcomingDates(days = 21) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  return Array.from({ length: days }, (_, index) => {
-    const nextDate = new Date(today);
-    nextDate.setDate(today.getDate() + index);
-    return nextDate.toISOString().slice(0, 10);
-  });
-}
-
-function parseTimeInput(value: string) {
-  const normalizedValue = value.trim();
-  const match = normalizedValue.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
-
-  if (!match) {
-    return null;
-  }
-
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  return hours * 60 + minutes;
-}
-
-const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-
-function startOfMonth(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-
-function addMonths(date: Date, monthOffset: number) {
-  return new Date(date.getFullYear(), date.getMonth() + monthOffset, 1);
-}
-
-function toIsoDate(date: Date) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function buildMonthGrid(monthStart: Date) {
-  const firstDayOfMonth = startOfMonth(monthStart);
-  const gridStart = new Date(firstDayOfMonth);
-  gridStart.setDate(firstDayOfMonth.getDate() - firstDayOfMonth.getDay());
-
-  return Array.from({ length: 42 }, (_, index) => {
-    const cellDate = new Date(gridStart);
-    cellDate.setDate(gridStart.getDate() + index);
-
-    return {
-      date: cellDate,
-      inCurrentMonth: cellDate.getMonth() === monthStart.getMonth(),
-      isoDate: toIsoDate(cellDate),
-    };
-  });
-}
-
-function formatMonthLabel(date: Date) {
-  return date.toLocaleDateString('en-US', {
-    month: 'long',
-    year: 'numeric',
-  });
-}
-
-function isPastCalendarDate(isoDate: string) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const parsedDate = new Date(`${isoDate}T12:00:00`);
-  return parsedDate < today;
+function buildMailtoHref(email: string, subject: string) {
+  return `mailto:${email}?subject=${encodeURIComponent(subject)}` as Href & string;
 }
 
 export default function ProfileScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
-  const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isReauthenticatingDelete, setIsReauthenticatingDelete] = useState(false);
   const [showDeleteReauthModal, setShowDeleteReauthModal] = useState(false);
@@ -183,22 +85,13 @@ export default function ProfileScreen() {
   const [lastName, setLastName] = useState('');
   const [courseQuery, setCourseQuery] = useState('');
   const [classes, setClasses] = useState<string[]>([]);
-  const [availability, setAvailability] = useState<AvailabilitySlot[]>([]);
-  const [socials, setSocials] = useState<Socials>({
-    phone: '',
-    instagram: '',
-    snapchat: '',
-    discord: '',
-  });
-  const [selectedAvailabilityDate, setSelectedAvailabilityDate] = useState(buildUpcomingDates(21)[0]);
-  const [selectedCalendarMonth, setSelectedCalendarMonth] = useState(() => startOfMonth(new Date()));
-  const [availabilityStartTime, setAvailabilityStartTime] = useState('');
-  const [availabilityEndTime, setAvailabilityEndTime] = useState('');
+  const [sessions, setSessions] = useState<StudySession[]>([]);
+  const [locations, setLocations] = useState<StudyLocation[]>([]);
+  const [ratingAggregates, setRatingAggregates] = useState<
+    Map<string, LocationRatingAggregate>
+  >(() => new Map());
   const [nameStatus, setNameStatus] = useState('Save your name so Studi looks more personal.');
-  const [classesStatus, setClassesStatus] = useState('Update the classes you want to match on.');
-  const [availabilityStatus, setAvailabilityStatus] = useState(
-    'Choose a day, then add a time block when you are free.'
-  );
+  const [classesStatus, setClassesStatus] = useState('Update the classes you take.');
   const courseResults = useMemo(() => {
     if (courseQuery.trim().length < 2) {
       return [];
@@ -206,11 +99,12 @@ export default function ProfileScreen() {
 
     return searchCourses(courseQuery, classes, 14);
   }, [classes, courseQuery]);
-  const calendarDays = useMemo(() => buildMonthGrid(selectedCalendarMonth), [selectedCalendarMonth]);
-  const canGoToPreviousMonth = useMemo(() => {
-    const currentMonthStart = startOfMonth(new Date());
-    return selectedCalendarMonth > currentMonthStart;
-  }, [selectedCalendarMonth]);
+  // Course titles for the saved-classes rows (board ProfileScreen) come from
+  // the bundled catalog — no extra reads.
+  const courseTitlesByCode = useMemo(
+    () => new Map(UW_COURSE_CATALOG.map((course) => [course.code, course.title] as const)),
+    []
+  );
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -222,63 +116,62 @@ export default function ProfileScreen() {
 
   useFocusEffect(
     useCallback(() => {
-    async function loadProfile() {
-      if (!currentUser) {
-        setIsLoading(false);
-        return;
+      async function loadProfile() {
+        if (!currentUser) {
+          setIsLoading(false);
+          return;
+        }
+
+        try {
+          setIsLoading(true);
+          const profile = await getUserProfile(currentUser.uid);
+          const savedName = splitDisplayName(profile?.displayName);
+          const savedClasses = profile?.classes ?? [];
+          setFirstName(savedName.firstName);
+          setLastName(savedName.lastName);
+          setClasses(savedClasses);
+          setNameStatus(
+            profile?.displayName
+              ? `Saved as ${profile.displayName}.`
+              : 'Add your first and last name to personalize Studi.'
+          );
+          setClassesStatus(
+            savedClasses.length > 0
+              ? `You'll see sessions for ${savedClasses.length} class${
+                  savedClasses.length === 1 ? '' : 'es'
+                }.`
+              : 'No classes saved yet.'
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unable to load your profile.';
+          setNameStatus(message);
+          setClassesStatus(message);
+        } finally {
+          setIsLoading(false);
+        }
+
+        // Stats grid + per-class "N active" counts + saved locations all read
+        // from existing data sources. Failures here must not blank the
+        // identity block, so they degrade to empty quietly.
+        try {
+          const [loadedSessions, loadedLocations, aggregates] = await Promise.all([
+            getUpcomingSessions({ includeInProgress: true }),
+            getLocations(),
+            getLocationRatingAggregates(),
+          ]);
+          setSessions(loadedSessions);
+          setLocations(loadedLocations);
+          setRatingAggregates(aggregates);
+        } catch {
+          // Keep whatever was last loaded; the sections fall back to zero/empty.
+        }
       }
 
-      try {
-        setIsLoading(true);
-        const profile = await getUserProfile(currentUser.uid);
-        const savedName = splitDisplayName(profile?.displayName);
-        const savedClasses = profile?.classes ?? [];
-        const savedAvailability = profile?.availability ?? [];
-        const savedSocials = profile?.socials ?? {
-          phone: '',
-          instagram: '',
-          snapchat: '',
-          discord: '',
-        };
-        setFirstName(savedName.firstName);
-        setLastName(savedName.lastName);
-        setClasses(savedClasses);
-        setAvailability(savedAvailability);
-        setSocials(savedSocials);
-        setNameStatus(
-          profile?.displayName
-            ? `Profile name saved as ${profile.displayName}.`
-            : 'Add your first and last name to personalize Studi.'
-        );
-        setClassesStatus(
-          savedClasses.length > 0
-            ? `You are matching on ${savedClasses.length} class${
-                savedClasses.length === 1 ? '' : 'es'
-              }.`
-            : 'No classes saved yet.'
-        );
-        setAvailabilityStatus(
-          savedAvailability.length > 0
-            ? `You have ${savedAvailability.length} saved availability slot${
-                savedAvailability.length === 1 ? '' : 's'
-              }.`
-            : 'No availability saved yet.'
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unable to load your profile.';
-        setNameStatus(message);
-        setClassesStatus(message);
-        setAvailabilityStatus(message);
-      } finally {
-        setIsLoading(false);
-      }
-    }
+      loadProfile();
 
-    loadProfile();
-
-    return () => {};
-  }, [currentUser])
-);
+      return () => {};
+    }, [currentUser])
+  );
 
   function toggleClassSelection(classCode: string) {
     setClasses((currentClasses) =>
@@ -293,72 +186,6 @@ export default function ProfileScreen() {
       currentClasses.includes(classCode) ? currentClasses : [...currentClasses, classCode]
     );
     setCourseQuery('');
-  }
-
-  function removeAvailabilitySlot(slot: AvailabilitySlot) {
-    setAvailability((currentAvailability) =>
-      currentAvailability.filter((savedSlot) => !isSameSlot(savedSlot, slot))
-    );
-  }
-
-  function handleAddAvailabilitySlot() {
-    const startMinutes = parseTimeInput(availabilityStartTime);
-    const endMinutes = parseTimeInput(availabilityEndTime);
-
-    if (!selectedAvailabilityDate) {
-      setAvailabilityStatus('Choose a date before adding a time slot.');
-      Alert.alert('Availability Error', 'Please choose a date first.');
-      return;
-    }
-
-    if (startMinutes === null || endMinutes === null) {
-      setAvailabilityStatus('Choose both a start and end time.');
-      Alert.alert('Availability Error', 'Choose both a start and end time.');
-      return;
-    }
-
-    if (endMinutes <= startMinutes) {
-      setAvailabilityStatus('Your availability must end after it starts.');
-      Alert.alert('Availability Error', 'End time must be later than start time.');
-      return;
-    }
-
-    const selectedStart = new Date(`${selectedAvailabilityDate}T00:00:00`);
-    selectedStart.setMinutes(startMinutes);
-    const selectedEnd = new Date(`${selectedAvailabilityDate}T00:00:00`);
-    selectedEnd.setMinutes(endMinutes);
-    const now = new Date();
-
-    if (selectedStart <= now) {
-      setAvailabilityStatus('Choose a future day/time for your availability.');
-      Alert.alert('Availability Error', 'Availability cannot be in the past.');
-      return;
-    }
-
-    const newSlot: AvailabilitySlot = {
-      date: selectedAvailabilityDate,
-      day: getAvailabilityDayFromDate(selectedAvailabilityDate),
-      startMinutes,
-      endMinutes,
-    };
-
-    setAvailability((currentAvailability) =>
-      currentAvailability.some((savedSlot) => isSameSlot(savedSlot, newSlot))
-        ? currentAvailability
-        : [...currentAvailability, newSlot].sort((firstSlot, secondSlot) => {
-            const firstDate = firstSlot.date ?? '';
-            const secondDate = secondSlot.date ?? '';
-
-            if (firstDate !== secondDate) {
-              return firstDate.localeCompare(secondDate);
-            }
-
-            return firstSlot.startMinutes - secondSlot.startMinutes;
-          })
-    );
-    setAvailabilityStartTime('');
-    setAvailabilityEndTime('');
-    setAvailabilityStatus(`Added ${formatAvailabilitySlot(newSlot)} to your pending availability.`);
   }
 
   async function handleSaveName() {
@@ -377,7 +204,8 @@ export default function ProfileScreen() {
     try {
       setIsSaving(true);
       await updateUserDisplayName(currentUser.uid, displayName);
-      setNameStatus(`Profile name saved as ${displayName}.`);
+      invalidateProfileCache(currentUser.uid);
+      setNameStatus(`Saved as ${displayName}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to save your name right now.';
       setNameStatus(message);
@@ -395,40 +223,17 @@ export default function ProfileScreen() {
     try {
       setIsSaving(true);
       await updateUserClasses(currentUser.uid, classes);
+      track('classes_saved', { count: classes.length });
+      identifyUser(currentUser.uid, { classCount: classes.length });
       setClassesStatus(
         classes.length > 0
-          ? `You are matching on ${classes.length} class${classes.length === 1 ? '' : 'es'}.`
+          ? `You'll see sessions for ${classes.length} class${classes.length === 1 ? '' : 'es'}.`
           : 'No classes saved yet.'
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to save classes right now.';
       setClassesStatus(message);
       Alert.alert('Classes Error', message);
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  async function handleSaveAvailability() {
-    if (!currentUser) {
-      return;
-    }
-
-    try {
-      setIsSaving(true);
-      await updateUserAvailability(currentUser.uid, availability);
-      setAvailabilityStatus(
-        availability.length > 0
-          ? `You have ${availability.length} saved availability slot${
-              availability.length === 1 ? '' : 's'
-            }.`
-          : 'No availability saved yet.'
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to save availability right now.';
-      setAvailabilityStatus(message);
-      Alert.alert('Availability Error', message);
     } finally {
       setIsSaving(false);
     }
@@ -467,17 +272,10 @@ export default function ProfileScreen() {
       const result = await deleteCurrentUserAccount();
 
       if (result.status === 'requires-recent-login') {
-        if (result.method === 'password') {
-          setDeleteReauthPassword('');
-          setDeleteReauthEmail(result.email);
-          setShowDeleteReauthModal(true);
-          return;
-        }
-
-        Alert.alert(
-          'Please Sign In Again',
-          'For security, Firebase requires a recent login before deleting this account. Please sign out, sign back in, and try again.'
-        );
+        setDeleteReauthPassword('');
+        setDeleteReauthEmail(result.email);
+        setShowDeleteReauthModal(true);
+        return;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to delete your account right now.';
@@ -526,11 +324,71 @@ export default function ProfileScreen() {
   }
 
   const isBusy = isSaving || isDeletingAccount || isReauthenticatingDelete;
+  const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
+  const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
+  const inputColors = {
+    backgroundColor: palette.surfaceMuted,
+    borderColor: palette.border,
+    color: palette.text,
+  };
+
+  const classesUpper = useMemo(
+    () => classes.map((classCode) => classCode.trim().toUpperCase()),
+    [classes]
+  );
+
+  // Per-class "N active" counts on the current-classes rows come from the
+  // sessions feed — the board's number with a real source behind it.
+  const activeByClass = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const session of sessions) {
+      const code = session.classId.trim().toUpperCase();
+      counts.set(code, (counts.get(code) ?? 0) + 1);
+    }
+    return counts;
+  }, [sessions]);
+
+  // Stats grid (board: Joined / Hosted / Hours / Rating). Joined and Hosted
+  // have real sources; Hours and Rating are not in the data model, so they
+  // are replaced with the nearest real metrics (Classes, Matches) rather than
+  // invented — same substitution convention as the Today hero.
+  const stats: ProfileStat[] = useMemo(() => {
+    const uid = currentUser?.uid ?? '';
+    const joined = sessions.filter(
+      (session) => uid && session.participantIds.includes(uid) && session.hostId !== uid
+    ).length;
+    const hosted = sessions.filter((session) => uid && session.hostId === uid).length;
+    const matches = sessions.filter((session) =>
+      classesUpper.includes(session.classId.trim().toUpperCase())
+    ).length;
+
+    return [
+      { value: String(joined), label: 'Joined' },
+      { value: String(hosted), label: 'Hosted' },
+      { value: String(classes.length), label: 'Classes' },
+      { value: String(matches), label: 'Matches' },
+    ];
+  }, [classes.length, classesUpper, currentUser, sessions]);
+
+  // "Saved locations" is not modeled, so the section shows the top-rated UW
+  // study spots from the locations + rating-aggregate sources, matching the
+  // board's name + ★ rating rows.
+  const savedLocations: SavedLocation[] = useMemo(() => {
+    return locations
+      .map((location) => ({
+        name: location.name,
+        rating: ratingAggregates.get(location.locationId)?.averageStars ?? null,
+      }))
+      .sort((first, second) => (second.rating ?? -1) - (first.rating ?? -1))
+      .slice(0, SAVED_LOCATIONS_SHOWN);
+  }, [locations, ratingAggregates]);
 
   if (!currentUser && !isLoading) {
     return (
       <View style={[styles.loadingScreen, { backgroundColor: palette.background }]}>
-        <ThemedText type="subtitle">Sign in to view your profile</ThemedText>
+        <Text style={[TypeScale.heading, { color: palette.text }]}>
+          Sign in to view your profile
+        </Text>
       </View>
     );
   }
@@ -538,439 +396,265 @@ export default function ProfileScreen() {
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView style={[styles.hero, { backgroundColor: palette.surface }]}>
-        <Image
-          contentFit="contain"
-          source={require('../../assets/images/studi-wordmark.png')}
-          style={styles.heroLogo}
-        />
-        <ThemedText style={[styles.eyebrow, styles.heroEyebrow, { color: palette.tint }]}>
-          Your Studi profile
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Keep your name, classes, and availability up to date so matching and sessions stay
-          useful.
-        </ThemedText>
-      </ThemedView>
-
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Account</ThemedText>
-          <View style={[styles.statusPill, { backgroundColor: palette.badge }]}>
-            <ThemedText type="defaultSemiBold">Signed in</ThemedText>
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.xl }]}>
+      {/* Avatar header + name / class-year block (board ProfileScreen ~1761). */}
+      <View style={styles.identity}>
+        <Avatar name={displayName || currentUser?.email || 'Student'} size="xl" verified />
+        <View style={styles.nameRow}>
+          <Text style={[styles.identityName, { color: palette.text }]} numberOfLines={1}>
+            {displayName || currentUser?.email || 'Student'}
+          </Text>
+          <View
+            accessibilityLabel="Verified UW student"
+            style={[styles.verifiedCheck, { backgroundColor: palette.tint }]}>
+            <Text style={styles.verifiedCheckMark}>✓</Text>
           </View>
         </View>
-        <ThemedText type="subtitle">{currentUser?.email ?? 'UW account'}</ThemedText>
-        <ThemedText style={styles.mutedText}>
-          This is the email tied to your Firebase account.
-        </ThemedText>
-      </ThemedView>
+        {/* Board's "Junior · Computer Science · Class of '27" academic line is
+            not in the data model; the verified UW identity is shown instead. */}
+        <Text style={[TypeScale.eyebrow, styles.classYear, { color: palette.icon }]}>
+          Verified @wisc.edu
+        </Text>
+      </View>
 
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Name</ThemedText>
-        </View>
-        <ThemedText type="subtitle">How your name appears</ThemedText>
-        <ThemedText style={styles.statusCopy}>{nameStatus}</ThemedText>
-        <View style={styles.inlineRow}>
-          <TextInput
-            autoCapitalize="words"
-            editable={!isSaving}
-            onChangeText={setFirstName}
-            placeholder="First name"
-            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-            style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
-            value={firstName}
-          />
-          <TextInput
-            autoCapitalize="words"
-            editable={!isSaving}
-            onChangeText={setLastName}
-            placeholder="Last name"
-            placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-            style={[styles.input, styles.flexInput, { borderColor: palette.outline, color: palette.text }]}
-            value={lastName}
-          />
-        </View>
-        <Pressable
-          disabled={isSaving}
-          onPress={handleSaveName}
-          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isSaving ? 0.6 : 1 }]}>
-          <ThemedText type="defaultSemiBold">Save Name</ThemedText>
-        </Pressable>
-      </ThemedView>
-
-      <ThemedView
-        style={[
-          styles.card,
-          {
-            backgroundColor: palette.surface,
-            borderColor: palette.border,
-          },
-        ]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Socials</ThemedText>
-        </View>
-
-        <ThemedText type="subtitle">Connect your socials</ThemedText>
-
-        <ThemedText style={styles.mutedText}>
-          Add your social accounts so people can connect with you outside of Studi.
-        </ThemedText>
-
-        <View style={styles.slotList}>
-          {socials.phone ? (
-            <View
-              style={[
-                styles.chip,
-                styles.wideChip,
-                {
-                  backgroundColor: palette.surfaceMuted,
-                  borderColor: palette.outline,
-                },
-              ]}>
-              <ThemedText type="defaultSemiBold">
-                Phone: {socials.phone}
-              </ThemedText>
-            </View>
-          ) : null}
-
-          {socials.instagram ? (
-            <View
-              style={[
-                styles.chip,
-                styles.wideChip,
-                {
-                  backgroundColor: palette.surfaceMuted,
-                  borderColor: palette.outline,
-                },
-              ]}>
-              <ThemedText type="defaultSemiBold">
-                Instagram: {socials.instagram}
-              </ThemedText>
-            </View>
-          ) : null}
-
-          {socials.snapchat ? (
-            <View
-              style={[
-                styles.chip,
-                styles.wideChip,
-                {
-                  backgroundColor: palette.surfaceMuted,
-                  borderColor: palette.outline,
-                },
-              ]}>
-              <ThemedText type="defaultSemiBold">
-                Snapchat: {socials.snapchat}
-              </ThemedText>
-            </View>
-          ) : null}
-
-          {socials.discord ? (
-            <View
-              style={[
-                styles.chip,
-                styles.wideChip,
-                {
-                  backgroundColor: palette.surfaceMuted,
-                  borderColor: palette.outline,
-                },
-              ]}>
-              <ThemedText type="defaultSemiBold">
-                Discord: {socials.discord}
-              </ThemedText>
-            </View>
-          ) : null}
-        </View>
-
-        <Pressable
-          disabled={isSaving}
-          onPress={() => router.push('/socials')}
-          style={[
-            styles.primaryButton,
-            {
-              backgroundColor: palette.tint,
-              opacity: isSaving ? 0.6 : 1,
-            },
-          ]}>
-          <ThemedText
-            lightColor="#ffffff"
-            darkColor="#ffffff"
-            type="defaultSemiBold">
-            Edit
-          </ThemedText>
-        </Pressable>
-      </ThemedView>
-
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.sectionLabel}>Classes</ThemedText>
-        <ThemedText type="subtitle">Courses you want to match on</ThemedText>
-        <ThemedText style={styles.statusCopy}>{classesStatus}</ThemedText>
-        <ThemedText style={styles.mutedText}>
-          Search across {UW_COURSE_COUNT.toLocaleString()} official UW-Madison courses.
-        </ThemedText>
-        <TextInput
-          autoCapitalize="characters"
-          editable={!isSaving}
-          onChangeText={setCourseQuery}
-          placeholder="Search by course code or title"
-          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-          style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
-          value={courseQuery}
-        />
-        {courseQuery.trim().length >= 2 ? (
-          <View style={styles.searchResults}>
-            {courseResults.length > 0 ? (
-              courseResults.map((course) => (
-                <Pressable
-                  key={course.code}
-                  disabled={isSaving}
-                  onPress={() => handleAddCourse(course.code)}
-                  style={[
-                    styles.searchResultCard,
-                    {
-                      backgroundColor: palette.surfaceMuted,
-                      borderColor: palette.outline,
-                      opacity: isSaving ? 0.5 : 1,
-                    },
-                  ]}>
-                  <ThemedText type="defaultSemiBold">{course.code}</ThemedText>
-                  <ThemedText>{course.title}</ThemedText>
-                  <ThemedText style={styles.searchMeta}>
-                    {course.subjectName} · {course.credits}
-                  </ThemedText>
-                </Pressable>
-              ))
-            ) : (
-              <ThemedText style={styles.mutedText}>No courses matched that search yet.</ThemedText>
-            )}
+      {/* Stats grid (board ProfileScreen ~1771). */}
+      <View style={styles.statsGrid}>
+        {stats.map((stat) => (
+          <View
+            key={stat.label}
+            style={[styles.statCell, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+            <Text style={[styles.statValue, { color: palette.tint }]}>{stat.value}</Text>
+            <Text style={[styles.statLabel, { color: palette.icon }]}>{stat.label}</Text>
           </View>
-        ) : (
-          <ThemedText style={styles.mutedText}>
-            Start typing at least 2 characters to search the course catalog.
-          </ThemedText>
-        )}
-        <View style={styles.chipRow}>
-          {classes.map((classCode) => (
-            <Pressable
-              key={classCode}
-              disabled={isSaving}
-              onPress={() => toggleClassSelection(classCode)}
-              style={[
-                styles.chip,
-                {
-                  backgroundColor: palette.tint,
-                  borderColor: palette.tint,
-                  opacity: isSaving ? 0.5 : 1,
-                },
-              ]}>
-              <ThemedText
-                type="defaultSemiBold"
-                lightColor="#ffffff"
-                darkColor="#ffffff">
-                {classCode} ×
-              </ThemedText>
+        ))}
+      </View>
+
+      {/* Current classes (board ProfileScreen ~1789). */}
+      <View style={styles.section}>
+        <SectionHeader
+          eyebrow="Current classes"
+          action={
+            <Pressable accessibilityRole="button" onPress={() => setIsEditing((editing) => !editing)}>
+              <Text style={[TypeScale.label, { color: palette.tint }]}>
+                {isEditing ? 'Done' : 'Edit'}
+              </Text>
             </Pressable>
-          ))}
-        </View>
-        <Pressable
-          disabled={isSaving}
-          onPress={handleSaveClasses}
-          style={[styles.primaryButton, { backgroundColor: palette.tint, opacity: isSaving ? 0.6 : 1 }]}>
-          <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-            Save Classes
-          </ThemedText>
-        </Pressable>
-      </ThemedView>
-
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.sectionLabel}>Availability</ThemedText>
-        <ThemedText type="subtitle">Choose real days and time blocks</ThemedText>
-        <ThemedText style={styles.statusCopy}>{availabilityStatus}</ThemedText>
-        <ThemedText style={styles.mutedText}>
-          Pick a real day from the calendar, then choose a start and end time.
-          Studi will block dates in the past and time slots that have already passed.
-        </ThemedText>
-        <View style={[styles.calendarCard, { borderColor: palette.outline, backgroundColor: palette.background }]}>
-          <View style={styles.calendarHeader}>
-            <ThemedText type="subtitle">{formatMonthLabel(selectedCalendarMonth)}</ThemedText>
-            <View style={styles.calendarNav}>
-              <Pressable
-                disabled={!canGoToPreviousMonth || isSaving}
-                onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, -1))}
-                style={[
-                  styles.calendarNavButton,
-                  {
-                    borderColor: palette.outline,
-                    opacity: !canGoToPreviousMonth || isSaving ? 0.35 : 1,
-                  },
-                ]}>
-                <ThemedText type="defaultSemiBold">‹</ThemedText>
-              </Pressable>
-              <Pressable
-                disabled={isSaving}
-                onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, 1))}
-                style={[styles.calendarNavButton, { borderColor: palette.outline, opacity: isSaving ? 0.35 : 1 }]}>
-                <ThemedText type="defaultSemiBold">›</ThemedText>
-              </Pressable>
-            </View>
-          </View>
-
-          <View style={styles.calendarWeekRow}>
-            {CALENDAR_WEEKDAYS.map((weekday) => (
-              <View key={weekday} style={styles.calendarWeekCell}>
-                <ThemedText style={styles.calendarWeekday}>{weekday}</ThemedText>
+          }
+        />
+        {classes.length > 0 ? (
+          <View style={styles.rowList}>
+            {classes.map((classCode) => (
+              <View
+                key={classCode}
+                style={[styles.classRow, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+                <View style={styles.classRowBody}>
+                  <CourseChip code={classCode} size="sm" />
+                  <Text
+                    style={[TypeScale.bodyStrong, styles.classTitle, { color: palette.text }]}
+                    numberOfLines={1}>
+                    {courseTitlesByCode.get(classCode) ?? 'UW–Madison course'}
+                  </Text>
+                </View>
+                <Text style={[TypeScale.label, { color: palette.icon }]}>
+                  {activeByClass.get(classCode.trim().toUpperCase()) ?? 0} active
+                </Text>
               </View>
             ))}
           </View>
+        ) : (
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>
+            No classes saved yet. Tap Edit to add the courses you’re taking.
+          </Text>
+        )}
+      </View>
 
-          <View style={styles.calendarGrid}>
-            {calendarDays.map((dayCell) => {
-              const isSelected = selectedAvailabilityDate === dayCell.isoDate;
-              const isPast = isPastCalendarDate(dayCell.isoDate);
-              const isDisabled = isSaving || isPast;
-
-              return (
-                <Pressable
-                  key={dayCell.isoDate}
-                  disabled={isDisabled}
-                  onPress={() => setSelectedAvailabilityDate(dayCell.isoDate)}
-                  style={[
-                    styles.calendarDay,
-                    {
-                      backgroundColor: isSelected ? palette.tint : 'transparent',
-                      borderColor: isSelected ? palette.tint : 'transparent',
-                      opacity: dayCell.inCurrentMonth ? (isPast ? 0.35 : 1) : 0.2,
-                    },
-                  ]}>
-                  <ThemedText
-                    type={isSelected ? 'defaultSemiBold' : 'default'}
-                    lightColor={isSelected ? '#ffffff' : undefined}
-                    darkColor={isSelected ? '#ffffff' : undefined}>
-                    {dayCell.date.getDate()}
-                  </ThemedText>
-                </Pressable>
-              );
-            })}
+      {/* Saved locations (board ProfileScreen ~1814). */}
+      <View style={styles.section}>
+        <SectionHeader eyebrow="Saved locations" />
+        {savedLocations.length > 0 ? (
+          <View style={styles.rowList}>
+            {savedLocations.map((location) => (
+              <View
+                key={location.name}
+                style={[styles.locationRow, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+                <Text style={[TypeScale.bodyStrong, styles.locationName, { color: palette.text }]} numberOfLines={1}>
+                  {location.name}
+                </Text>
+                <Text style={[TypeScale.label, { color: palette.icon }]}>
+                  {location.rating != null ? `★ ${location.rating.toFixed(1)}` : 'New'}
+                </Text>
+              </View>
+            ))}
           </View>
-        </View>
-        <ThemedText style={styles.selectedDateText}>
-          Selected day: {formatDateLabel(selectedAvailabilityDate)}
-        </ThemedText>
-        <View style={styles.inlineRow}>
-          <View style={styles.flexInput}>
-            <TimeDropdown
-              disabled={isSaving}
-              label="Start time"
-              onChange={(time) => {
-                setAvailabilityStartTime(time);
-                setAvailabilityEndTime((currentEndTime) =>
-                  currentEndTime && currentEndTime <= time ? '' : currentEndTime
-                );
-              }}
-              value={availabilityStartTime}
+        ) : (
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>
+            Rate a study spot to see your places here.
+          </Text>
+        )}
+      </View>
+
+      {/* Editor panel — kept from the prior screen so classes/name stay
+          editable without a separate settings surface; revealed via Edit. */}
+      {isEditing ? (
+        <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+          <Text style={[TypeScale.heading, { color: palette.text }]}>Your classes</Text>
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>{classesStatus}</Text>
+          <TextInput
+            autoCapitalize="characters"
+            editable={!isSaving}
+            onChangeText={setCourseQuery}
+            placeholder={`Search ${UW_COURSE_COUNT.toLocaleString()} UW courses`}
+            placeholderTextColor={placeholderColor}
+            style={[styles.input, inputColors]}
+            value={courseQuery}
+          />
+          {courseQuery.trim().length >= 2 ? (
+            <View style={styles.searchResults}>
+              {courseResults.length > 0 ? (
+                courseResults.map((course) => (
+                  <Pressable
+                    key={course.code}
+                    disabled={isSaving}
+                    onPress={() => handleAddCourse(course.code)}
+                    style={({ pressed }) => [
+                      styles.searchResultCard,
+                      {
+                        backgroundColor: palette.surfaceMuted,
+                        borderColor: palette.border,
+                        opacity: isSaving || pressed ? 0.6 : 1,
+                      },
+                    ]}>
+                    <Text style={[TypeScale.code, { color: palette.text }]}>{course.code}</Text>
+                    <Text style={[TypeScale.body, { color: palette.text }]} numberOfLines={1}>
+                      {course.title}
+                    </Text>
+                    <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+                      {course.subjectName} · {course.credits}
+                    </Text>
+                  </Pressable>
+                ))
+              ) : (
+                <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                  No courses matched that search yet.
+                </Text>
+              )}
+            </View>
+          ) : null}
+          {classes.length > 0 ? (
+            <View style={styles.rowList}>
+              {classes.map((classCode) => (
+                <View
+                  key={classCode}
+                  style={[styles.editClassRow, { borderColor: palette.border }]}>
+                  <CourseChip code={classCode} size="sm" />
+                  <Text
+                    style={[TypeScale.body, styles.classTitle, { color: palette.text }]}
+                    numberOfLines={1}>
+                    {courseTitlesByCode.get(classCode) ?? 'UW–Madison course'}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${classCode}`}
+                    disabled={isSaving}
+                    onPress={() => toggleClassSelection(classCode)}
+                    style={({ pressed }) => [
+                      styles.removeButton,
+                      { opacity: isSaving || pressed ? 0.4 : 1 },
+                    ]}>
+                    <Text style={[TypeScale.label, { color: palette.icon }]}>✕</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          <Button label="Save classes" fullWidth loading={isSaving} onPress={handleSaveClasses} />
+
+          <View style={[styles.editDivider, { backgroundColor: palette.border }]} />
+
+          <Text style={[TypeScale.heading, { color: palette.text }]}>Your name</Text>
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>{nameStatus}</Text>
+          <View style={styles.inlineRow}>
+            <TextInput
+              autoCapitalize="words"
+              editable={!isSaving}
+              onChangeText={setFirstName}
+              placeholder="First name"
+              placeholderTextColor={placeholderColor}
+              style={[styles.input, styles.flexInput, inputColors]}
+              value={firstName}
+            />
+            <TextInput
+              autoCapitalize="words"
+              editable={!isSaving}
+              onChangeText={setLastName}
+              placeholder="Last name"
+              placeholderTextColor={placeholderColor}
+              style={[styles.input, styles.flexInput, inputColors]}
+              value={lastName}
             />
           </View>
-          <View style={styles.flexInput}>
-            <TimeDropdown
-              disabled={isSaving}
-              disabledOption={(time) => !!availabilityStartTime && time <= availabilityStartTime}
-              label="End time"
-              onChange={setAvailabilityEndTime}
-              value={availabilityEndTime}
-            />
-          </View>
+          <Button
+            label="Save name"
+            variant="secondary"
+            fullWidth
+            loading={isSaving}
+            onPress={handleSaveName}
+          />
         </View>
-        <Pressable
-          disabled={isSaving}
-          onPress={handleAddAvailabilitySlot}
-          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isSaving ? 0.6 : 1 }]}>
-          <ThemedText type="defaultSemiBold">Add Time Slot</ThemedText>
-        </Pressable>
-        <View style={styles.slotList}>
-          {availability.length > 0 ? (
-            availability.map((slot) => (
-              <Pressable
-                key={`${slot.date ?? slot.day}-${slot.startMinutes}-${slot.endMinutes}`}
-                disabled={isSaving}
-                onPress={() => removeAvailabilitySlot(slot)}
-                style={[
-                  styles.chip,
-                  styles.wideChip,
-                  {
-                    backgroundColor: palette.surfaceMuted,
-                    borderColor: palette.outline,
-                    opacity: isSaving ? 0.5 : 1,
-                  },
-                ]}>
-                <ThemedText type="defaultSemiBold">{formatAvailabilitySlot(slot)} ×</ThemedText>
-              </Pressable>
-            ))
-          ) : (
-            <ThemedText style={styles.mutedText}>No availability slots saved yet.</ThemedText>
-          )}
-        </View>
-        <Pressable
-          disabled={isSaving}
-          onPress={handleSaveAvailability}
-          style={[styles.primaryButton, { backgroundColor: palette.tint, opacity: isSaving ? 0.6 : 1 }]}>
-          <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-            Save Availability
-          </ThemedText>
-        </Pressable>
-      </ThemedView>
+      ) : null}
 
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Privacy and support</ThemedText>
+      {/* Account — board defers these behind its top-right Settings entry; with
+          no settings screen they live here so nothing becomes unreachable. */}
+      <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+        <Text style={[TypeScale.heading, { color: palette.text }]}>Privacy and support</Text>
+        <View style={styles.linkList}>
+          <ExternalLink href={STUDI_PRIVACY_POLICY_URL as Href & string} asChild>
+            <Pressable style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.6 : 1 }]}>
+              <Text style={[TypeScale.label, { color: palette.text }]}>Privacy Policy</Text>
+              <Text style={[TypeScale.caption, { color: palette.icon }]}>›</Text>
+            </Pressable>
+          </ExternalLink>
+          <View style={[styles.linkDivider, { backgroundColor: palette.border }]} />
+          <ExternalLink href={STUDI_SUPPORT_URL as Href & string} asChild>
+            <Pressable style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.6 : 1 }]}>
+              <Text style={[TypeScale.label, { color: palette.text }]}>Support</Text>
+              <Text style={[TypeScale.caption, { color: palette.icon }]}>›</Text>
+            </Pressable>
+          </ExternalLink>
+          <View style={[styles.linkDivider, { backgroundColor: palette.border }]} />
+          <ExternalLink href={buildMailtoHref(STUDI_CONTACT_EMAIL, 'Studi Contact')} asChild>
+            <Pressable style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.6 : 1 }]}>
+              <Text style={[TypeScale.label, { color: palette.text }]}>Contact</Text>
+              <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+                {STUDI_CONTACT_EMAIL}
+              </Text>
+            </Pressable>
+          </ExternalLink>
         </View>
-        <ThemedText type="subtitle">Help, policy, and data requests</ThemedText>
-        <ThemedText style={styles.mutedText}>
-          Open the privacy policy, contact {STUDI_SUPPORT_EMAIL}, or find account data request
-          options before using delete account.
-        </ThemedText>
-        <Pressable
-          disabled={isBusy}
-          onPress={() => router.push('/privacy-support' as Href)}
-          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isBusy ? 0.6 : 1 }]}>
-          <ThemedText type="defaultSemiBold">Privacy & Support</ThemedText>
-        </Pressable>
-      </ThemedView>
+      </View>
 
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.sectionLabel}>Account actions</ThemedText>
-        <ThemedText type="subtitle">Manage your session</ThemedText>
-        <Pressable
-          disabled={isBusy}
+      <View style={styles.accountActions}>
+        <Button
+          label="Sign out"
+          variant="secondary"
+          fullWidth
+          loading={isBusy}
           onPress={handleSignOut}
-          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isBusy ? 0.6 : 1 }] }>
-          {isBusy ? (
-            <ActivityIndicator color={palette.text} />
-          ) : (
-            <ThemedText type="defaultSemiBold">Sign Out</ThemedText>
-          )}
-        </Pressable>
+        />
         <Pressable
           disabled={isBusy}
           onPress={confirmDeleteAccount}
-          style={[
-            styles.destructiveButton,
-            {
-              borderColor: palette.tint,
-              opacity: isBusy ? 0.6 : 1,
-            },
+          style={({ pressed }) => [
+            styles.deleteLink,
+            { opacity: isBusy || pressed ? 0.6 : 1 },
           ]}>
           {isDeletingAccount ? (
             <ActivityIndicator color={palette.tint} />
           ) : (
-            <ThemedText style={[styles.destructiveButtonText, { color: palette.tint }]}>
-              Delete Account
-            </ThemedText>
+            <Text style={[TypeScale.label, { color: palette.tint }]}>Delete account</Text>
           )}
         </Pressable>
-      </ThemedView>
+      </View>
 
       <Modal
         animationType="fade"
@@ -979,46 +663,33 @@ export default function ProfileScreen() {
         visible={showDeleteReauthModal}>
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalCard, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <ThemedText type="subtitle">Confirm with Password</ThemedText>
-            <ThemedText style={styles.mutedText}>
+            <Text style={[TypeScale.heading, { color: palette.text }]}>Confirm with password</Text>
+            <Text style={[TypeScale.body, { color: palette.icon }]}>
               For security, please re-enter your password for {deleteReauthEmail || 'your account'}.
-            </ThemedText>
+            </Text>
             <TextInput
               autoCapitalize="none"
               autoCorrect={false}
               editable={!isReauthenticatingDelete}
               onChangeText={setDeleteReauthPassword}
               placeholder="Password"
-              placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
+              placeholderTextColor={placeholderColor}
               secureTextEntry
-              style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
+              style={[styles.input, inputColors]}
               value={deleteReauthPassword}
             />
             <View style={styles.modalActions}>
-              <Pressable
+              <Button
+                label="Cancel"
+                variant="secondary"
                 disabled={isReauthenticatingDelete}
                 onPress={closeDeleteReauthModal}
-                style={[
-                  styles.modalButton,
-                  { borderColor: palette.outline, opacity: isReauthenticatingDelete ? 0.6 : 1 },
-                ]}>
-                <ThemedText type="defaultSemiBold">Cancel</ThemedText>
-              </Pressable>
-              <Pressable
-                disabled={isReauthenticatingDelete}
+              />
+              <Button
+                label="Delete account"
+                loading={isReauthenticatingDelete}
                 onPress={handleDeleteWithReauthPassword}
-                style={[
-                  styles.modalButton,
-                  { borderColor: palette.tint, opacity: isReauthenticatingDelete ? 0.6 : 1 },
-                ]}>
-                {isReauthenticatingDelete ? (
-                  <ActivityIndicator color={palette.tint} />
-                ) : (
-                  <ThemedText style={{ color: palette.tint }} type="defaultSemiBold">
-                    Delete Account
-                  </ThemedText>
-                )}
-              </Pressable>
+              />
             </View>
           </View>
         </View>
@@ -1032,231 +703,204 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     justifyContent: 'center',
-    padding: 24,
+    padding: Space.xl,
   },
   screen: {
     flex: 1,
   },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    gap: Space.xl,
+    padding: Space.lg + 4,
+    paddingBottom: Space.xxl + 4,
   },
-  hero: {
+  identity: {
     alignItems: 'center',
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
+    gap: Space.sm,
   },
-  heroLogo: {
-    height: 96,
-    width: 300,
+  nameRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm - 2,
+    marginTop: Space.xs,
   },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
+  identityName: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 28,
+    lineHeight: 34,
+    flexShrink: 1,
+    textAlign: 'center',
+  },
+  verifiedCheck: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    height: 18,
+    justifyContent: 'center',
+    width: 18,
+  },
+  verifiedCheckMark: {
+    color: '#FFFFFF',
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 10,
+    lineHeight: 12,
+  },
+  classYear: {
+    marginTop: Space.xs,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  statCell: {
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flex: 1,
+    gap: Space.xs,
+    paddingHorizontal: Space.sm,
+    paddingVertical: Space.md,
+  },
+  statValue: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 20,
+    lineHeight: 24,
+  },
+  statLabel: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 9,
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
-  heroEyebrow: {
-    textAlign: 'center',
+  section: {
+    gap: Space.md,
   },
-  heroText: {
-    lineHeight: 30,
-    maxWidth: 420,
-    textAlign: 'center',
+  rowList: {
+    gap: Space.sm,
+  },
+  classRow: {
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+    minHeight: 56,
+    paddingHorizontal: Space.md + 2,
+    paddingVertical: Space.sm,
+  },
+  classRowBody: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexShrink: 1,
+    gap: Space.md,
+  },
+  classTitle: {
+    flexShrink: 1,
+  },
+  locationRow: {
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+    minHeight: 52,
+    paddingHorizontal: Space.md + 2,
+    paddingVertical: Space.sm,
+  },
+  locationName: {
+    flexShrink: 1,
   },
   card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
+    borderRadius: Radius.card,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.md,
+    padding: Space.lg + 4,
   },
-  sectionHeader: {
+  editClassRow: {
     alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: Space.md,
+    minHeight: 52,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
   },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
+  removeButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
+    minWidth: 32,
   },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  statusCopy: {
-    opacity: 0.8,
-  },
-  mutedText: {
-    opacity: 0.8,
-  },
-  chip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    minHeight: 40,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  wideChip: {
-    minHeight: 48,
+  editDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginVertical: Space.xs,
   },
   inlineRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 10,
+    gap: Space.sm + 2,
   },
   flexInput: {
     flex: 1,
   },
   input: {
-    borderRadius: 14,
-    borderWidth: 1,
-    fontSize: 16,
-    minHeight: 54,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  destructiveButton: {
-    alignSelf: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 38,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  destructiveButtonText: {
-    fontSize: 13,
-    letterSpacing: 0.2,
-  },
-  inlineButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 18,
+    borderRadius: Radius.chip + 4,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    fontFamily: FontFamily.body,
+    fontSize: 15,
+    minHeight: 52,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.md,
   },
   searchResults: {
-    gap: 10,
+    gap: Space.sm + 2,
   },
   searchResultCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    gap: 4,
-    padding: 14,
+    borderRadius: Radius.chip + 4,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.xs,
+    padding: Space.md + 2,
   },
-  searchMeta: {
-    fontSize: 13,
-    opacity: 0.7,
+  linkList: {
+    gap: 0,
   },
-  calendarCard: {
-    borderRadius: 18,
-    borderWidth: 1,
-    gap: 14,
-    padding: 16,
-  },
-  calendarHeader: {
+  linkRow: {
     alignItems: 'center',
     flexDirection: 'row',
+    gap: Space.md,
     justifyContent: 'space-between',
+    minHeight: 48,
   },
-  calendarNav: {
-    flexDirection: 'row',
-    gap: 8,
+  linkDivider: {
+    height: StyleSheet.hairlineWidth,
   },
-  calendarNavButton: {
+  accountActions: {
+    gap: Space.md,
+  },
+  deleteLink: {
     alignItems: 'center',
-    borderRadius: 12,
-    borderWidth: 1,
-    height: 36,
     justifyContent: 'center',
-    width: 36,
-  },
-  calendarWeekRow: {
-    flexDirection: 'row',
-  },
-  calendarWeekCell: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  calendarWeekday: {
-    fontSize: 13,
-    opacity: 0.65,
-  },
-  calendarGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    rowGap: 8,
-  },
-  calendarDay: {
-    alignItems: 'center',
-    borderRadius: 18,
-    borderWidth: 1,
-    height: 40,
-    justifyContent: 'center',
-    width: '14.2857%',
-  },
-  selectedDateText: {
-    opacity: 0.82,
-  },
-  slotList: {
-    gap: 10,
-  },
-  primaryButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
+    minHeight: 40,
   },
   modalBackdrop: {
     alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
     flex: 1,
     justifyContent: 'center',
-    padding: 20,
+    padding: Space.lg + 4,
   },
   modalCard: {
-    borderRadius: 18,
-    borderWidth: 1,
-    gap: 12,
+    borderRadius: Radius.card,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.md,
     maxWidth: 420,
-    padding: 18,
+    padding: Space.lg + 4,
     width: '100%',
   },
   modalActions: {
     flexDirection: 'row',
-    gap: 10,
+    gap: Space.sm + 2,
     justifyContent: 'flex-end',
-  },
-  modalButton: {
-    alignItems: 'center',
-    borderRadius: 12,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 42,
-    minWidth: 128,
-    paddingHorizontal: 12,
   },
 });

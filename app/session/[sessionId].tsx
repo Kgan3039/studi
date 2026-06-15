@@ -1,67 +1,53 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
+import { formatSessionWindow } from '@/components/session-card';
+import { Avatar } from '@/components/ui/Avatar';
+import { BadgeChip } from '@/components/ui/BadgeChip';
+import { Button } from '@/components/ui/Button';
+import { CourseChip } from '@/components/ui/CourseChip';
+import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
+import {
+  Brand,
+  Colors,
+  deptColorFor,
+  Elevation,
+  FontFamily,
+  Radius,
+  Space,
+  TypeScale,
+} from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
+  cancelSession,
+  getBlockedUserIds,
   getOrCreateDirectConversation,
   getSessionById,
   joinSession,
-  type Socials,
+  leaveSession,
   type StudySessionListItem,
 } from '@/lib/firestore';
+import { FirebaseError } from 'firebase/app';
 import type { User } from 'firebase/auth';
 
-function formatSessionTime(timestamp: string) {
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) {
-    return timestamp;
-  }
-
-  return date.toLocaleString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
-function formatDisplayName(name: string | undefined, email: string) {
+function formatDisplayName(name: string | undefined) {
   if (name && name.trim().length > 0) {
     return name.trim();
   }
 
-  const localPart = email.split('@')[0] ?? '';
-  const normalized = localPart.replace(/[._-]+/g, ' ').trim();
-
-  if (!normalized) {
-    return email;
-  }
-
-  return normalized
-    .split(' ')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
-
-function getVisibleSocials(socials: Socials | undefined) {
-  if (!socials) {
-    return [];
-  }
-
-  return [
-    { label: 'Phone', value: socials.phone },
-    { label: 'Instagram', value: socials.instagram },
-    { label: 'Snapchat', value: socials.snapchat },
-    { label: 'Discord', value: socials.discord },
-  ].filter((social) => social.value.trim().length > 0);
+  return 'Student';
 }
 
 export default function SessionDetailScreen() {
@@ -71,11 +57,14 @@ export default function SessionDetailScreen() {
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [session, setSession] = useState<StudySessionListItem | null>(null);
   const [status, setStatus] = useState('Loading session details...');
   const [isLoading, setIsLoading] = useState(true);
   const [isJoining, setIsJoining] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
   const [isOpeningHostChat, setIsOpeningHostChat] = useState(false);
+  const { toast, show: showToast } = useSuccessToast();
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -84,6 +73,17 @@ export default function SessionDetailScreen() {
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setBlockedUserIds([]);
+      return;
+    }
+
+    getBlockedUserIds(currentUser.uid)
+      .then(setBlockedUserIds)
+      .catch(() => setBlockedUserIds([]));
+  }, [currentUser]);
 
   const loadSession = useCallback(async () => {
     if (!sessionId) {
@@ -104,6 +104,7 @@ export default function SessionDetailScreen() {
 
       setSession(loadedSession);
       setStatus('Session details loaded.');
+      track('session_viewed', { classId: loadedSession.classId });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Unable to load session details right now.';
@@ -129,10 +130,16 @@ export default function SessionDetailScreen() {
 
     try {
       setIsJoining(true);
-      await joinSession(sessionId, currentUser.uid);
+      const result = await joinSession(sessionId, currentUser.uid);
       await loadSession();
-      setStatus('Joined session successfully.');
-      Alert.alert('Joined Session', 'You were added to the attendee list.');
+
+      if (result === 'joined') {
+        if (session) {
+          track('session_joined', { classId: session.classId });
+        }
+        setStatus('Joined session successfully.');
+        showToast('You’re in.', session?.title ?? 'See you at the table.');
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to join this session.';
       setStatus(message);
@@ -140,6 +147,79 @@ export default function SessionDetailScreen() {
     } finally {
       setIsJoining(false);
     }
+  }
+
+  function describeSessionActionError(error: unknown, fallback: string) {
+    if (error instanceof FirebaseError && error.code === 'permission-denied') {
+      return 'You don’t have permission to do that. Refresh and try again.';
+    }
+    return error instanceof Error ? error.message : fallback;
+  }
+
+  async function handleLeaveSession() {
+    if (!sessionId || !currentUser) {
+      return;
+    }
+
+    try {
+      setIsLeaving(true);
+      await leaveSession(sessionId, currentUser.uid);
+      await loadSession();
+      if (session) {
+        track('session_left', { classId: session.classId });
+      }
+      setStatus('You left the session.');
+    } catch (error) {
+      const message = describeSessionActionError(error, 'Unable to leave this session.');
+      setStatus(message);
+      Alert.alert('Leave Session Error', message);
+    } finally {
+      setIsLeaving(false);
+    }
+  }
+
+  function confirmLeaveSession() {
+    Alert.alert(
+      'Leave session?',
+      'You can rejoin later while a seat is open.',
+      [
+        { text: 'Stay', style: 'cancel' },
+        { text: 'Leave', style: 'destructive', onPress: handleLeaveSession },
+      ],
+    );
+  }
+
+  async function handleCancelSession() {
+    if (!sessionId) {
+      return;
+    }
+
+    try {
+      setIsLeaving(true);
+      await cancelSession(sessionId);
+      await loadSession();
+      if (session) {
+        track('session_cancelled', { classId: session.classId });
+      }
+      setStatus('Session cancelled.');
+    } catch (error) {
+      const message = describeSessionActionError(error, 'Unable to cancel this session.');
+      setStatus(message);
+      Alert.alert('Cancel Session Error', message);
+    } finally {
+      setIsLeaving(false);
+    }
+  }
+
+  function confirmCancelSession() {
+    Alert.alert(
+      'Cancel session?',
+      'Everyone going will see this session as cancelled. This can’t be undone.',
+      [
+        { text: 'Keep session', style: 'cancel' },
+        { text: 'Cancel session', style: 'destructive', onPress: handleCancelSession },
+      ],
+    );
   }
 
   async function handleOpenHostChat() {
@@ -156,7 +236,6 @@ export default function SessionDetailScreen() {
           conversationId,
           otherUserId: session.hostId,
           otherUserName: session.hostProfile?.displayName || '',
-          otherUserEmail: session.hostEmail || '',
         },
       });
     } catch (error) {
@@ -170,152 +249,357 @@ export default function SessionDetailScreen() {
   const isParticipant = currentUser && session
     ? session.participantIds.includes(currentUser.uid)
     : false;
+  const isHost = currentUser && session ? session.hostId === currentUser.uid : false;
+  const visibleAttendees = session
+    ? session.attendeeProfiles.filter((attendee) => !blockedUserIds.includes(attendee.uid))
+    : [];
+  const isFull = session?.status === 'full';
+  const isCancelled = session?.status === 'cancelled';
+  const hostName = formatDisplayName(session?.hostProfile?.displayName);
+  // Capacity is not in the data model (no seat count). The board's
+  // "Going (3 of 5)" / "2 left" collapses to the real going count plus the
+  // open/full/cancelled status — same substitution used on Today.
+  const goingCount = visibleAttendees.length || session?.participantIds.length || 0;
+  const joinStatusLabel = isParticipant
+    ? 'You’re going'
+    : isCancelled
+      ? 'Session cancelled'
+      : isFull
+        ? 'Session is full'
+        : 'A seat is open';
+
+  const startDate = session?.startTime.toDate();
+  const endDate = session?.endTime.toDate();
+  const dateTileLabel = startDate
+    ? startDate.toDateString() === new Date().toDateString()
+      ? 'Today'
+      : startDate.toLocaleDateString('en-US', { weekday: 'short' })
+    : '';
+  const timeTileValue = startDate
+    ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    : '';
+  // Board DetailScreen shows a Duration tile — derived from existing times.
+  const durationMinutes =
+    startDate && endDate
+      ? Math.max(Math.round((endDate.getTime() - startDate.getTime()) / 60000), 0)
+      : 0;
+  const durationLabel =
+    durationMinutes <= 0
+      ? '—'
+      : durationMinutes < 120
+        ? `${durationMinutes} min`
+        : durationMinutes % 60 === 0
+          ? `${durationMinutes / 60} hr`
+          : `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m`;
+  const deptTint = session ? deptColorFor(session.classId) ?? palette.text : palette.text;
+
+  // Board lists three authored "house rules"; per-session rules are not in the
+  // data model, so the spot's own notes + tags (the closest real guidance)
+  // stand in for them.
+  const houseRules = useMemo(() => {
+    if (!session?.location) {
+      return [];
+    }
+
+    return [session.location.notes ?? '', ...(session.location.tags ?? [])]
+      .map((rule) => rule.trim())
+      .filter((rule) => rule.length > 0);
+  }, [session]);
 
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView style={[styles.hero, { backgroundColor: palette.hero }]}>
-        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Session detail</ThemedText>
-        <ThemedText type="title" style={styles.heroTitle}>
-          {session?.title ?? 'Study Session'}
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Get the full session breakdown, see who is going, and decide whether this is the right
-          study group for you.
-        </ThemedText>
-      </ThemedView>
-
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <View style={styles.sectionHeader}>
-          <ThemedText style={styles.sectionLabel}>Overview</ThemedText>
-          <View style={[styles.statusPill, { backgroundColor: palette.surfaceMuted }]}>
-            <ThemedText type="defaultSemiBold">{session?.status ?? 'loading'}</ThemedText>
-          </View>
-        </View>
-        <ThemedText type="subtitle">Session status</ThemedText>
-        <ThemedText style={styles.metaText}>{status}</ThemedText>
-        <Pressable
-          onPress={loadSession}
-          style={[styles.secondaryButton, { borderColor: palette.outline, opacity: isLoading ? 0.6 : 1 }]}>
-          {isLoading ? (
-            <ActivityIndicator color={palette.text} />
-          ) : (
-            <ThemedText type="defaultSemiBold">Refresh Details</ThemedText>
-          )}
-        </Pressable>
-      </ThemedView>
-
-      {session ? (
-        <>
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>At a glance</ThemedText>
-              <View style={[styles.statusPill, { backgroundColor: palette.badge }]}>
-                <ThemedText type="defaultSemiBold">{session.classId}</ThemedText>
-              </View>
-            </View>
-            <ThemedText type="subtitle">{session.location?.name ?? session.locationId}</ThemedText>
-            <ThemedText style={styles.metaText}>
-              {formatSessionTime(session.startTime)} to {formatSessionTime(session.endTime)}
-            </ThemedText>
-            <ThemedText style={styles.metaText}>
-              Host: {session.hostProfile?.displayName || session.hostEmail || session.hostId}
-            </ThemedText>
-            <ThemedText style={styles.metaText}>
-              Building: {session.location?.building ?? 'Campus location'}
-            </ThemedText>
-            <ThemedText style={styles.metaText}>
-              Area: {session.location?.campusArea ?? 'UW-Madison'}
-            </ThemedText>
-            {session.location?.notes ? (
-              <ThemedText style={styles.notesText}>{session.location.notes}</ThemedText>
-            ) : null}
-            <Pressable
-              disabled={isOpeningHostChat}
-              onPress={handleOpenHostChat}
+    <View style={[styles.screen, { backgroundColor: palette.background }]}>
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={[styles.content, { paddingTop: Space.lg }]}>
+        {session ? (
+          <>
+            {/* 1. HERO — banner, course chip, title, time/location summary.
+                Dept tint stands in for the location imagery the app lacks. */}
+            <View
               style={[
-                styles.secondaryButton,
-                { borderColor: palette.outline, opacity: isOpeningHostChat ? 0.65 : 1 },
-              ]}>
-              {isOpeningHostChat ? (
-                <ActivityIndicator color={palette.text} />
-              ) : (
-                <ThemedText type="defaultSemiBold">Message Host</ThemedText>
-              )}
-            </Pressable>
-            <Pressable
-              disabled={!!isParticipant || isJoining}
-              onPress={handleJoinSession}
-              style={[
-                styles.primaryButton,
+                styles.banner,
                 {
-                  backgroundColor: isParticipant ? '#8F7D78' : palette.tint,
-                  opacity: isJoining ? 0.65 : 1,
+                  backgroundColor:
+                    colorScheme === 'dark' ? `${deptTint}26` : `${deptTint}14`,
                 },
               ]}>
-              {isJoining ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-                  {isParticipant ? 'You Joined This Session' : 'Join Session'}
-                </ThemedText>
-              )}
-            </Pressable>
-          </ThemedView>
+              <Text style={[TypeScale.eyebrow, { color: palette.icon }]} numberOfLines={1}>
+                {session.location?.name ?? session.locationId}
+                {session.location?.campusArea ? ` · ${session.location.campusArea}` : ''}
+              </Text>
+            </View>
+            <View style={styles.heroBlock}>
+              <View style={styles.heroChipRow}>
+                <CourseChip code={session.classId} size="lg" />
+                {isCancelled ? (
+                  <BadgeChip label="Cancelled" tone="neutral" />
+                ) : isFull ? (
+                  <BadgeChip label="Full" tone="neutral" />
+                ) : null}
+              </View>
+              <Text style={[styles.heroTitle, { color: palette.text }]}>{session.title}</Text>
+              <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
+                {formatSessionWindow(session.startTime, session.endTime)}
+                {session.location?.name ? ` · ${session.location.name}` : ''}
+              </Text>
+            </View>
 
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Attendees</ThemedText>
-              <View style={[styles.statusPill, { backgroundColor: palette.surfaceMuted }]}>
-                <ThemedText type="defaultSemiBold">
-                  {session.attendeeProfiles.length} going
-                </ThemedText>
+            {/* 2. HOST — host card, reputation/stats area, message action. */}
+            <View
+              style={[
+                styles.card,
+                Elevation.e1,
+                { backgroundColor: palette.surface, borderColor: palette.border },
+              ]}>
+              <View style={styles.hostRow}>
+                <Avatar name={hostName} size="lg" verified />
+                <View style={styles.hostText}>
+                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
+                    {hostName}
+                  </Text>
+                  {/* Reputation/stats area. Host rating, hosted count, and
+                      show-up % are not in the data model; the verified-UW
+                      trust signal is the available metric and stands in. */}
+                  <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                    Host · Verified UW student
+                  </Text>
+                </View>
+                <Button
+                  label="Message"
+                  variant="secondary"
+                  size="sm"
+                  loading={isOpeningHostChat}
+                  onPress={handleOpenHostChat}
+                />
               </View>
             </View>
-            <ThemedText type="subtitle">Who is already in</ThemedText>
-            <View style={styles.attendeeList}>
-              {session.attendeeProfiles.map((attendee) => (
-                <ThemedView
-                  key={attendee.uid}
-                  style={[
-                    styles.attendeeCard,
-                    { backgroundColor: palette.surfaceMuted, borderColor: palette.outline },
-                  ]}>
-                  <View style={[styles.avatar, { backgroundColor: palette.badge }]}>
-                    <ThemedText type="defaultSemiBold">
-                      {(attendee.displayName || attendee.email || '?').slice(0, 1).toUpperCase()}
-                    </ThemedText>
-                  </View>
-                  <View style={styles.attendeeMeta}>
-                    <ThemedText type="defaultSemiBold">
-                      {formatDisplayName(attendee.displayName, attendee.email)}
-                    </ThemedText>
-                    <ThemedText style={styles.metaText}>{attendee.email}</ThemedText>
-                    {getVisibleSocials(attendee.socials).length > 0 ? (
-                      <View style={styles.socialList}>
-                        {getVisibleSocials(attendee.socials).map((social) => (
-                          <ThemedText key={social.label} style={styles.socialText}>
-                            {social.label}: {social.value.trim()}
-                          </ThemedText>
-                        ))}
+
+            {/* 3. ATTENDANCE — attendee list, capacity state, join status. */}
+            <View
+              style={[
+                styles.card,
+                Elevation.e1,
+                { backgroundColor: palette.surface, borderColor: palette.border },
+              ]}>
+              <View style={styles.attendanceHeader}>
+                <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
+                  Going ({goingCount})
+                </Text>
+                <BadgeChip
+                  label={joinStatusLabel}
+                  tone={isParticipant ? 'success' : isFull || isCancelled ? 'neutral' : 'info'}
+                />
+              </View>
+              {visibleAttendees.length > 0 ? (
+                <View style={styles.attendeeList}>
+                  {visibleAttendees.map((attendee) => {
+                    const isHost = attendee.uid === session.hostId;
+
+                    return (
+                      <View key={attendee.uid} style={styles.attendeeRow}>
+                        <Avatar
+                          name={formatDisplayName(attendee.displayName)}
+                          size="md"
+                          verified
+                        />
+                        <Text
+                          style={[TypeScale.body, styles.attendeeName, { color: palette.text }]}
+                          numberOfLines={1}>
+                          {formatDisplayName(attendee.displayName)}
+                        </Text>
+                        {isHost ? (
+                          <Text style={[TypeScale.caption, { color: palette.icon }]}>host</Text>
+                        ) : null}
                       </View>
-                    ) : null}
-                  </View>
-                </ThemedView>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={[TypeScale.body, { color: palette.icon }]}>
+                  Be the first at the table.
+                </Text>
+              )}
+              <View style={styles.verifiedRow}>
+                <View style={[styles.verifiedDot, { backgroundColor: Brand.success }]} />
+                <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                  All attendees are verified UW students
+                </Text>
+              </View>
+            </View>
+
+            {/* 4. SESSION INFORMATION — house rules + session details. */}
+            <View
+              style={[
+                styles.card,
+                Elevation.e1,
+                { backgroundColor: palette.surface, borderColor: palette.border },
+              ]}>
+              <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>House rules</Text>
+              {houseRules.length > 0 ? (
+                <View style={styles.ruleList}>
+                  {houseRules.map((rule) => (
+                    <View key={rule} style={styles.ruleRow}>
+                      <View style={[styles.ruleDot, { backgroundColor: palette.tint }]} />
+                      <Text style={[TypeScale.body, styles.ruleText, { color: palette.text }]}>
+                        {rule}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text style={[TypeScale.body, { color: palette.icon }]}>
+                  No house rules listed for this spot.
+                </Text>
+              )}
+            </View>
+
+            <View style={styles.tileRow}>
+              {[
+                { label: dateTileLabel, value: timeTileValue },
+                { label: 'Duration', value: durationLabel },
+                { label: 'Going', value: `${goingCount}` },
+              ].map((tile) => (
+                <View
+                  key={tile.label}
+                  style={[
+                    styles.tile,
+                    Elevation.e1,
+                    { backgroundColor: palette.surface, borderColor: palette.border },
+                  ]}>
+                  <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{tile.label}</Text>
+                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>{tile.value}</Text>
+                </View>
               ))}
             </View>
-          </ThemedView>
-        </>
-      ) : (
-        <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <ThemedText type="subtitle">No Session Found</ThemedText>
-          <ThemedText style={styles.metaText}>
-            The session may have been removed, or the link is no longer valid.
-          </ThemedText>
-        </ThemedView>
-      )}
-    </ScrollView>
+
+            <View
+              style={[
+                styles.card,
+                Elevation.e1,
+                { backgroundColor: palette.surface, borderColor: palette.border },
+              ]}>
+              <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Where</Text>
+              <Text style={[TypeScale.heading, { color: palette.text }]}>
+                {session.location?.name ?? session.locationId}
+              </Text>
+              <Text style={[TypeScale.body, { color: palette.icon }]}>
+                {session.location?.building ?? 'Campus location'}
+                {' · '}
+                {session.location?.campusArea ?? 'UW–Madison'}
+              </Text>
+              {session.location?.notes ? (
+                <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                  {session.location.notes}
+                </Text>
+              ) : null}
+              {session.location ? (
+                <Button
+                  label="Rate this spot"
+                  variant="ghost"
+                  size="sm"
+                  onPress={() =>
+                    router.push({
+                      pathname: '/rate-location',
+                      params: {
+                        locationId: session.locationId,
+                        locationName: session.location?.name ?? session.locationId,
+                      },
+                    })
+                  }
+                />
+              ) : null}
+            </View>
+
+            <View style={styles.statusRow}>
+              <Text style={[TypeScale.caption, styles.statusText, { color: palette.icon }]}>
+                {status}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isLoading}
+                onPress={loadSession}
+                style={({ pressed }) => ({ opacity: pressed || isLoading ? 0.5 : 1 })}>
+                {isLoading ? (
+                  <ActivityIndicator size="small" color={palette.tint} />
+                ) : (
+                  <Text style={[TypeScale.label, { color: palette.tint }]}>Refresh</Text>
+                )}
+              </Pressable>
+            </View>
+          </>
+        ) : (
+          <View
+            style={[
+              styles.card,
+              Elevation.e1,
+              { backgroundColor: palette.surface, borderColor: palette.border },
+            ]}>
+            {isLoading ? (
+              <ActivityIndicator color={palette.tint} />
+            ) : (
+              <>
+                <Text style={[styles.emptyHeadline, { color: palette.text }]}>
+                  Something went off-script.
+                </Text>
+                <Text style={[TypeScale.body, { color: palette.icon }]}>
+                  The session may have been removed, or the link is no longer valid.
+                </Text>
+              </>
+            )}
+          </View>
+        )}
+      </ScrollView>
+
+      {/* 5. PRIMARY CTA AREA. */}
+      {session ? (
+        <View
+          style={[
+            styles.bottomBar,
+            {
+              backgroundColor: palette.surface,
+              borderTopColor: palette.border,
+              paddingBottom: Math.max(insets.bottom, Space.md),
+            },
+          ]}>
+          {isHost ? (
+            !isCancelled ? (
+              <Button
+                label="Cancel session"
+                variant="secondary"
+                size="lg"
+                fullWidth
+                loading={isLeaving}
+                onPress={confirmCancelSession}
+              />
+            ) : (
+              <Button label="Session cancelled" variant="secondary" size="lg" fullWidth disabled />
+            )
+          ) : isParticipant ? (
+            <View style={styles.ctaStack}>
+              <Button label="✓ Going" variant="success" size="lg" fullWidth />
+              <Button
+                label="Leave session"
+                variant="ghost"
+                size="md"
+                fullWidth
+                loading={isLeaving}
+                onPress={confirmLeaveSession}
+              />
+            </View>
+          ) : (
+            <Button
+              label={isFull ? 'Session full' : 'Join session'}
+              size="lg"
+              fullWidth
+              loading={isJoining}
+              disabled={isFull || isCancelled}
+              onPress={handleJoinSession}
+            />
+          )}
+        </View>
+      ) : null}
+      <SuccessToast toast={toast} bottomOffset={session ? 72 : 0} />
+    </View>
   );
 }
 
@@ -324,103 +608,122 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    gap: Space.lg,
+    padding: Space.lg + 4,
+    paddingBottom: Space.xxl,
   },
-  hero: {
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
+  banner: {
+    borderRadius: Radius.xxl - 4,
+    justifyContent: 'flex-end',
+    minHeight: 96,
+    padding: Space.lg,
   },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
+  heroBlock: {
+    gap: Space.sm + 2,
+  },
+  heroChipRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Space.sm,
   },
   heroTitle: {
-    marginBottom: 4,
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 30,
+    lineHeight: 36,
   },
-  heroText: {
-    lineHeight: 30,
-    maxWidth: 420,
+  tileRow: {
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  tile: {
+    flex: 1,
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.xs,
+    paddingVertical: Space.md,
+    paddingHorizontal: Space.sm,
   },
   card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
+    borderRadius: Radius.xl,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.sm + 2,
+    padding: Space.lg + 4,
   },
-  sectionHeader: {
-    alignItems: 'center',
+  hostRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+  },
+  hostText: {
+    flex: 1,
+    gap: 2,
+  },
+  attendanceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
-  },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  metaText: {
-    opacity: 0.8,
-  },
-  notesText: {
-    lineHeight: 28,
-    opacity: 0.9,
-  },
-  primaryButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 52,
-    paddingHorizontal: 16,
+    gap: Space.sm,
   },
   attendeeList: {
-    gap: 12,
+    gap: Space.md,
   },
-  attendeeCard: {
+  attendeeRow: {
     alignItems: 'center',
-    borderRadius: 18,
-    borderWidth: 1,
     flexDirection: 'row',
-    gap: 12,
-    padding: 14,
+    gap: Space.md,
   },
-  avatar: {
+  attendeeName: {
+    flexShrink: 1,
+  },
+  ruleList: {
+    gap: Space.sm,
+  },
+  ruleRow: {
     alignItems: 'center',
-    borderRadius: 999,
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
+    flexDirection: 'row',
+    gap: Space.md,
   },
-  attendeeMeta: {
-    flex: 1,
-    gap: 3,
+  ruleDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
-  socialList: {
-    gap: 2,
-    marginTop: 4,
+  ruleText: {
+    flexShrink: 1,
   },
-  socialText: {
-    fontSize: 13,
-    opacity: 0.78,
+  verifiedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm - 2,
+    marginTop: Space.xs,
+  },
+  verifiedDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+  },
+  statusText: {
+    flexShrink: 1,
+  },
+  emptyHeadline: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 24,
+    lineHeight: 30,
+  },
+  bottomBar: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: Space.lg + 4,
+    paddingTop: Space.md,
+  },
+  ctaStack: {
+    gap: Space.xs,
   },
 });

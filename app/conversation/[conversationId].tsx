@@ -1,12 +1,23 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
+import { Avatar } from '@/components/ui/Avatar';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   blockUser,
@@ -17,12 +28,38 @@ import {
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
+function toDate(value: unknown): Date | null {
+  if (!value || typeof value !== 'object' || !('toDate' in value)) {
+    return null;
+  }
+  return (value as { toDate: () => Date }).toDate();
+}
+
+/** Board ChatScreen day separator: "Today · 2:14 PM", "Mon, Jun 9 · 4:00 PM". */
+function formatDaySeparator(date: Date) {
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const dayLabel =
+    date.toDateString() === now.toDateString()
+      ? 'Today'
+      : date.toDateString() === yesterday.toDateString()
+        ? 'Yesterday'
+        : date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  return `${dayLabel} · ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+}
+
 function formatTimestamp(value: unknown) {
   if (!value || typeof value !== 'object' || !('toDate' in value)) {
     return '';
   }
 
   const date = (value as { toDate: () => Date }).toDate();
+  const now = new Date();
+
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+
   return date.toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
@@ -33,9 +70,8 @@ function formatTimestamp(value: unknown) {
 
 export default function ConversationScreen() {
   const router = useRouter();
-  const { conversationId, otherUserId, otherUserName, otherUserEmail } = useLocalSearchParams<{
+  const { conversationId, otherUserId, otherUserName } = useLocalSearchParams<{
     conversationId?: string;
-    otherUserEmail?: string;
     otherUserId?: string;
     otherUserName?: string;
   }>();
@@ -66,13 +102,13 @@ export default function ConversationScreen() {
       setMessages(loadedMessages);
       setStatus(
         loadedMessages.length > 0
-          ? `Chatting with ${otherUserName || otherUserEmail || 'this student'}.`
-          : `Start the conversation with ${otherUserName || otherUserEmail || 'this student'}.`
+          ? `Chatting with ${otherUserName || 'Student'}.`
+          : `Start the conversation with ${otherUserName || 'Student'}.`
       );
     });
 
     return unsubscribe;
-  }, [conversationId, currentUser, otherUserEmail, otherUserName]);
+  }, [conversationId, currentUser, otherUserName]);
 
   useEffect(() => {
     async function loadBlocks() {
@@ -113,8 +149,12 @@ export default function ConversationScreen() {
 
     try {
       await blockUser(currentUser.uid, otherUserId);
+      track('user_blocked', { context: 'conversation' });
       setBlockedUserIds((currentIds) => [...new Set([...currentIds, otherUserId])]);
-      Alert.alert('User Blocked', 'You will no longer see this user in matching results.');
+      Alert.alert(
+        'User Blocked',
+        "They can no longer message you or join a conversation with you. You won't see them in attendee lists."
+      );
       router.replace('/messages');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to block this user.';
@@ -123,197 +163,268 @@ export default function ConversationScreen() {
   }
 
   const isBlocked = !!otherUserId && blockedUserIds.includes(otherUserId);
+  const canSend = !isSending && !isBlocked && draft.trim().length > 0;
 
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView style={[styles.hero, { backgroundColor: palette.hero }]}>
-        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Direct chat</ThemedText>
-        <ThemedText type="title" style={styles.heroTitle}>
-          {otherUserName || 'Deleted User'}
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Use this space to coordinate times, places, and session details with another student.
-        </ThemedText>
-      </ThemedView>
-
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <View style={styles.actionRow}>
-          <Pressable
-            onPress={() =>
-              router.push({
-                pathname: '/report-user',
-                params: {
-                  reportedUserId: otherUserId || '',
-                  reportedUserName: otherUserName || '',
-                  reportedUserEmail: otherUserEmail || '',
-                  context: 'conversation',
-                },
-              })
-            }
-            style={[styles.secondaryButton, { borderColor: palette.outline }]}>
-            <ThemedText type="defaultSemiBold">Report</ThemedText>
-          </Pressable>
-
-          <Pressable
-            onPress={handleBlockUser}
-            style={[styles.secondaryButton, { borderColor: palette.outline }]}>
-            <ThemedText type="defaultSemiBold">Block</ThemedText>
-          </Pressable>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+      style={[styles.screen, { backgroundColor: palette.background }]}>
+      {/* Identity strip under the nav header — sans-only utility surface. */}
+      <View style={[styles.identityBar, { borderBottomColor: palette.border }]}>
+        <Avatar name={otherUserName || 'Student'} size="sm" verified />
+        <View style={styles.identityText}>
+          <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
+            {otherUserName || 'Student'}
+          </Text>
+          <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+            {status}
+          </Text>
         </View>
-      </ThemedView>
-
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText type="subtitle">Conversation</ThemedText>
-        <ThemedText style={styles.statusText}>{status}</ThemedText>
-        <View style={styles.messageColumn}>
-          {messages.length > 0 ? (
-            messages.map((message) => {
-              const isCurrentUser = currentUser?.uid === message.senderId;
-
-              return (
-                <View
-                  key={message.messageId}
-                  style={[
-                    styles.messageBubble,
-                    {
-                      alignSelf: isCurrentUser ? 'flex-end' : 'flex-start',
-                      backgroundColor: isCurrentUser ? palette.tint : palette.surfaceMuted,
-                    },
-                  ]}>
-                  <ThemedText
-                    lightColor={isCurrentUser ? '#ffffff' : undefined}
-                    darkColor={isCurrentUser ? '#ffffff' : undefined}>
-                    {message.text}
-                  </ThemedText>
-                  <ThemedText
-                    style={styles.timestamp}
-                    lightColor={isCurrentUser ? '#ffffff' : undefined}
-                    darkColor={isCurrentUser ? '#ffffff' : undefined}>
-                    {formatTimestamp(message.createdAt)}
-                  </ThemedText>
-                </View>
-              );
-            })
-          ) : (
-            <ThemedText style={styles.statusText}>
-              No messages yet. Start the thread when you are ready.
-            </ThemedText>
-          )}
-        </View>
-      </ThemedView>
-
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.sectionLabel}>Send a message</ThemedText>
-        <TextInput
-          editable={!isSending && !isBlocked}
-          multiline
-          onChangeText={setDraft}
-          placeholder={isBlocked ? 'This user is blocked.' : 'Type a message'}
-          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-          style={[styles.input, { borderColor: palette.outline, color: palette.text, opacity: isBlocked ? 0.55 : 1 }]}
-          value={draft}
-        />
         <Pressable
-          disabled={isSending || isBlocked}
-          onPress={handleSendMessage}
-          style={[styles.primaryButton, { backgroundColor: palette.tint, opacity: isSending || isBlocked ? 0.6 : 1 }]}>
-          {isSending ? (
-            <ActivityIndicator color="#ffffff" />
-          ) : (
-            <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-              Send Message
-            </ThemedText>
-          )}
+          accessibilityRole="button"
+          onPress={() =>
+            router.push({
+              pathname: '/report-user',
+              params: {
+                reportedUserId: otherUserId || '',
+                reportedUserName: otherUserName || '',
+                context: 'conversation',
+              },
+            })
+          }
+          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+          <Text style={[TypeScale.label, { color: palette.icon }]}>Report</Text>
         </Pressable>
-      </ThemedView>
-    </ScrollView>
+        <Pressable
+          accessibilityRole="button"
+          onPress={handleBlockUser}
+          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+          <Text style={[TypeScale.label, { color: palette.tint }]}>Block</Text>
+        </Pressable>
+      </View>
+
+      <ScrollView
+        style={styles.thread}
+        contentContainerStyle={styles.threadContent}>
+        {messages.length > 0 ? (
+          messages.map((message, index) => {
+            const isCurrentUser = currentUser?.uid === message.senderId;
+            const nextMessage = messages[index + 1];
+            const showTime =
+              !nextMessage || (currentUser?.uid === nextMessage.senderId) !== isCurrentUser;
+            const messageDate = toDate(message.createdAt);
+            const previousDate = index > 0 ? toDate(messages[index - 1].createdAt) : null;
+            const showDaySeparator =
+              !!messageDate &&
+              (!previousDate || previousDate.toDateString() !== messageDate.toDateString());
+
+            return (
+              <View
+                key={message.messageId}
+                style={[styles.messageGroup, isCurrentUser ? styles.mine : styles.theirs]}>
+                {showDaySeparator ? (
+                  <Text style={[styles.daySeparator, { color: palette.icon }]}>
+                    {formatDaySeparator(messageDate)}
+                  </Text>
+                ) : null}
+                <View
+                  style={[
+                    styles.bubble,
+                    isCurrentUser
+                      ? [styles.mineBubble, { backgroundColor: palette.tint }]
+                      : [
+                          styles.theirsBubble,
+                          {
+                            backgroundColor: palette.surface,
+                            borderColor: palette.border,
+                            borderWidth: StyleSheet.hairlineWidth * 2,
+                          },
+                        ],
+                  ]}>
+                  <Text
+                    style={[
+                      styles.bubbleText,
+                      { color: isCurrentUser ? '#FFFFFF' : palette.text },
+                    ]}>
+                    {message.text}
+                  </Text>
+                </View>
+                {showTime ? (
+                  <Text style={[styles.bubbleTime, { color: palette.icon }]}>
+                    {formatTimestamp(message.createdAt)}
+                  </Text>
+                ) : null}
+              </View>
+            );
+          })
+        ) : (
+          <View style={styles.emptyThread}>
+            <Text style={[styles.emptyHeadline, { color: palette.text }]}>Say hi 👋</Text>
+            <Text style={[TypeScale.body, styles.emptyBody, { color: palette.icon }]}>
+              &ldquo;What should I bring?&rdquo; is a great opener.
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+
+      <View
+        style={[
+          styles.composerBar,
+          {
+            borderTopColor: palette.border,
+            paddingBottom: Math.max(insets.bottom, Space.md),
+          },
+        ]}>
+        <View
+          style={[
+            styles.composer,
+            { backgroundColor: palette.surfaceMuted, opacity: isBlocked ? 0.55 : 1 },
+          ]}>
+          <TextInput
+            editable={!isSending && !isBlocked}
+            multiline
+            onChangeText={setDraft}
+            placeholder={isBlocked ? 'This user is blocked.' : 'Message…'}
+            placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
+            style={[styles.composerInput, { color: palette.text }]}
+            value={draft}
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
+            disabled={!canSend}
+            onPress={handleSendMessage}
+            style={({ pressed }) => [
+              styles.sendButton,
+              {
+                backgroundColor: palette.tint,
+                opacity: !canSend ? 0.4 : pressed ? 0.8 : 1,
+              },
+            ]}>
+            {isSending ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.sendGlyph}>↑</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
-  },
-  hero: {
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
-  },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  heroTitle: { marginBottom: 4 },
-  heroText: {
-    lineHeight: 30,
-    maxWidth: 420,
-  },
-  card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-  },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
-  },
-  statusText: {
-    opacity: 0.82,
-  },
-  actionRow: {
+  identityBar: {
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    gap: 10,
+    gap: Space.md,
+    paddingHorizontal: Space.lg + 4,
+    paddingVertical: Space.md,
   },
-  secondaryButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
+  identityText: {
     flex: 1,
-    justifyContent: 'center',
-    minHeight: 48,
-    paddingHorizontal: 16,
+    gap: 1,
   },
-  messageColumn: {
-    gap: 10,
+  thread: {
+    flex: 1,
   },
-  messageBubble: {
-    borderRadius: 18,
-    gap: 6,
-    maxWidth: '84%',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+  threadContent: {
+    gap: Space.xs + 2,
+    padding: Space.lg,
+    paddingBottom: Space.xl,
   },
-  timestamp: {
-    fontSize: 12,
-    opacity: 0.72,
+  messageGroup: {
+    gap: Space.xs,
   },
-  input: {
-    borderRadius: 14,
-    borderWidth: 1,
-    fontSize: 16,
-    minHeight: 120,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    textAlignVertical: 'top',
+  daySeparator: {
+    alignSelf: 'center',
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 10,
+    letterSpacing: 0.8,
+    lineHeight: 13,
+    marginVertical: Space.sm,
+    textAlign: 'center',
+    textTransform: 'uppercase',
   },
-  primaryButton: {
+  mine: {
+    alignItems: 'flex-end',
+  },
+  theirs: {
+    alignItems: 'flex-start',
+  },
+  bubble: {
+    borderRadius: Radius.xl - 2,
+    maxWidth: '80%',
+    paddingHorizontal: Space.md + 2,
+    paddingVertical: Space.sm + 2,
+  },
+  mineBubble: {
+    borderBottomRightRadius: Radius.sm - 2,
+  },
+  theirsBubble: {
+    borderBottomLeftRadius: Radius.sm - 2,
+  },
+  bubbleText: {
+    fontFamily: FontFamily.body,
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  bubbleTime: {
+    fontFamily: FontFamily.bodyMedium,
+    fontSize: 10,
+    lineHeight: 13,
+    paddingHorizontal: Space.xs,
+  },
+  emptyThread: {
     alignItems: 'center',
-    borderRadius: 14,
+    gap: Space.sm,
+    paddingVertical: Space.xxl + 8,
+  },
+  emptyHeadline: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 24,
+    lineHeight: 30,
+  },
+  emptyBody: {
+    maxWidth: 280,
+    textAlign: 'center',
+  },
+  composerBar: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.sm + 2,
+  },
+  composer: {
+    alignItems: 'flex-end',
+    borderRadius: Radius.xxl - 4,
+    flexDirection: 'row',
+    gap: Space.sm,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.sm - 2,
+  },
+  composerInput: {
+    flex: 1,
+    fontFamily: FontFamily.body,
+    fontSize: 15,
+    lineHeight: 20,
+    maxHeight: 120,
+    paddingVertical: Space.sm,
+  },
+  sendButton: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    height: 32,
     justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
+    marginBottom: Space.xs + 2,
+    width: 32,
+  },
+  sendGlyph: {
+    color: '#FFFFFF',
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 16,
+    lineHeight: 20,
   },
 });
