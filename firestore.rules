@@ -1,147 +1,316 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Signed-in helper
-    function isSignedIn() {
-      return request.auth != null;
+
+    // ------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------
+
+    function isVerifiedUwUser() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string
+        && request.auth.token.email.matches('.*@wisc[.]edu');
     }
 
-    // Users: owners may read/create/update/delete their own profile
+    function isOwner(userId) {
+      return isVerifiedUwUser() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function affectedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function isBlockedEitherWay(userA, userB) {
+      return exists(/databases/$(database)/documents/userBlocks/$(userA + '__' + userB))
+        || exists(/databases/$(database)/documents/userBlocks/$(userB + '__' + userA));
+    }
+
+    // ------------------------------------------------------------------
+    // Users — public profile: displayName + classes only. No PII.
+    // ------------------------------------------------------------------
+
+    function isValidPublicProfile() {
+      return incoming().keys().hasOnly(['displayName', 'classes', 'createdAt', 'updatedAt'])
+        && (!('displayName' in incoming()) ||
+              (incoming().displayName is string
+               && incoming().displayName.size() <= 60))
+        && (!('classes' in incoming()) ||
+              (incoming().classes is list
+               && incoming().classes.size() <= 12));
+    }
+
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && request.auth.uid == userId;
-      allow delete: if isSignedIn() && request.auth.uid == userId;
-    }
+      allow read: if isVerifiedUwUser();
+      allow create: if isOwner(userId)
+        && isValidPublicProfile()
+        && incoming().createdAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidPublicProfile()
+        && incoming().createdAt == resource.data.createdAt;
+      allow delete: if false; // deletion handled by the deleteUserAccount Cloud Function
 
-    // Sessions: read/create for signed-in users.
-    // Host may update/delete; users may only add/remove themselves from participantIds.
-    match /sessions/{sessionId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isSignedIn() &&
-        (
-          request.auth.uid == resource.data.hostId
-          || (
-            !(request.auth.uid in resource.data.participantIds)
-            && request.auth.uid in request.resource.data.participantIds
-            && request.resource.data.hostId == resource.data.hostId
-            && request.resource.data.classId == resource.data.classId
-            && request.resource.data.locationId == resource.data.locationId
-            && request.resource.data.title == resource.data.title
-            && request.resource.data.startTime == resource.data.startTime
-            && request.resource.data.endTime == resource.data.endTime
-            && request.resource.data.status == resource.data.status
-            && request.resource.data.createdAt == resource.data.createdAt
-            && request.resource.data.participantIds.size() == resource.data.participantIds.size() + 1
-          )
-          || (
-            request.auth.uid in resource.data.participantIds
-            && request.resource.data.hostId == resource.data.hostId
-            && request.resource.data.classId == resource.data.classId
-            && request.resource.data.locationId == resource.data.locationId
-            && request.resource.data.title == resource.data.title
-            && request.resource.data.startTime == resource.data.startTime
-            && request.resource.data.endTime == resource.data.endTime
-            && request.resource.data.status == resource.data.status
-            && request.resource.data.createdAt == resource.data.createdAt
-            && request.resource.data.participantIds.size() == resource.data.participantIds.size() - 1
-            && !(request.auth.uid in request.resource.data.participantIds)
-          )
-        );
-      allow delete: if isSignedIn() && request.auth.uid == resource.data.hostId;
-    }
-
-    // Conversations: only participants can read/create/update conversation docs.
-    match /conversations/{conversationId} {
-      allow read: if isSignedIn()
-        && request.auth.uid in resource.data.participantIds;
-      allow create: if isSignedIn()
-        && request.auth.uid in request.resource.data.participantIds;
-      allow update: if isSignedIn()
-        && request.auth.uid in resource.data.participantIds;
-
-      // Messages: participants may read/create; only the sender may delete their own messages.
-      match /messages/{messageId} {
-        allow read: if isSignedIn()
-          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds;
-        allow create: if isSignedIn()
-          && request.auth.uid == request.resource.data.senderId
-          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds;
-        allow delete: if isSignedIn() && request.auth.uid == resource.data.senderId;
+      // Private profile: owner-only. Email must match the auth token.
+      match /private/{docId} {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId)
+          && docId == 'profile'
+          && incoming().keys().hasOnly(['email', 'updatedAt'])
+          && incoming().email is string
+          && incoming().email == request.auth.token.email;
+        allow delete: if false;
       }
     }
 
-    // Locations: read-only for signed-in users; managed via console for writes.
-    match /locations/{locationId} {
-      allow read: if isSignedIn();
-      allow write: if false;
+    // ------------------------------------------------------------------
+    // Sessions — validated create; host/join/no-op/leave update branches.
+    // Times are Firestore Timestamps (PR 5 client migration).
+    // ------------------------------------------------------------------
+
+    function isValidNewSession() {
+      return incoming().keys().hasOnly([
+          'classId', 'hostId', 'locationId', 'title',
+          'startTime', 'endTime', 'participantIds', 'status',
+          'createdAt', 'updatedAt'
+        ])
+        && incoming().hostId == request.auth.uid
+        && incoming().participantIds == [request.auth.uid]
+        && incoming().status == 'open'
+        && incoming().classId is string
+        && incoming().classId.size() >= 1 && incoming().classId.size() <= 20
+        && incoming().locationId is string
+        && incoming().locationId.size() >= 1 && incoming().locationId.size() <= 60
+        && incoming().title is string
+        && incoming().title.size() >= 1 && incoming().title.size() <= 80
+        && incoming().startTime is timestamp
+        && incoming().endTime is timestamp
+        && incoming().startTime > request.time
+        && incoming().endTime > incoming().startTime
+        && incoming().startTime < request.time + duration.value(31, 'd')
+        && incoming().endTime < incoming().startTime + duration.value(12, 'h')
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
     }
 
-    function hasValidLocationRating(ratingId) {
-      return request.resource.data.keys().hasOnly([
-          'locationId',
-          'userId',
-          'stars',
-          'tags',
-          'createdAt',
-          'updatedAt'
+    function sessionIdentityPinned() {
+      return incoming().hostId == resource.data.hostId
+        && incoming().createdAt == resource.data.createdAt
+        && incoming().classId == resource.data.classId;
+    }
+
+    function isHostEdit() {
+      return request.auth.uid == resource.data.hostId
+        && sessionIdentityPinned()
+        && affectedKeys().hasOnly(['title', 'locationId', 'startTime', 'endTime',
+                                   'status', 'participantIds', 'updatedAt'])
+        && incoming().status in ['open', 'full', 'cancelled']
+        && incoming().title is string && incoming().title.size() >= 1
+        && incoming().title.size() <= 80
+        // Host may only REMOVE participants (kick), never inject anyone:
+        && incoming().participantIds.toSet().intersection(
+             resource.data.participantIds.toSet()
+           ) == incoming().participantIds.toSet();
+    }
+
+    function isSelfJoin() {
+      return sessionIdentityPinned()
+        && affectedKeys().hasOnly(['participantIds', 'updatedAt'])
+        && resource.data.status == 'open'
+        && resource.data.startTime > request.time
+        && !(request.auth.uid in resource.data.participantIds)
+        && request.auth.uid in incoming().participantIds
+        && incoming().participantIds.size() == resource.data.participantIds.size() + 1
+        && incoming().participantIds.toSet().intersection(
+             resource.data.participantIds.toSet()
+           ) == resource.data.participantIds.toSet()
+        && !isBlockedEitherWay(request.auth.uid, resource.data.hostId);
+    }
+
+    function isSelfJoinNoOp() {
+      // Tolerates double-tap joins (arrayUnion no-op) instead of erroring.
+      return affectedKeys().hasOnly(['updatedAt'])
+        && request.auth.uid in resource.data.participantIds;
+    }
+
+    function isSelfLeave() {
+      return sessionIdentityPinned()
+        && affectedKeys().hasOnly(['participantIds', 'updatedAt'])
+        && request.auth.uid in resource.data.participantIds
+        && !(request.auth.uid in incoming().participantIds)
+        && incoming().participantIds.size() == resource.data.participantIds.size() - 1
+        && resource.data.participantIds.toSet().intersection(
+             incoming().participantIds.toSet()
+           ) == incoming().participantIds.toSet();
+    }
+
+    match /sessions/{sessionId} {
+      allow read: if isVerifiedUwUser();
+      allow create: if isVerifiedUwUser() && isValidNewSession();
+      allow update: if isVerifiedUwUser()
+        && (isHostEdit() || isSelfJoin() || isSelfJoinNoOp() || isSelfLeave());
+      allow delete: if isVerifiedUwUser() && request.auth.uid == resource.data.hostId;
+    }
+
+    // ------------------------------------------------------------------
+    // Conversations — deterministic ID == participantKey, exactly 2 people,
+    // blocks enforced at create AND per message.
+    // ------------------------------------------------------------------
+
+    function isValidNewConversation(conversationId) {
+      return incoming().keys().hasOnly([
+          'participantIds', 'participantKey',
+          'lastMessagePreview', 'lastMessageAt', 'createdAt', 'updatedAt'
         ])
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.locationId is string
-        && ratingId == request.resource.data.locationId + '__' + request.auth.uid
-        && request.resource.data.stars is int
-        && request.resource.data.stars >= 1
-        && request.resource.data.stars <= 5
-        && request.resource.data.tags is list
-        && request.resource.data.tags.size() <= 16
-        && request.resource.data.tags.hasOnly([
-          'Quiet',
-          'Loud',
-          'Crowded',
-          'Spacious',
-          'Group Friendly',
-          'Solo Focused',
-          'Reservable Rooms',
-          'Good WiFi',
-          'Poor WiFi',
-          'Outlets Available',
-          'Natural Light',
-          'Open Late',
-          'Food Nearby',
-          'Comfortable',
-          'Cold Inside',
-          'Warm Inside'
+        && incoming().participantIds is list
+        && incoming().participantIds.size() == 2
+        && incoming().participantIds[0] is string
+        && incoming().participantIds[1] is string
+        && incoming().participantIds[0] < incoming().participantIds[1]
+        && request.auth.uid in incoming().participantIds
+        && incoming().participantKey ==
+             incoming().participantIds[0] + '__' + incoming().participantIds[1]
+        && conversationId == incoming().participantKey
+        && incoming().lastMessagePreview is string
+        && incoming().lastMessagePreview.size() <= 200
+        && !isBlockedEitherWay(incoming().participantIds[0], incoming().participantIds[1]);
+    }
+
+    function otherParticipant() {
+      return resource.data.participantIds[0] == request.auth.uid
+        ? resource.data.participantIds[1]
+        : resource.data.participantIds[0];
+    }
+
+    match /conversations/{conversationId} {
+      allow read: if isVerifiedUwUser()
+        && request.auth.uid in resource.data.participantIds;
+      allow create: if isVerifiedUwUser() && isValidNewConversation(conversationId);
+      allow update: if isVerifiedUwUser()
+        && request.auth.uid in resource.data.participantIds
+        && affectedKeys().hasOnly(['lastMessagePreview', 'lastMessageAt', 'updatedAt'])
+        && incoming().lastMessagePreview is string
+        && incoming().lastMessagePreview.size() <= 200;
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        function parentConversation() {
+          return get(/databases/$(database)/documents/conversations/$(conversationId)).data;
+        }
+
+        allow read: if isVerifiedUwUser()
+          && request.auth.uid in parentConversation().participantIds;
+        allow create: if isVerifiedUwUser()
+          && request.auth.uid == incoming().senderId
+          && request.auth.uid in parentConversation().participantIds
+          && incoming().keys().hasOnly(['senderId', 'text', 'createdAt'])
+          && incoming().text is string
+          && incoming().text.size() >= 1
+          && incoming().text.size() <= 2000
+          && incoming().createdAt == request.time
+          && !isBlockedEitherWay(
+               parentConversation().participantIds[0],
+               parentConversation().participantIds[1]
+             );
+        allow update: if false;
+        allow delete: if isVerifiedUwUser() && request.auth.uid == resource.data.senderId;
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Locations — curated, console-managed, read-only.
+    // ------------------------------------------------------------------
+
+    match /locations/{locationId} {
+      // Curated public data (also bundled in the app binary) — readable by any
+      // signed-in user, including pre-verification. Matches the pre-rewrite
+      // behavior; verification gates stay on the sensitive collections.
+      allow read: if request.auth != null;
+      allow write: if false; // aggregates written by Cloud Function (admin bypasses rules)
+    }
+
+    // ------------------------------------------------------------------
+    // Location ratings — unchanged validation standard, verified-only.
+    // ------------------------------------------------------------------
+
+    function hasValidLocationRating(ratingId) {
+      return incoming().keys().hasOnly([
+          'locationId', 'userId', 'stars', 'tags', 'createdAt', 'updatedAt'
+        ])
+        && incoming().userId == request.auth.uid
+        && incoming().locationId is string
+        && ratingId == incoming().locationId + '__' + request.auth.uid
+        && incoming().stars is int
+        && incoming().stars >= 1
+        && incoming().stars <= 5
+        && incoming().tags is list
+        && incoming().tags.size() <= 16
+        && incoming().tags.hasOnly([
+          'Quiet', 'Loud', 'Crowded', 'Spacious', 'Group Friendly', 'Solo Focused',
+          'Reservable Rooms', 'Good WiFi', 'Poor WiFi', 'Outlets Available',
+          'Natural Light', 'Open Late', 'Food Nearby', 'Comfortable',
+          'Cold Inside', 'Warm Inside'
         ]);
     }
 
-    // Location ratings: owners can submit one validated review per study location.
     match /locationRatings/{ratingId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && hasValidLocationRating(ratingId);
-      allow update: if isSignedIn()
+      allow read: if isVerifiedUwUser();
+      allow create: if isVerifiedUwUser() && hasValidLocationRating(ratingId);
+      allow update: if isVerifiedUwUser()
         && hasValidLocationRating(ratingId)
-        && request.resource.data.createdAt == resource.data.createdAt;
-      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+        && incoming().createdAt == resource.data.createdAt;
+      allow delete: if isVerifiedUwUser() && resource.data.userId == request.auth.uid;
     }
 
-    // User blocks: blocker or blocked may read; blocker may create; only the blocker may delete
+    // ------------------------------------------------------------------
+    // User blocks — blocker-only visibility (D5). Deterministic ID.
+    // ------------------------------------------------------------------
+
     match /userBlocks/{blockId} {
-      allow read: if isSignedIn() &&
-        (resource.data.blockerUserId == request.auth.uid || resource.data.blockedUserId == request.auth.uid);
-      allow create: if isSignedIn() && request.resource.data.blockerUserId == request.auth.uid;
-      allow delete: if isSignedIn() && resource.data.blockerUserId == request.auth.uid;
-    }
-
-    // Reports: allow creation by reporter; only the reporter may read/delete their reports.
-    // Reports about a user are retained for moderation safety.
-    match /reports/{reportId} {
-      allow create: if isSignedIn() && request.resource.data.reporterUserId == request.auth.uid;
-      allow read: if isSignedIn() && resource.data.reporterUserId == request.auth.uid;
-      allow delete: if isSignedIn() && resource.data.reporterUserId == request.auth.uid;
+      allow read: if isVerifiedUwUser()
+        && resource.data.blockerUserId == request.auth.uid;
+      allow create: if isVerifiedUwUser()
+        && incoming().keys().hasOnly(['blockerUserId', 'blockedUserId', 'createdAt'])
+        && incoming().blockerUserId == request.auth.uid
+        && incoming().blockedUserId is string
+        && incoming().blockedUserId != request.auth.uid
+        && blockId == incoming().blockerUserId + '__' + incoming().blockedUserId
+        && incoming().createdAt == request.time;
       allow update: if false;
+      allow delete: if isVerifiedUwUser()
+        && resource.data.blockerUserId == request.auth.uid;
     }
 
-    // Deny everything else explicitly
+    // ------------------------------------------------------------------
+    // Reports — write-only evidence. Immutable. No client reads.
+    // ------------------------------------------------------------------
+
+    match /reports/{reportId} {
+      allow create: if isVerifiedUwUser()
+        && incoming().keys().hasOnly([
+             'reporterUserId', 'reportedUserId', 'reason', 'details',
+             'context', 'createdAt'
+           ])
+        && incoming().reporterUserId == request.auth.uid
+        && incoming().reportedUserId is string
+        && incoming().reportedUserId != request.auth.uid
+        && incoming().reason in ['Spam', 'Harassment', 'Unsafe behavior', 'Impersonation', 'Other']
+        && incoming().details is string
+        && incoming().details.size() <= 1000
+        && incoming().context is string
+        && incoming().context.size() <= 40
+        && incoming().createdAt == request.time;
+      allow read, update, delete: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // Default deny.
+    // ------------------------------------------------------------------
+
     match /{document=**} {
       allow read, write: if false;
     }

@@ -1,27 +1,42 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Image } from 'expo-image';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
-  ActivityIndicator,
   Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
-  TextInput,
+  Text,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
+import { formatSessionStart, formatSessionWindow } from '@/components/session-card';
+import { Avatar, AvatarStack } from '@/components/ui/Avatar';
+import { BadgeChip } from '@/components/ui/BadgeChip';
+import { Button } from '@/components/ui/Button';
+import { CourseChip } from '@/components/ui/CourseChip';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { SectionHeader } from '@/components/ui/SectionHeader';
+import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
+import { Colors, Elevation, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { track } from '@/lib/analytics';
+import { subscribeToAuthState } from '@/lib/auth';
 import {
-  signInOrPrepareAccountCreation,
-  subscribeToAuthState,
-} from '@/lib/auth';
-import { getUserProfile, type UserProfile } from '@/lib/firestore';
+  getLocations,
+  getProfilesByIds,
+  getUpcomingSessions,
+  getUserProfile,
+  joinSession,
+  type StudySession,
+  type UserProfile,
+} from '@/lib/firestore';
 import type { User } from 'firebase/auth';
+
+type TodaySession = StudySession & { locationName: string };
+
+type HeroKind = 'live' | 'joined' | 'matched';
 
 function splitDisplayName(displayName: string | undefined) {
   const normalized = displayName?.trim() ?? '';
@@ -38,17 +53,146 @@ function splitDisplayName(displayName: string | undefined) {
   };
 }
 
-function getSetupSummary(profile: UserProfile | null) {
-  const hasName = !!profile?.displayName?.trim();
-  const hasClasses = (profile?.classes?.length ?? 0) > 0;
-  const hasAvailability = (profile?.availability?.length ?? 0) > 0;
+function timeOfDayGreeting(now: Date = new Date()) {
+  const hour = now.getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
 
-  return {
-    completed: [hasName, hasClasses, hasAvailability].filter(Boolean).length,
-    hasAvailability,
-    hasClasses,
-    hasName,
-  };
+function isLive(session: StudySession, nowMs: number) {
+  return (
+    session.startTime.toMillis() <= nowMs &&
+    !!session.endTime &&
+    session.endTime.toMillis() > nowMs
+  );
+}
+
+/**
+ * Board HomeScreen hero (index.tsx ~218-241): eyebrow row with live dot and
+ * going count, lg course chip, sans title, location line, avatar stack +
+ * one primary action. No capacity/seats data exists, so the counter shows
+ * the going count instead of "3 / 5 seats".
+ */
+function HeroCard({
+  session,
+  kind,
+  attendeeNames,
+  joined,
+  joining,
+  onJoin,
+  onPress,
+}: {
+  session: TodaySession;
+  kind: HeroKind;
+  attendeeNames: string[];
+  joined: boolean;
+  joining: boolean;
+  onJoin: () => void;
+  onPress: () => void;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+  const going = session.participantIds.length;
+  const isFull = session.status === 'full';
+
+  const eyebrow =
+    kind === 'live' ? 'Happening now' : kind === 'joined' ? 'Your next session' : 'Up next';
+
+  const action = joined ? (
+    <Button label="✓ Going" variant="success" size="sm" onPress={onPress} />
+  ) : isFull ? (
+    <BadgeChip label="Full" tone="neutral" />
+  ) : (
+    <Button label="Join" size="sm" loading={joining} onPress={onJoin} />
+  );
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.heroCard,
+        Elevation.e1,
+        {
+          backgroundColor: palette.surface,
+          borderColor: palette.border,
+          opacity: pressed ? 0.92 : 1,
+        },
+      ]}>
+      <View style={styles.heroTopRow}>
+        <View style={styles.heroEyebrowRow}>
+          {kind === 'live' ? (
+            <View style={[styles.liveDot, { backgroundColor: palette.tint }]} />
+          ) : null}
+          <Text
+            style={[
+              TypeScale.eyebrow,
+              { color: kind === 'live' ? palette.tint : palette.icon },
+            ]}>
+            {eyebrow}
+          </Text>
+        </View>
+        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
+          {going} going
+        </Text>
+      </View>
+      <CourseChip code={session.classId} size="lg" />
+      <Text style={[styles.heroTitle, { color: palette.text }]} numberOfLines={2}>
+        {session.title}
+      </Text>
+      <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
+        {formatSessionWindow(session.startTime, session.endTime)} · {session.locationName}
+      </Text>
+      <View style={styles.heroFooter}>
+        <AvatarStack names={attendeeNames} max={3} size="sm" totalCount={going} />
+        {action}
+      </View>
+    </Pressable>
+  );
+}
+
+/**
+ * Board upcoming row (index.tsx ~247-269): standalone card, course chip +
+ * title + "location · time" left, big accent count + tiny uppercase label
+ * right. Board's number is seats-left; without capacity data it is the
+ * going count.
+ */
+function UpcomingRow({ session, onPress }: { session: TodaySession; onPress: () => void }) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.upcomingCard,
+        {
+          backgroundColor: palette.surface,
+          borderColor: palette.border,
+          opacity: pressed ? 0.85 : session.status === 'full' ? 0.6 : 1,
+        },
+      ]}>
+      <View style={styles.upcomingBody}>
+        <CourseChip code={session.classId} size="sm" />
+        <Text
+          style={[TypeScale.bodyStrong, styles.upcomingTitle, { color: palette.text }]}
+          numberOfLines={1}>
+          {session.title}
+        </Text>
+        <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+          {session.locationName} · {formatSessionStart(session.startTime)}
+        </Text>
+      </View>
+      <View style={styles.upcomingCount}>
+        <Text style={[styles.upcomingNumber, { color: palette.tint }]}>
+          {session.participantIds.length}
+        </Text>
+        <Text style={[styles.upcomingNumberLabel, { color: palette.icon }]}>going</Text>
+      </View>
+    </Pressable>
+  );
 }
 
 export default function HomeScreen() {
@@ -56,28 +200,26 @@ export default function HomeScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [isBusy, setIsBusy] = useState(false);
-  const [isProfileLoading, setIsProfileLoading] = useState(false);
-  const [dashboardStatus, setDashboardStatus] = useState(
-    'Sign in to start matching with classmates and exploring sessions.'
-  );
-  const isSignedIn = !!currentUser;
+  const [sessions, setSessions] = useState<TodaySession[]>([]);
+  const [sessionsError, setSessionsError] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [heroAttendeeNames, setHeroAttendeeNames] = useState<string[]>([]);
+  const [joiningHero, setJoiningHero] = useState(false);
+  const { toast, show: showToast } = useSuccessToast();
+  // The (tabs) layout gate redirects signed-out/unverified users to the
+  // (auth) flow; this flag only guards the brief frame before that happens.
+  const isSignedIn = !!currentUser && currentUser.emailVerified;
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
       setCurrentUser(user);
 
-      if (user?.email) {
-        setEmail(user.email);
-        return;
+      if (!user) {
+        setProfile(null);
+        setSessions([]);
       }
-
-      setProfile(null);
-      setDashboardStatus('Sign in to start matching with classmates and exploring sessions.');
     });
 
     return unsubscribe;
@@ -85,261 +227,275 @@ export default function HomeScreen() {
 
   useEffect(() => {
     async function loadUserProfile() {
-      if (!currentUser) {
+      if (!currentUser || !currentUser.emailVerified) {
         return;
       }
 
       try {
-        setIsProfileLoading(true);
         const loadedProfile = await getUserProfile(currentUser.uid);
         setProfile(loadedProfile);
-
-        if (!loadedProfile) {
-          setDashboardStatus('Finish your profile so Studi can recommend the right people and sessions.');
-          return;
-        }
-
-        const setup = getSetupSummary(loadedProfile);
-        setDashboardStatus(
-          setup.completed === 3
-            ? 'Your profile is ready. Jump into matches, messages, or active study sessions.'
-            : `You are ${setup.completed}/3 of the way through setup. Finish the rest on Profile to get better matches.`
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unable to load your dashboard right now.';
-        setDashboardStatus(message);
-      } finally {
-        setIsProfileLoading(false);
+      } catch {
+        setProfile(null);
       }
     }
 
     loadUserProfile();
   }, [currentUser]);
 
-  async function handleSignIn() {
-    try {
-      setIsBusy(true);
-      const result = await signInOrPrepareAccountCreation(email, password);
+  const loadSessions = useCallback(async () => {
+    if (!currentUser || !currentUser.emailVerified) {
+      return;
+    }
 
-      if (result.mode === 'needs-profile') {
-        router.push('/complete-profile');
+    try {
+      setSessionsError('');
+      const [loadedSessions, locations] = await Promise.all([
+        getUpcomingSessions({ includeInProgress: true }),
+        getLocations(),
+      ]);
+      const locationsById = new Map(
+        locations.map((location) => [location.locationId, location] as const)
+      );
+
+      setSessions(
+        loadedSessions.map((session) => ({
+          ...session,
+          locationName: locationsById.get(session.locationId)?.name ?? session.locationId,
+        }))
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to load sessions right now.';
+      setSessionsError(message);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
+
+  const savedName = splitDisplayName(profile?.displayName);
+  const profileClasses = useMemo(
+    () => (profile?.classes ?? []).map((classCode) => classCode.trim().toUpperCase()),
+    [profile]
+  );
+
+  // Hero + rows: the board feed is personal — sessions for my classes plus
+  // anything I've already joined.
+  const { hero, heroKind, upcoming } = useMemo(() => {
+    const uid = currentUser?.uid ?? '';
+    const nowMs = Date.now();
+
+    const relevant = sessions.filter(
+      (session) =>
+        profileClasses.includes(session.classId.trim().toUpperCase()) ||
+        (uid && session.participantIds.includes(uid))
+    );
+
+    const liveSession = relevant.find((session) => isLive(session, nowMs));
+    const joinedSession = relevant.find(
+      (session) => uid && session.participantIds.includes(uid) && !isLive(session, nowMs)
+    );
+    const heroSession = liveSession ?? joinedSession ?? relevant[0];
+    const kind: HeroKind = liveSession
+      ? 'live'
+      : heroSession && uid && heroSession.participantIds.includes(uid)
+        ? 'joined'
+        : 'matched';
+
+    return {
+      hero: heroSession,
+      heroKind: kind,
+      upcoming: relevant
+        .filter((session) => session.sessionId !== heroSession?.sessionId)
+        .slice(0, 4),
+    };
+  }, [currentUser, profileClasses, sessions]);
+
+  // Resolve a few attendee names for the hero's avatar stack; the "+N" chip
+  // covers the rest without inventing initials.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!hero || hero.participantIds.length === 0) {
+      setHeroAttendeeNames([]);
+      return;
+    }
+
+    getProfilesByIds(hero.participantIds.slice(0, 3))
+      .then((profiles) => {
+        if (cancelled) {
+          return;
+        }
+        setHeroAttendeeNames(
+          hero.participantIds
+            .slice(0, 3)
+            .map((uid) => profiles.get(uid)?.displayName)
+            .filter((name): name is string => !!name)
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHeroAttendeeNames([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hero]);
+
+  async function handleJoinHero() {
+    if (!currentUser || !hero) {
+      return;
+    }
+
+    try {
+      setJoiningHero(true);
+      const result = await joinSession(hero.sessionId, currentUser.uid);
+      await loadSessions();
+
+      if (result === 'joined') {
+        track('session_joined', { classId: hero.classId });
+        showToast('You’re in.', hero.title || 'See you at the table.');
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to sign in right now.';
-      Alert.alert('Auth Error', message);
+      const message =
+        error instanceof Error ? error.message : 'Unable to join this session right now.';
+      Alert.alert('Join Session Error', message);
     } finally {
-      setIsBusy(false);
+      setJoiningHero(false);
     }
   }
 
-  const savedName = splitDisplayName(profile?.displayName);
-  const firstName = savedName.firstName || 'Study';
-  const setup = useMemo(() => getSetupSummary(profile), [profile]);
-  const classCount = profile?.classes.length ?? 0;
-  const availabilityCount = profile?.availability.length ?? 0;
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    await loadSessions();
+    setIsRefreshing(false);
+  }
+
+  const dateEyebrow = new Date()
+    .toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+
+  if (!isSignedIn) {
+    return null;
+  }
+
+  const heroJoined = !!hero && !!currentUser && hero.participantIds.includes(currentUser.uid);
+  const showEmpty = !hero && upcoming.length === 0;
 
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView style={[styles.hero, { backgroundColor: palette.surface }]}>
-        <Image
-          contentFit="contain"
-          source={require('../../assets/images/studi-wordmark.png')}
-          style={styles.heroLogo}
-        />
-        <ThemedText style={[styles.eyebrow, styles.heroEyebrow, { color: palette.tint }]}>
-          UW-Madison Study Hub
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Find study partners, compare availability, and lock in study sessions without bouncing
-          between five different group chats.
-        </ThemedText>
-      </ThemedView>
-
-      {isSignedIn ? (
-        <>
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Dashboard</ThemedText>
-              <View style={[styles.statusPill, { backgroundColor: palette.badge }]}>
-                <ThemedText type="defaultSemiBold">
-                  {setup.completed}/3 ready
-                </ThemedText>
-              </View>
-            </View>
-            <ThemedText type="subtitle">Welcome back, {firstName}</ThemedText>
-            <ThemedText style={styles.helperText}>{dashboardStatus}</ThemedText>
-            <View style={styles.metricsRow}>
-              <View style={[styles.metricCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText style={styles.metricValue}>{classCount}</ThemedText>
-                <ThemedText style={styles.metricLabel}>
-                  class{classCount === 1 ? '' : 'es'}
-                </ThemedText>
-              </View>
-              <View style={[styles.metricCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText style={styles.metricValue}>{availabilityCount}</ThemedText>
-                <ThemedText style={styles.metricLabel}>
-                  time block{availabilityCount === 1 ? '' : 's'}
-                </ThemedText>
-              </View>
-              <View style={[styles.metricCard, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText style={styles.metricValue}>{profile ? 'On' : 'Off'}</ThemedText>
-                <ThemedText style={styles.metricLabel}>matching</ThemedText>
-              </View>
-            </View>
-          </ThemedView>
-
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Quick actions</ThemedText>
-            </View>
-            <ThemedText type="subtitle">Start from what you need right now</ThemedText>
-            <View style={styles.actionGrid}>
-              <Pressable
-                onPress={() => router.push('/matches')}
-                style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText type="defaultSemiBold">View Matches</ThemedText>
-                <ThemedText style={styles.actionCopy}>See who overlaps with your classes and free time.</ThemedText>
-              </Pressable>
-              <Pressable
-                onPress={() => router.push('/messages')}
-                style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText type="defaultSemiBold">Open Messages</ThemedText>
-                <ThemedText style={styles.actionCopy}>Keep session plans and coordination in one place.</ThemedText>
-              </Pressable>
-              <Pressable
-                onPress={() => router.push('/explore')}
-                style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText type="defaultSemiBold">Browse Spots</ThemedText>
-                <ThemedText style={styles.actionCopy}>Search campus libraries, commons, and other study areas.</ThemedText>
-              </Pressable>
-              <Pressable
-                onPress={() => router.push('/sessions')}
-                style={[styles.actionTile, { backgroundColor: palette.surfaceMuted, borderColor: palette.outline }]}>
-                <ThemedText type="defaultSemiBold">Join Sessions</ThemedText>
-                <ThemedText style={styles.actionCopy}>Find sessions already happening for your classes.</ThemedText>
-              </Pressable>
-            </View>
-            <Pressable
-              onPress={() => router.push('/create-session')}
-              style={[styles.primaryButton, { backgroundColor: palette.tint }]}>
-              <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-                Create a Study Session
-              </ThemedText>
-            </Pressable>
-          </ThemedView>
-
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Profile completion</ThemedText>
-              <View style={[styles.statusPill, { backgroundColor: palette.surfaceMuted }]}>
-                <ThemedText type="defaultSemiBold">Edit on Profile</ThemedText>
-              </View>
-            </View>
-            <ThemedText type="subtitle">Keep matching data accurate</ThemedText>
-            <View style={styles.checklist}>
-              <View style={styles.checklistItem}>
-                <ThemedText type="defaultSemiBold">{setup.hasName ? 'Done' : 'Next'}</ThemedText>
-                <ThemedText style={styles.checklistCopy}>
-                  {setup.hasName
-                    ? `Name saved as ${profile?.displayName || currentUser.email}.`
-                    : 'Add your first and last name so people see you clearly in sessions and chat.'}
-                </ThemedText>
-              </View>
-              <View style={styles.checklistItem}>
-                <ThemedText type="defaultSemiBold">{setup.hasClasses ? 'Done' : 'Next'}</ThemedText>
-                <ThemedText style={styles.checklistCopy}>
-                  {setup.hasClasses
-                    ? `${classCount} class${classCount === 1 ? '' : 'es'} selected for matching.`
-                    : 'Choose classes on your Profile so Studi can find the right classmates.'}
-                </ThemedText>
-              </View>
-              <View style={styles.checklistItem}>
-                <ThemedText type="defaultSemiBold">{setup.hasAvailability ? 'Done' : 'Next'}</ThemedText>
-                <ThemedText style={styles.checklistCopy}>
-                  {setup.hasAvailability
-                    ? `${availabilityCount} availability block${availabilityCount === 1 ? '' : 's'} saved.`
-                    : 'Save weekly windows on your Profile so matches happen at the right time.'}
-                </ThemedText>
-              </View>
-            </View>
-            <Pressable
-              onPress={() => router.push('/profile')}
-              style={[styles.secondaryButton, { borderColor: palette.outline }]}>
-              <ThemedText type="defaultSemiBold">Open Profile</ThemedText>
-            </Pressable>
-          </ThemedView>
-        </>
-      ) : (
-        <>
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>Welcome</ThemedText>
-              <View style={[styles.statusPill, { backgroundColor: palette.badge }]}>
-                <ThemedText type="defaultSemiBold">Start here</ThemedText>
-              </View>
-            </View>
-            <ThemedText type="subtitle">Sign in with your UW email</ThemedText>
-            <ThemedText style={styles.helperText}>
-              Use a `@wisc.edu` email. If the account does not exist yet, we&apos;ll send you to a
-              quick profile screen to finish setting up your name before you enter the app.
-            </ThemedText>
-
-            <TextInput
-              autoCapitalize="none"
-              autoComplete="email"
-              keyboardType="email-address"
-              onChangeText={setEmail}
-              placeholder="netid@wisc.edu"
-              placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-              style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
-              value={email}
-            />
-
-            <TextInput
-              autoCapitalize="none"
-              onChangeText={setPassword}
-              placeholder="Password"
-              placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-              secureTextEntry
-              style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
-              value={password}
-            />
-
-            <Pressable
-              disabled={isBusy}
-              onPress={handleSignIn}
-              style={[styles.primaryButton, { backgroundColor: palette.tint, opacity: isBusy ? 0.7 : 1 }]}>
-              {isBusy ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-                  Sign In / Create Account
-                </ThemedText>
-              )}
-            </Pressable>
-          </ThemedView>
-
-          <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionLabel}>What happens next</ThemedText>
-            </View>
-            <ThemedText type="subtitle">One login, then a personalized dashboard</ThemedText>
-            <ThemedText style={styles.mutedText}>
-              New users finish their name on a separate setup screen, then land inside Studi with
-              access to profile editing, matches, study spots, messages, and sessions.
-            </ThemedText>
-          </ThemedView>
-        </>
-      )}
-
-      {isProfileLoading && isSignedIn ? (
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator color={palette.tint} />
+    <View style={[styles.screen, { backgroundColor: palette.background }]}>
+      <ScrollView
+        style={styles.screen}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={palette.icon}
+          />
+        }
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
+        <View style={styles.header}>
+          <View style={styles.headerText}>
+            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{dateEyebrow}</Text>
+            <Text
+              style={[styles.greeting, { color: palette.text }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit>
+              {timeOfDayGreeting()}
+              {savedName.firstName ? `, ${savedName.firstName}` : ''}
+            </Text>
+          </View>
+          <Pressable accessibilityRole="button" onPress={() => router.push('/profile')}>
+            <Avatar name={profile?.displayName || currentUser?.email || 'S'} size="md" />
+          </Pressable>
         </View>
-      ) : null}
-    </ScrollView>
+
+        {hero ? (
+          <HeroCard
+            session={hero}
+            kind={heroKind}
+            attendeeNames={heroAttendeeNames}
+            joined={heroJoined}
+            joining={joiningHero}
+            onJoin={handleJoinHero}
+            onPress={() => router.push(`/session/${hero.sessionId}`)}
+          />
+        ) : null}
+
+        {upcoming.length > 0 ? (
+          <View style={styles.section}>
+            <SectionHeader
+              eyebrow="Upcoming today"
+              action={
+                <Pressable accessibilityRole="button" onPress={() => router.push('/sessions')}>
+                  <Text style={[TypeScale.label, { color: palette.tint }]}>See all</Text>
+                </Pressable>
+              }
+            />
+            <View style={styles.upcomingList}>
+              {upcoming.map((session) => (
+                <UpcomingRow
+                  key={session.sessionId}
+                  session={session}
+                  onPress={() => router.push(`/session/${session.sessionId}`)}
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {showEmpty ? (
+          sessionsError ? (
+            <EmptyState
+              icon="seat"
+              headline="Something went off-script."
+              body={sessionsError}
+              actionLabel="Try again"
+              onAction={loadSessions}
+              style={styles.emptyState}
+            />
+          ) : profileClasses.length === 0 ? (
+            <EmptyState
+              icon="calendar"
+              headline="Make it yours"
+              body="Add your classes to see sessions that match."
+              actionLabel="Add classes"
+              onAction={() => router.push('/profile')}
+              style={styles.emptyState}
+            />
+          ) : (
+            <EmptyState
+              icon="seat"
+              headline="Quiet on State St."
+              body="No sessions for your classes right now. Someone has to set the first table."
+              actionLabel="Host one"
+              onAction={() => router.push('/create-session')}
+              style={styles.emptyState}
+            />
+          )
+        ) : null}
+
+        {profileClasses.length > 0 ? (
+          <View style={styles.section}>
+            <SectionHeader eyebrow="Your classes this week" />
+            <View style={styles.chipWrap}>
+              {profileClasses.map((classCode) => (
+                <CourseChip
+                  key={classCode}
+                  code={classCode}
+                  onPress={() =>
+                    router.push({ pathname: '/sessions', params: { classId: classCode } })
+                  }
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
+      </ScrollView>
+      <SuccessToast toast={toast} />
+    </View>
   );
 }
 
@@ -348,136 +504,105 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    gap: Space.xl,
+    padding: Space.lg + 4,
+    paddingBottom: Space.xxl + 4,
   },
-  hero: {
-    alignItems: 'center',
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
-  },
-  heroLogo: {
-    height: 110,
-    width: 320,
-  },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  heroEyebrow: {
-    textAlign: 'center',
-  },
-  heroText: {
-    lineHeight: 32,
-    maxWidth: 420,
-    textAlign: 'center',
-  },
-  card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-  },
-  sectionHeader: {
-    alignItems: 'center',
+  header: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
+    gap: Space.md,
   },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
+  headerText: {
+    flexShrink: 1,
+    gap: Space.xs + 1,
   },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  greeting: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 29,
+    lineHeight: 35,
   },
-  helperText: {
-    lineHeight: 28,
-    opacity: 0.86,
+  heroCard: {
+    borderRadius: Radius.xxl - 4,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    padding: Space.lg + 4,
   },
-  mutedText: {
-    lineHeight: 28,
-    opacity: 0.82,
-  },
-  input: {
-    borderRadius: 14,
-    borderWidth: 1,
-    fontSize: 16,
-    minHeight: 56,
-    paddingHorizontal: 16,
-  },
-  primaryButton: {
-    alignItems: 'center',
-    borderRadius: 16,
-    justifyContent: 'center',
-    minHeight: 56,
-    paddingHorizontal: 18,
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    borderRadius: 16,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 52,
-    paddingHorizontal: 18,
-  },
-  metricsRow: {
+  heroTopRow: {
     flexDirection: 'row',
-    gap: 10,
-  },
-  metricCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    flex: 1,
-    gap: 4,
-    minHeight: 96,
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  metricValue: {
-    fontSize: 24,
-    fontWeight: '700',
-  },
-  metricLabel: {
-    opacity: 0.75,
-  },
-  actionGrid: {
-    gap: 12,
-  },
-  actionTile: {
-    borderRadius: 18,
-    borderWidth: 1,
-    gap: 6,
-    padding: 16,
-  },
-  actionCopy: {
-    lineHeight: 24,
-    opacity: 0.8,
-  },
-  checklist: {
-    gap: 14,
-  },
-  checklistItem: {
-    gap: 4,
-  },
-  checklistCopy: {
-    lineHeight: 24,
-    opacity: 0.82,
-  },
-  loadingOverlay: {
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingBottom: 8,
+    justifyContent: 'space-between',
+    gap: Space.sm,
+    marginBottom: Space.lg,
+  },
+  heroEyebrowRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm - 2,
+  },
+  liveDot: {
+    borderRadius: Radius.pill,
+    height: 6,
+    width: 6,
+  },
+  heroTitle: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 20,
+    lineHeight: 26,
+    marginTop: Space.md,
+    marginBottom: Space.xs,
+  },
+  heroFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Space.md,
+    marginTop: Space.lg,
+  },
+  section: {
+    gap: Space.md,
+  },
+  upcomingList: {
+    gap: Space.md - 2,
+  },
+  upcomingCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Space.md,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    padding: Space.lg,
+  },
+  upcomingBody: {
+    flexShrink: 1,
+    alignItems: 'flex-start',
+  },
+  upcomingTitle: {
+    marginTop: Space.sm,
+  },
+  upcomingCount: {
+    alignItems: 'center',
+    minWidth: 40,
+  },
+  upcomingNumber: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 18,
+    lineHeight: 22,
+  },
+  upcomingNumberLabel: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 9,
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+    marginTop: 1,
+  },
+  chipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  emptyState: {
+    paddingVertical: Space.lg,
   },
 });

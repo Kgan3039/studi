@@ -1,0 +1,149 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Signed-in helper
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Users: owners may read/create/update/delete their own profile
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && request.auth.uid == userId;
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Sessions: read/create for signed-in users.
+    // Host may update/delete; users may only add/remove themselves from participantIds.
+    match /sessions/{sessionId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() &&
+        (
+          request.auth.uid == resource.data.hostId
+          || (
+            !(request.auth.uid in resource.data.participantIds)
+            && request.auth.uid in request.resource.data.participantIds
+            && request.resource.data.hostId == resource.data.hostId
+            && request.resource.data.classId == resource.data.classId
+            && request.resource.data.locationId == resource.data.locationId
+            && request.resource.data.title == resource.data.title
+            && request.resource.data.startTime == resource.data.startTime
+            && request.resource.data.endTime == resource.data.endTime
+            && request.resource.data.status == resource.data.status
+            && request.resource.data.createdAt == resource.data.createdAt
+            && request.resource.data.participantIds.size() == resource.data.participantIds.size() + 1
+          )
+          || (
+            request.auth.uid in resource.data.participantIds
+            && request.resource.data.hostId == resource.data.hostId
+            && request.resource.data.classId == resource.data.classId
+            && request.resource.data.locationId == resource.data.locationId
+            && request.resource.data.title == resource.data.title
+            && request.resource.data.startTime == resource.data.startTime
+            && request.resource.data.endTime == resource.data.endTime
+            && request.resource.data.status == resource.data.status
+            && request.resource.data.createdAt == resource.data.createdAt
+            && request.resource.data.participantIds.size() == resource.data.participantIds.size() - 1
+            && !(request.auth.uid in request.resource.data.participantIds)
+          )
+        );
+      allow delete: if isSignedIn() && request.auth.uid == resource.data.hostId;
+    }
+
+    // Conversations: only participants can read/create/update conversation docs.
+    match /conversations/{conversationId} {
+      allow read: if isSignedIn()
+        && request.auth.uid in resource.data.participantIds;
+      allow create: if isSignedIn()
+        && request.auth.uid in request.resource.data.participantIds;
+      allow update: if isSignedIn()
+        && request.auth.uid in resource.data.participantIds;
+
+      // Messages: participants may read/create; only the sender may delete their own messages.
+      match /messages/{messageId} {
+        allow read: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds;
+        allow create: if isSignedIn()
+          && request.auth.uid == request.resource.data.senderId
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds;
+        allow delete: if isSignedIn() && request.auth.uid == resource.data.senderId;
+      }
+    }
+
+    // Locations: read-only for signed-in users; managed via console for writes.
+    match /locations/{locationId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    function hasValidLocationRating(ratingId) {
+      return request.resource.data.keys().hasOnly([
+          'locationId',
+          'userId',
+          'stars',
+          'tags',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.locationId is string
+        && ratingId == request.resource.data.locationId + '__' + request.auth.uid
+        && request.resource.data.stars is int
+        && request.resource.data.stars >= 1
+        && request.resource.data.stars <= 5
+        && request.resource.data.tags is list
+        && request.resource.data.tags.size() <= 16
+        && request.resource.data.tags.hasOnly([
+          'Quiet',
+          'Loud',
+          'Crowded',
+          'Spacious',
+          'Group Friendly',
+          'Solo Focused',
+          'Reservable Rooms',
+          'Good WiFi',
+          'Poor WiFi',
+          'Outlets Available',
+          'Natural Light',
+          'Open Late',
+          'Food Nearby',
+          'Comfortable',
+          'Cold Inside',
+          'Warm Inside'
+        ]);
+    }
+
+    // Location ratings: owners can submit one validated review per study location.
+    match /locationRatings/{ratingId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && hasValidLocationRating(ratingId);
+      allow update: if isSignedIn()
+        && hasValidLocationRating(ratingId)
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // User blocks: blocker or blocked may read; blocker may create; only the blocker may delete
+    match /userBlocks/{blockId} {
+      allow read: if isSignedIn() &&
+        (resource.data.blockerUserId == request.auth.uid || resource.data.blockedUserId == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.blockerUserId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.blockerUserId == request.auth.uid;
+    }
+
+    // Reports: allow creation by reporter; only the reporter may read/delete their reports.
+    // Reports about a user are retained for moderation safety.
+    match /reports/{reportId} {
+      allow create: if isSignedIn() && request.resource.data.reporterUserId == request.auth.uid;
+      allow read: if isSignedIn() && resource.data.reporterUserId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.reporterUserId == request.auth.uid;
+      allow update: if false;
+    }
+
+    // Deny everything else explicitly
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
