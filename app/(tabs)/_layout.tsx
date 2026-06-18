@@ -81,6 +81,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="explore"
+        options={{
+          title: 'Map',
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="map.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="messages"
         options={{
           title: 'Messages',
@@ -92,13 +99,6 @@ export default function TabLayout() {
         options={{
           title: 'You',
           tabBarIcon: ({ color }) => <IconSymbol size={26} name="person.crop.circle.fill" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="explore"
-        options={{
-          title: 'Map',
-          tabBarIcon: ({ color }) => <IconSymbol size={26} name="map.fill" color={color} />,
         }}
       />
     </Tabs>
