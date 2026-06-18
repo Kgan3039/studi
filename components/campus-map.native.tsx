@@ -155,8 +155,7 @@ export function CampusMap({
                 ? Brand.warning
                 : timing === 'later'
                   ? Brand.info
-                  : palette.surface;
-          const hasSessions = timing !== 'none';
+                  : palette.icon;
 
           return (
             <Marker
@@ -169,34 +168,31 @@ export function CampusMap({
               <View style={styles.markerWrap}>
                 <View
                   style={[
-                    styles.marker,
-                    hasSessions ? styles.markerTimed : styles.markerEmpty,
-                    isSelected && styles.markerSelected,
-                    Elevation.e2,
+                    styles.markerHalo,
+                    isSelected && styles.markerHaloSelected,
                     {
-                      backgroundColor: timingColor,
-                      borderColor: isSelected
-                        ? palette.text
-                        : hasSessions
-                          ? palette.surface
-                          : palette.outline,
+                      backgroundColor: isSelected ? `${timingColor}20` : 'transparent',
                     },
                   ]}>
-                  {hasSessions ? (
-                    <Text style={styles.markerText}>{sessionCount}</Text>
-                  ) : (
-                    <View style={[styles.markerDot, { backgroundColor: palette.icon }]} />
-                  )}
+                  <View
+                    style={[
+                      styles.markerCore,
+                      isSelected && styles.markerCoreSelected,
+                      Elevation.e1,
+                      {
+                        backgroundColor: palette.surface,
+                        borderColor: isSelected ? timingColor : palette.border,
+                      },
+                    ]}>
+                    <View
+                      style={[
+                        styles.markerStatus,
+                        isSelected && styles.markerStatusSelected,
+                        { backgroundColor: timingColor },
+                      ]}
+                    />
+                  </View>
                 </View>
-                <View
-                  style={[
-                    styles.markerStem,
-                    !hasSessions && styles.markerStemSmall,
-                    {
-                      backgroundColor: hasSessions ? timingColor : palette.icon,
-                    },
-                  ]}
-                />
               </View>
             </Marker>
           );
@@ -269,45 +265,37 @@ const styles = StyleSheet.create({
     minHeight: 44,
     minWidth: 44,
   },
-  marker: {
+  markerHalo: {
     alignItems: 'center',
     borderRadius: Radius.pill,
-    borderWidth: 2,
+    height: 32,
     justifyContent: 'center',
+    width: 32,
   },
-  markerTimed: {
-    height: 22,
-    minWidth: 22,
-    paddingHorizontal: 5,
+  markerHaloSelected: {
+    transform: [{ scale: 1.06 }],
   },
-  markerEmpty: {
-    height: 15,
-    minWidth: 15,
-  },
-  markerSelected: {
-    borderWidth: 2.5,
-    transform: [{ scale: 1.18 }],
-  },
-  markerText: {
-    color: '#FFFFFF',
-    fontFamily: FontFamily.bodySemiBold,
-    fontSize: 10,
-    lineHeight: 12,
-  },
-  markerDot: {
+  markerCore: {
+    alignItems: 'center',
     borderRadius: Radius.pill,
-    height: 4,
-    width: 4,
+    borderWidth: 1,
+    height: 20,
+    justifyContent: 'center',
+    width: 20,
   },
-  markerStem: {
+  markerCoreSelected: {
+    borderWidth: 1.5,
+    height: 24,
+    width: 24,
+  },
+  markerStatus: {
     borderRadius: Radius.pill,
+    height: 7,
+    width: 7,
+  },
+  markerStatusSelected: {
     height: 9,
-    marginTop: -1,
-    width: 3,
-  },
-  markerStemSmall: {
-    height: 5,
-    width: 2,
+    width: 9,
   },
   legend: {
     alignItems: 'center',
