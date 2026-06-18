@@ -2,6 +2,10 @@ export type OfficialStudyLocation = {
   building: string;
   campusArea: string;
   locationId: string;
+  mapPosition: {
+    xPercent: number;
+    yPercent: number;
+  };
   name: string;
   notes: string;
   tags: string[];
@@ -10,6 +14,7 @@ export type OfficialStudyLocation = {
 export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   {
     locationId: 'college-library',
+    mapPosition: { xPercent: 79, yPercent: 55 },
     name: 'College Library',
     building: 'Helen C. White Hall',
     campusArea: 'Central Campus',
@@ -18,6 +23,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'memorial-library',
+    mapPosition: { xPercent: 69, yPercent: 43 },
     name: 'Memorial Library',
     building: 'Memorial Library',
     campusArea: 'Bascom Hill',
@@ -26,6 +32,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'wendt-commons',
+    mapPosition: { xPercent: 43, yPercent: 59 },
     name: 'Wendt Commons',
     building: 'Wendt Commons',
     campusArea: 'Engineering Campus',
@@ -34,6 +41,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'union-south',
+    mapPosition: { xPercent: 49, yPercent: 76 },
     name: 'Union South',
     building: 'Union South',
     campusArea: 'South Campus',
@@ -42,6 +50,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'memorial-union',
+    mapPosition: { xPercent: 88, yPercent: 39 },
     name: 'Memorial Union',
     building: 'Memorial Union',
     campusArea: 'Lakeshore',
@@ -50,6 +59,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'steenbock-library',
+    mapPosition: { xPercent: 23, yPercent: 25 },
     name: 'Steenbock Library',
     building: 'Steenbock Library',
     campusArea: 'West Campus',
@@ -58,6 +68,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'ebling-library',
+    mapPosition: { xPercent: 10, yPercent: 39 },
     name: 'Ebling Library',
     building: 'Health Sciences Learning Center',
     campusArea: 'West Campus',
@@ -66,6 +77,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'business-learning-commons',
+    mapPosition: { xPercent: 61, yPercent: 78 },
     name: 'Business Learning Commons',
     building: 'Grainger Hall',
     campusArea: 'South Campus',
@@ -74,6 +86,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'morgridge-hall',
+    mapPosition: { xPercent: 58, yPercent: 65 },
     name: 'Morgridge Hall',
     building: 'Morgridge Hall',
     campusArea: 'South Campus',
@@ -82,6 +95,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'college-library-cafe',
+    mapPosition: { xPercent: 87, yPercent: 61 },
     name: 'College Library Cafe',
     building: 'Helen C. White Hall',
     campusArea: 'Central Campus',
@@ -90,6 +104,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'merit-library',
+    mapPosition: { xPercent: 72, yPercent: 72 },
     name: 'MERIT Library',
     building: 'Teacher Education Building',
     campusArea: 'South Campus',
@@ -98,6 +113,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'social-science',
+    mapPosition: { xPercent: 59, yPercent: 50 },
     name: 'Social Science Building Commons',
     building: 'Social Science Building',
     campusArea: 'Central Campus',
@@ -106,6 +122,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'wisconsin-historical-society',
+    mapPosition: { xPercent: 77, yPercent: 47 },
     name: 'Wisconsin Historical Society Library',
     building: 'Wisconsin Historical Society',
     campusArea: 'Bascom Hill',
@@ -114,6 +131,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
   },
   {
     locationId: 'parkside',
+    mapPosition: { xPercent: 32, yPercent: 56 },
     name: 'DeLuca Forum at Discovery Building',
     building: 'Discovery Building',
     campusArea: 'West Campus',

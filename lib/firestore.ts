@@ -64,6 +64,10 @@ export type StudyLocation = {
   building: string;
   campusArea: string;
   locationId: string;
+  mapPosition: {
+    xPercent: number;
+    yPercent: number;
+  };
   name: string;
   notes: string;
   tags: string[];
@@ -151,6 +155,12 @@ function normalizeStudyLocation(
     building: location.building ?? fallback?.building ?? "UW-Madison",
     campusArea: location.campusArea ?? fallback?.campusArea ?? "Campus",
     locationId,
+    mapPosition:
+      location.mapPosition &&
+      typeof location.mapPosition.xPercent === "number" &&
+      typeof location.mapPosition.yPercent === "number"
+        ? location.mapPosition
+        : fallback?.mapPosition ?? { xPercent: 50, yPercent: 50 },
     name: location.name ?? fallback?.name ?? locationId,
     notes: location.notes ?? fallback?.notes ?? "Study location on or near campus.",
     tags: Array.isArray(location.tags) ? location.tags : fallback?.tags ?? [],
