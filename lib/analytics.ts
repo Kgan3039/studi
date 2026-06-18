@@ -39,6 +39,7 @@ export type AnalyticsEvent =
   | "session_viewed"
   | "session_left"
   | "session_cancelled"
+  | "map_directions_opened"
   | "message_sent"
   | "conversation_started"
   | "report_submitted"

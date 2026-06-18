@@ -19,6 +19,7 @@ const MAPPING = {
   'message.fill': 'chat',
   'person.crop.circle.fill': 'account-circle',
   'paperplane.fill': 'send',
+  'map.fill': 'map',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
 } as IconMapping;

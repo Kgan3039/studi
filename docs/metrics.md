@@ -12,11 +12,12 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 | `email_verified` | `refreshVerificationState()` returns verified=true (first time) | — |
 | `sign_in_completed` | `signIn()` succeeds | — |
 | `classes_saved` | Profile classes save succeeds | `count` |
-| `session_create_started` | Create-session screen opened | `fromClassId?` |
+| `session_create_started` | Create-session screen opened | `fromClassId?`, `fromLocationId?` |
 | `session_created` | `createSession()` succeeds | `classId`, `hoursUntilStart` |
 | `session_joined` | `joinSession()` performs a real join | `classId`, `participantCountAfter` |
 | `session_viewed` | Session detail opened | `classId`, `isHost` |
 | `session_left` | `leaveSession()` succeeds | `classId` |
+| `map_directions_opened` | Directions tapped from the study map | `locationId` |
 | `conversation_started` | New conversation doc created | — |
 | `message_sent` | `sendDirectMessage()` succeeds | `length` (number, not content) |
 | `report_submitted` | Report saved | `reason`, `context` |

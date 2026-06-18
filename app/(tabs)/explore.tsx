@@ -21,6 +21,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Brand, Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
 import { getAtmosphereFiltersForLocationTags } from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   getLocationRatingAggregates,
@@ -109,7 +110,7 @@ export default function StudyLocationsScreen() {
     try {
       const [loadedLocations, loadedSessions, aggregatesResult, profileResult] = await Promise.all([
         getLocations(),
-        getUpcomingSessions({ includeInProgress: true }),
+        getUpcomingSessions({ includeInProgress: true }).catch(() => []),
         getLocationRatingAggregates().catch(() => new Map<string, LocationRatingAggregate>()),
         getUserProfile(currentUser.uid).catch(() => null),
       ]);
@@ -266,6 +267,7 @@ export default function StudyLocationsScreen() {
         ? `http://maps.apple.com/?daddr=${destination}`
         : `https://www.google.com/maps/dir/?api=1&destination=${destination}`;
 
+    track('map_directions_opened', { locationId: location.locationId });
     void Linking.openURL(url);
   }
 

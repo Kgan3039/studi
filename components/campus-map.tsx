@@ -64,7 +64,7 @@ export function CampusMap({
       <View style={[styles.road, styles.roadFour, { backgroundColor: isDark ? '#575044' : '#D1C6A9' }]} />
       <View style={[styles.park, { backgroundColor: isDark ? '#354235' : '#CEDBC2' }]} />
 
-      <View style={[styles.campusLabel, { backgroundColor: palette.surface }]}> 
+      <View style={[styles.campusLabel, { backgroundColor: palette.surface }]}>
         <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>UW CAMPUS</Text>
       </View>
 
