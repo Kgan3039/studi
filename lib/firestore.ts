@@ -20,7 +20,10 @@ import {
 
 import { FirebaseError } from "firebase/app";
 
-import { UW_STUDY_LOCATIONS } from "@/data/uw-study-locations";
+import {
+  UW_STUDY_LOCATION_COORDINATE_OVERRIDES,
+  UW_STUDY_LOCATIONS,
+} from "@/data/uw-study-locations";
 import { sanitizeLocationRatingTags } from "@/data/location-rating-options";
 import { findStudyLocationById } from "@/lib/catalog";
 import { db } from "../firebaseConfig";
@@ -63,6 +66,10 @@ export type StudySession = {
 export type StudyLocation = {
   building: string;
   campusArea: string;
+  coordinates: {
+    latitude: number;
+    longitude: number;
+  };
   locationId: string;
   mapPosition: {
     xPercent: number;
@@ -154,6 +161,16 @@ function normalizeStudyLocation(
   return {
     building: location.building ?? fallback?.building ?? "UW-Madison",
     campusArea: location.campusArea ?? fallback?.campusArea ?? "Campus",
+    coordinates:
+      location.coordinates &&
+      typeof location.coordinates.latitude === "number" &&
+      typeof location.coordinates.longitude === "number"
+        ? location.coordinates
+        : fallback?.coordinates ??
+          UW_STUDY_LOCATION_COORDINATE_OVERRIDES[locationId] ?? {
+            latitude: 43.0731,
+            longitude: -89.4012,
+          },
     locationId,
     mapPosition:
       location.mapPosition &&
