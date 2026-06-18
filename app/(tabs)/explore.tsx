@@ -271,6 +271,11 @@ export default function StudyLocationsScreen() {
     void Linking.openURL(url);
   }
 
+  function openCampusMap() {
+    track('uw_map_opened');
+    void Linking.openURL('https://map.wisc.edu/');
+  }
+
   function clearFilters() {
     setSearchQuery('');
     setSelectedFilter('all');
@@ -369,6 +374,7 @@ export default function StudyLocationsScreen() {
         <View style={styles.mapAndSheet}>
           <CampusMap
             locations={filteredLocations}
+            onOpenCampusMap={openCampusMap}
             onSelectLocation={setSelectedLocationId}
             selectedLocationId={selectedLocationId}
             sessionsByLocation={sessionsByLocation}

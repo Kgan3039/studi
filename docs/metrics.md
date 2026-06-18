@@ -18,6 +18,7 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 | `session_viewed` | Session detail opened | `classId`, `isHost` |
 | `session_left` | `leaveSession()` succeeds | `classId` |
 | `map_directions_opened` | Directions tapped from the study map | `locationId` |
+| `uw_map_opened` | UW layers tapped from the study map | — |
 | `conversation_started` | New conversation doc created | — |
 | `message_sent` | `sendDirectMessage()` succeeds | `length` (number, not content) |
 | `report_submitted` | Report saved | `reason`, `context` |

@@ -1,3 +1,4 @@
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Brand, Colors, Elevation, FontFamily, Radius, TypeScale } from '@/constants/theme';
@@ -6,6 +7,7 @@ import type { StudyLocation } from '@/lib/firestore';
 
 type CampusMapProps = {
   locations: StudyLocation[];
+  onOpenCampusMap: () => void;
   onSelectLocation: (locationId: string) => void;
   selectedLocationId: string | null;
   sessionsByLocation: Map<string, number>;
@@ -26,6 +28,7 @@ const CAMPUS_BUILDINGS = [
 
 export function CampusMap({
   locations,
+  onOpenCampusMap,
   onSelectLocation,
   selectedLocationId,
   sessionsByLocation,
@@ -64,9 +67,16 @@ export function CampusMap({
       <View style={[styles.road, styles.roadFour, { backgroundColor: isDark ? '#575044' : '#D1C6A9' }]} />
       <View style={[styles.park, { backgroundColor: isDark ? '#354235' : '#CEDBC2' }]} />
 
-      <View style={[styles.campusLabel, { backgroundColor: palette.surface }]}>
-        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>UW CAMPUS</Text>
-      </View>
+      <Pressable
+        accessibilityRole="link"
+        onPress={onOpenCampusMap}
+        style={({ pressed }) => [
+          styles.campusLabel,
+          { backgroundColor: palette.surface, opacity: pressed ? 0.72 : 1 },
+        ]}>
+        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>UW LAYERS</Text>
+        <MaterialIcons color={palette.icon} name="open-in-new" size={13} />
+      </Pressable>
 
       {locations.map((location) => {
         const isSelected = selectedLocationId === location.locationId;
@@ -206,12 +216,15 @@ const styles = StyleSheet.create({
     width: '28%',
   },
   campusLabel: {
+    alignItems: 'center',
     borderRadius: Radius.pill,
     bottom: 12,
     left: 12,
     paddingHorizontal: 10,
     paddingVertical: 6,
     position: 'absolute',
+    flexDirection: 'row',
+    gap: 4,
   },
   markerWrap: {
     alignItems: 'center',
