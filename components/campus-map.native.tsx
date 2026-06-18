@@ -1,4 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Marker, type LatLng } from 'react-native-maps';
@@ -14,14 +15,22 @@ import {
 } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { StudyLocation } from '@/lib/firestore';
+import type { MapSessionTiming } from '@/components/campus-map.types';
 
 type CampusMapProps = {
   locations: StudyLocation[];
   onOpenCampusMap: () => void;
   onSelectLocation: (locationId: string) => void;
   selectedLocationId: string | null;
+  sessionTimingByLocation: Map<string, MapSessionTiming>;
   sessionsByLocation: Map<string, number>;
 };
+
+const TIMING_LABELS: { timing: Exclude<MapSessionTiming, 'none'>; label: string }[] = [
+  { timing: 'live', label: 'Now' },
+  { timing: 'soon', label: 'Soon' },
+  { timing: 'later', label: 'Later' },
+];
 
 const CAMPUS_REGION = {
   latitude: 43.0747,
@@ -49,6 +58,7 @@ export function CampusMap({
   onOpenCampusMap,
   onSelectLocation,
   selectedLocationId,
+  sessionTimingByLocation,
   sessionsByLocation,
 }: CampusMapProps) {
   const colorScheme = useColorScheme() ?? 'light';
@@ -94,12 +104,13 @@ export function CampusMap({
   }, [fitVisiblePins]);
 
   function handleSelectLocation(location: StudyLocation) {
+    void Haptics.selectionAsync();
     onSelectLocation(location.locationId);
     mapRef.current?.animateToRegion(
       {
         ...markerCoordinate(location),
-        latitudeDelta: 0.006,
-        longitudeDelta: 0.006,
+        latitudeDelta: 0.008,
+        longitudeDelta: 0.008,
       },
       220
     );
@@ -136,11 +147,20 @@ export function CampusMap({
         {locations.map((location) => {
           const isSelected = selectedLocationId === location.locationId;
           const sessionCount = sessionsByLocation.get(location.locationId) ?? 0;
-          const isEmphasized = isSelected || sessionCount > 0;
+          const timing = sessionTimingByLocation.get(location.locationId) ?? 'none';
+          const timingColor =
+            timing === 'live'
+              ? palette.tint
+              : timing === 'soon'
+                ? Brand.warning
+                : timing === 'later'
+                  ? Brand.info
+                  : palette.surface;
+          const hasSessions = timing !== 'none';
 
           return (
             <Marker
-              accessibilityLabel={`${location.name}, ${sessionCount} upcoming ${sessionCount === 1 ? 'session' : 'sessions'}`}
+              accessibilityLabel={`${location.name}, ${sessionCount} upcoming ${sessionCount === 1 ? 'session' : 'sessions'}, ${timing === 'live' ? 'happening now' : timing === 'soon' ? 'starting soon' : timing === 'later' ? 'later' : 'no scheduled sessions'}`}
               coordinate={markerCoordinate(location)}
               identifier={location.locationId}
               key={location.locationId}
@@ -150,36 +170,30 @@ export function CampusMap({
                 <View
                   style={[
                     styles.marker,
-                    isEmphasized ? styles.markerLarge : styles.markerSmall,
+                    hasSessions ? styles.markerTimed : styles.markerEmpty,
+                    isSelected && styles.markerSelected,
                     Elevation.e2,
                     {
-                      backgroundColor: isSelected
-                        ? palette.tint
-                        : sessionCount > 0
-                          ? Brand.text
-                          : palette.surface,
-                      borderColor: isSelected ? palette.tint : palette.surface,
-                      transform: [{ scale: isSelected ? 1.12 : 1 }],
+                      backgroundColor: timingColor,
+                      borderColor: isSelected
+                        ? palette.text
+                        : hasSessions
+                          ? palette.surface
+                          : palette.outline,
                     },
                   ]}>
-                  <Text
-                    style={[
-                      styles.markerText,
-                      { color: isSelected || sessionCount > 0 ? '#FFFFFF' : palette.icon },
-                    ]}>
-                    {sessionCount > 0 ? sessionCount : '·'}
-                  </Text>
+                  {hasSessions ? (
+                    <Text style={styles.markerText}>{sessionCount}</Text>
+                  ) : (
+                    <View style={[styles.markerDot, { backgroundColor: palette.icon }]} />
+                  )}
                 </View>
                 <View
                   style={[
                     styles.markerStem,
-                    !isEmphasized && styles.markerStemSmall,
+                    !hasSessions && styles.markerStemSmall,
                     {
-                      backgroundColor: isSelected
-                        ? palette.tint
-                        : sessionCount > 0
-                          ? Brand.text
-                          : palette.icon,
+                      backgroundColor: hasSessions ? timingColor : palette.icon,
                     },
                   ]}
                 />
@@ -188,6 +202,30 @@ export function CampusMap({
           );
         })}
       </MapView>
+
+      <View
+        accessible
+        accessibilityLabel="Map colors: red is happening now, gold is starting soon, blue is later"
+        style={[styles.legend, Elevation.e1, { backgroundColor: palette.surface }]}>
+        {TIMING_LABELS.map(({ timing, label }) => (
+          <View key={timing} style={styles.legendItem}>
+            <View
+              style={[
+                styles.legendDot,
+                {
+                  backgroundColor:
+                    timing === 'live'
+                      ? palette.tint
+                      : timing === 'soon'
+                        ? Brand.warning
+                        : Brand.info,
+                },
+              ]}
+            />
+            <Text style={[styles.legendText, { color: palette.icon }]}>{label}</Text>
+          </View>
+        ))}
+      </View>
 
       <Pressable
         accessibilityLabel="Show all visible study spots"
@@ -227,8 +265,9 @@ const styles = StyleSheet.create({
   },
   markerWrap: {
     alignItems: 'center',
-    minWidth: 38,
-    paddingBottom: 2,
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 44,
   },
   marker: {
     alignItems: 'center',
@@ -236,20 +275,29 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     justifyContent: 'center',
   },
-  markerLarge: {
-    height: 34,
-    minWidth: 34,
-    paddingHorizontal: Space.sm,
+  markerTimed: {
+    height: 22,
+    minWidth: 22,
+    paddingHorizontal: 5,
   },
-  markerSmall: {
-    height: 24,
-    minWidth: 24,
-    paddingHorizontal: Space.xs,
+  markerEmpty: {
+    height: 15,
+    minWidth: 15,
+  },
+  markerSelected: {
+    borderWidth: 2.5,
+    transform: [{ scale: 1.18 }],
   },
   markerText: {
+    color: '#FFFFFF',
     fontFamily: FontFamily.bodySemiBold,
-    fontSize: 13,
-    lineHeight: 16,
+    fontSize: 10,
+    lineHeight: 12,
+  },
+  markerDot: {
+    borderRadius: Radius.pill,
+    height: 4,
+    width: 4,
   },
   markerStem: {
     borderRadius: Radius.pill,
@@ -258,8 +306,34 @@ const styles = StyleSheet.create({
     width: 3,
   },
   markerStemSmall: {
-    height: 6,
+    height: 5,
     width: 2,
+  },
+  legend: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    flexDirection: 'row',
+    gap: Space.sm,
+    left: Space.md,
+    minHeight: 34,
+    paddingHorizontal: Space.md,
+    position: 'absolute',
+    top: Space.md,
+  },
+  legendItem: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 4,
+  },
+  legendDot: {
+    borderRadius: Radius.pill,
+    height: 7,
+    width: 7,
+  },
+  legendText: {
+    fontFamily: FontFamily.bodyMedium,
+    fontSize: 10,
+    lineHeight: 13,
   },
   mapButton: {
     alignItems: 'center',

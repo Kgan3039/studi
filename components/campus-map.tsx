@@ -4,14 +4,22 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Brand, Colors, Elevation, FontFamily, Radius, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { StudyLocation } from '@/lib/firestore';
+import type { MapSessionTiming } from '@/components/campus-map.types';
 
 type CampusMapProps = {
   locations: StudyLocation[];
   onOpenCampusMap: () => void;
   onSelectLocation: (locationId: string) => void;
   selectedLocationId: string | null;
+  sessionTimingByLocation: Map<string, MapSessionTiming>;
   sessionsByLocation: Map<string, number>;
 };
+
+const TIMING_LABELS: { timing: Exclude<MapSessionTiming, 'none'>; label: string }[] = [
+  { timing: 'live', label: 'Now' },
+  { timing: 'soon', label: 'Soon' },
+  { timing: 'later', label: 'Later' },
+];
 
 const CAMPUS_BUILDINGS = [
   { height: '15%', left: '5%', top: '17%', width: '18%' },
@@ -31,6 +39,7 @@ export function CampusMap({
   onOpenCampusMap,
   onSelectLocation,
   selectedLocationId,
+  sessionTimingByLocation,
   sessionsByLocation,
 }: CampusMapProps) {
   const colorScheme = useColorScheme() ?? 'light';
@@ -78,13 +87,47 @@ export function CampusMap({
         <MaterialIcons color={palette.icon} name="open-in-new" size={13} />
       </Pressable>
 
+      <View
+        accessible
+        accessibilityLabel="Map colors: red is happening now, gold is starting soon, blue is later"
+        style={[styles.legend, Elevation.e1, { backgroundColor: palette.surface }]}>
+        {TIMING_LABELS.map(({ timing, label }) => (
+          <View key={timing} style={styles.legendItem}>
+            <View
+              style={[
+                styles.legendDot,
+                {
+                  backgroundColor:
+                    timing === 'live'
+                      ? palette.tint
+                      : timing === 'soon'
+                        ? Brand.warning
+                        : Brand.info,
+                },
+              ]}
+            />
+            <Text style={[styles.legendText, { color: palette.icon }]}>{label}</Text>
+          </View>
+        ))}
+      </View>
+
       {locations.map((location) => {
         const isSelected = selectedLocationId === location.locationId;
         const sessionCount = sessionsByLocation.get(location.locationId) ?? 0;
+        const timing = sessionTimingByLocation.get(location.locationId) ?? 'none';
+        const timingColor =
+          timing === 'live'
+            ? palette.tint
+            : timing === 'soon'
+              ? Brand.warning
+              : timing === 'later'
+                ? Brand.info
+                : palette.surface;
+        const hasSessions = timing !== 'none';
 
         return (
           <Pressable
-            accessibilityLabel={`${location.name}, ${sessionCount} upcoming ${sessionCount === 1 ? 'session' : 'sessions'}`}
+            accessibilityLabel={`${location.name}, ${sessionCount} upcoming ${sessionCount === 1 ? 'session' : 'sessions'}, ${timing === 'live' ? 'happening now' : timing === 'soon' ? 'starting soon' : timing === 'later' ? 'later' : 'no scheduled sessions'}`}
             accessibilityRole="button"
             accessibilityState={{ selected: isSelected }}
             hitSlop={8}
@@ -102,39 +145,29 @@ export function CampusMap({
             <View
               style={[
                 styles.marker,
+                hasSessions ? styles.markerTimed : styles.markerEmpty,
+                isSelected && styles.markerSelected,
                 Elevation.e2,
                 {
-                  backgroundColor: isSelected
-                    ? palette.tint
-                    : sessionCount > 0
-                      ? Brand.text
-                      : palette.surface,
-                  borderColor: isSelected ? palette.tint : palette.surface,
-                  transform: [{ scale: isSelected ? 1.12 : 1 }],
+                  backgroundColor: timingColor,
+                  borderColor: isSelected
+                    ? palette.text
+                    : hasSessions
+                      ? palette.surface
+                      : palette.outline,
                 },
               ]}>
-              <Text
-                style={[
-                  styles.markerText,
-                  {
-                    color:
-                      isSelected || sessionCount > 0
-                        ? '#FFFFFF'
-                        : palette.icon,
-                  },
-                ]}>
-                {sessionCount > 0 ? sessionCount : '·'}
-              </Text>
+              {hasSessions ? (
+                <Text style={styles.markerText}>{sessionCount}</Text>
+              ) : (
+                <View style={[styles.markerDot, { backgroundColor: palette.icon }]} />
+              )}
             </View>
             <View
               style={[
                 styles.markerStem,
                 {
-                  backgroundColor: isSelected
-                    ? palette.tint
-                    : sessionCount > 0
-                      ? Brand.text
-                      : palette.icon,
+                  backgroundColor: hasSessions ? timingColor : palette.icon,
                 },
               ]}
             />
@@ -226,26 +259,71 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 4,
   },
+  legend: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    flexDirection: 'row',
+    gap: 8,
+    left: 12,
+    minHeight: 34,
+    paddingHorizontal: 12,
+    position: 'absolute',
+    top: 12,
+    zIndex: 5,
+  },
+  legendItem: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 4,
+  },
+  legendDot: {
+    borderRadius: Radius.pill,
+    height: 7,
+    width: 7,
+  },
+  legendText: {
+    fontFamily: FontFamily.bodyMedium,
+    fontSize: 10,
+    lineHeight: 13,
+  },
   markerWrap: {
     alignItems: 'center',
-    marginLeft: -20,
-    marginTop: -20,
+    justifyContent: 'center',
+    marginLeft: -22,
+    marginTop: -22,
+    minHeight: 44,
     position: 'absolute',
-    width: 40,
+    width: 44,
   },
   marker: {
     alignItems: 'center',
     borderRadius: Radius.pill,
     borderWidth: 2,
-    height: 34,
     justifyContent: 'center',
-    minWidth: 34,
-    paddingHorizontal: 8,
+  },
+  markerTimed: {
+    height: 22,
+    minWidth: 22,
+    paddingHorizontal: 5,
+  },
+  markerEmpty: {
+    height: 15,
+    minWidth: 15,
+  },
+  markerSelected: {
+    borderWidth: 2.5,
+    transform: [{ scale: 1.18 }],
   },
   markerText: {
+    color: '#FFFFFF',
     fontFamily: FontFamily.bodySemiBold,
-    fontSize: 13,
-    lineHeight: 16,
+    fontSize: 10,
+    lineHeight: 12,
+  },
+  markerDot: {
+    borderRadius: Radius.pill,
+    height: 4,
+    width: 4,
   },
   markerStem: {
     borderRadius: Radius.pill,

@@ -16,6 +16,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CampusMap } from '@/components/campus-map';
+import type { MapSessionTiming } from '@/components/campus-map.types';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Brand, Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
@@ -241,6 +242,28 @@ export default function StudyLocationsScreen() {
     return counts;
   }, [visibleSessions]);
 
+  const sessionTimingByLocation = useMemo(() => {
+    const timings = new Map<string, MapSessionTiming>();
+    const now = Date.now();
+    const oneHourFromNow = now + 60 * 60 * 1000;
+
+    visibleSessions.forEach((session) => {
+      const currentTiming = timings.get(session.locationId) ?? 'none';
+      const start = session.startTime.toMillis();
+      const end = session.endTime.toMillis();
+
+      if (start <= now && end > now) {
+        timings.set(session.locationId, 'live');
+      } else if (currentTiming !== 'live' && start > now && start <= oneHourFromNow) {
+        timings.set(session.locationId, 'soon');
+      } else if (currentTiming === 'none' && start > oneHourFromNow) {
+        timings.set(session.locationId, 'later');
+      }
+    });
+
+    return timings;
+  }, [visibleSessions]);
+
   const selectedLocation =
     filteredLocations.find((location) => location.locationId === selectedLocationId) ?? null;
   const selectedSessions = selectedLocation
@@ -377,6 +400,7 @@ export default function StudyLocationsScreen() {
             onOpenCampusMap={openCampusMap}
             onSelectLocation={setSelectedLocationId}
             selectedLocationId={selectedLocationId}
+            sessionTimingByLocation={sessionTimingByLocation}
             sessionsByLocation={sessionsByLocation}
           />
 
