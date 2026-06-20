@@ -119,7 +119,10 @@ function addMinutesToTime(time: string, minutes: number): string | null {
 }
 
 export default function CreateSessionScreen() {
-  const { classId: requestedClassId } = useLocalSearchParams<{ classId?: string }>();
+  const { classId: requestedClassId, locationId: requestedLocationId } = useLocalSearchParams<{
+    classId?: string;
+    locationId?: string;
+  }>();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
@@ -181,8 +184,9 @@ export default function CreateSessionScreen() {
   useEffect(() => {
     track('session_create_started', {
       ...(requestedClassId ? { fromClassId: requestedClassId } : {}),
+      ...(requestedLocationId ? { fromLocationId: requestedLocationId } : {}),
     });
-  }, [requestedClassId]);
+  }, [requestedClassId, requestedLocationId]);
 
   const loadSetupData = useCallback(async () => {
     if (!currentUser) {
@@ -212,6 +216,11 @@ export default function CreateSessionScreen() {
         normalizedRequestedClass && profileClasses.includes(normalizedRequestedClass)
           ? normalizedRequestedClass
           : profileClasses[0] ?? '';
+      const defaultLocationId = loadedLocations.some(
+        (location) => location.locationId === requestedLocationId
+      )
+        ? requestedLocationId ?? ''
+        : loadedLocations[0]?.locationId ?? '';
 
       setClasses(profileClasses);
       setLocations(loadedLocations);
@@ -224,7 +233,7 @@ export default function CreateSessionScreen() {
         currentSelectedLocationId &&
         loadedLocations.some((location) => location.locationId === currentSelectedLocationId)
           ? currentSelectedLocationId
-          : loadedLocations[0]?.locationId ?? ''
+          : defaultLocationId
       );
       setStatus(
         profileClasses.length > 0 && loadedLocations.length > 0
@@ -245,7 +254,7 @@ export default function CreateSessionScreen() {
     } catch {
       // Ratings unavailable — locations still show
     }
-  }, [currentUser, requestedClassId]);
+  }, [currentUser, requestedClassId, requestedLocationId]);
 
   useFocusEffect(
     useCallback(() => {
