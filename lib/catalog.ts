@@ -1,11 +1,13 @@
 import rawCourseCatalog from '@/data/uw-course-catalog.json';
 import { UW_STUDY_LOCATIONS, type OfficialStudyLocation } from '@/data/uw-study-locations';
+import * as catalogSearch from './catalog-search.js';
 
 export type CatalogCourse = {
   code: string;
   credits: string;
   description: string;
   searchText: string;
+  searchTerms: string[];
   subjectCode: string;
   subjectName: string;
   title: string;
@@ -42,6 +44,9 @@ function normalizeCourse(rawCourse: RawCatalogCourse): CatalogCourse {
     subjectName,
     url: rawCourse.url,
     searchText: `${code} ${title} ${subjectCode} ${subjectName}`.toLowerCase(),
+    searchTerms: catalogSearch.collectSearchTerms(
+      `${code} ${title} ${subjectCode} ${subjectName}`
+    ),
   };
 }
 
@@ -66,17 +71,7 @@ export const UW_COURSE_CATALOG = dedupedCourses;
 export const UW_COURSE_COUNT = UW_COURSE_CATALOG.length;
 
 export function searchCourses(query: string, selectedCodes: string[] = [], limit = 30) {
-  const normalizedQuery = query.trim().toLowerCase();
-  const selectedSet = new Set(selectedCodes.map((code) => code.trim().toUpperCase()));
-
-  const visibleCourses = normalizedQuery
-    ? UW_COURSE_CATALOG.filter((course) => {
-        const courseCode = course.code.toUpperCase();
-        return !selectedSet.has(courseCode) && course.searchText.includes(normalizedQuery);
-      })
-    : UW_COURSE_CATALOG.filter((course) => !selectedSet.has(course.code.toUpperCase()));
-
-  return visibleCourses.slice(0, limit);
+  return catalogSearch.searchCoursesInCatalog(UW_COURSE_CATALOG, query, selectedCodes, limit);
 }
 
 export function searchStudyLocations(query: string) {
