@@ -135,6 +135,7 @@ function RootLayout() {
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="create-session" options={{ title: 'Create Session' }} />
           <Stack.Screen name="conversation/[conversationId]" options={{ title: 'Conversation' }} />
+          <Stack.Screen name="debug-map-pins" options={{ title: 'Map Pin Debugger' }} />
           <Stack.Screen name="report-user" options={{ title: 'Report User' }} />
           <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />
           <Stack.Screen name="rate-location" options={{ title: 'Rate This Spot' }} />
