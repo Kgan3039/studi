@@ -11,7 +11,17 @@ import {
   initializeTestEnvironment,
 } from '@firebase/rules-unit-testing';
 import {
-  doc, setDoc, getDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  serverTimestamp,
+  setDoc,
+  Timestamp,
+  updateDoc,
+  where,
 } from 'firebase/firestore';
 
 const PROJECT_ID = 'studi-rules-test';
@@ -292,6 +302,29 @@ describe('conversations + messages', () => {
     await assertSucceeds(
       setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
         validConversation(ALICE, BOB))
+    );
+  });
+
+  it('allows missing direct-conversation get without exposing existing conversations', async () => {
+    const cid = convoId(ALICE, BOB);
+
+    await assertSucceeds(getDoc(doc(ctx(ALICE), 'conversations', cid)));
+    await assertFails(getDoc(doc(ctx(ALICE, { verified: false }), 'conversations', cid)));
+
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB),
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+      lastMessageAt: Timestamp.now(),
+    });
+
+    await assertSucceeds(getDoc(doc(ctx(ALICE), 'conversations', cid)));
+    await assertFails(getDoc(doc(ctx(MALLORY), 'conversations', cid)));
+    await assertFails(getDocs(collection(ctx(ALICE), 'conversations')));
+    await assertSucceeds(
+      getDocs(query(
+        collection(ctx(ALICE), 'conversations'),
+        where('participantIds', 'array-contains', ALICE)
+      ))
     );
   });
 
