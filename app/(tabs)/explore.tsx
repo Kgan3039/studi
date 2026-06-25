@@ -299,6 +299,16 @@ export default function StudyLocationsScreen() {
     void Linking.openURL('https://map.wisc.edu/');
   }
 
+  function rateLocation(location: StudyLocation) {
+    router.push({
+      pathname: '/rate-location',
+      params: {
+        locationId: location.locationId,
+        locationName: location.name,
+      },
+    });
+  }
+
   function clearFilters() {
     setSearchQuery('');
     setSelectedFilter('all');
@@ -404,6 +414,72 @@ export default function StudyLocationsScreen() {
             sessionsByLocation={sessionsByLocation}
           />
 
+          <View
+            style={[
+              styles.locationList,
+              Elevation.e1,
+              { backgroundColor: palette.surface, borderColor: palette.border },
+            ]}>
+            <View style={styles.locationListHeader}>
+              <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Study spots</Text>
+              <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                Select from the list for details and ratings.
+              </Text>
+            </View>
+
+            {filteredLocations.map((location) => {
+              const isSelected = selectedLocationId === location.locationId;
+              const sessionCount = sessionsByLocation.get(location.locationId) ?? 0;
+              const aggregate = ratingAggregates.get(location.locationId);
+
+              return (
+                <View
+                  key={location.locationId}
+                  style={[
+                    styles.locationListItem,
+                    {
+                      backgroundColor: isSelected ? palette.surfaceMuted : palette.background,
+                      borderColor: isSelected ? palette.tint : palette.border,
+                    },
+                  ]}>
+                  <View style={styles.locationListCopy}>
+                    <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
+                      {location.name}
+                    </Text>
+                    <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                      {location.campusArea} · {sessionCount} upcoming{' '}
+                      {sessionCount === 1 ? 'session' : 'sessions'}
+                      {aggregate ? ` · ★ ${aggregate.averageStars}` : ''}
+                    </Text>
+                  </View>
+                  <View style={styles.locationListActions}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: isSelected }}
+                      onPress={() => setSelectedLocationId(location.locationId)}
+                      style={({ pressed }) => [
+                        styles.locationListButton,
+                        { borderColor: palette.border },
+                        pressed && styles.pressed,
+                      ]}>
+                      <Text style={[TypeScale.label, { color: palette.text }]}>Details</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => rateLocation(location)}
+                      style={({ pressed }) => [
+                        styles.locationListButton,
+                        { borderColor: palette.border },
+                        pressed && styles.pressed,
+                      ]}>
+                      <Text style={[TypeScale.label, { color: palette.tint }]}>Rate</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+
           {selectedLocation ? (
             <View
               style={[
@@ -439,6 +515,14 @@ export default function StudyLocationsScreen() {
                   <Text style={[TypeScale.label, { color: '#FFFFFF' }]}>Directions</Text>
                 </Pressable>
               </View>
+
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => rateLocation(selectedLocation)}
+                style={({ pressed }) => [styles.rateLink, pressed && styles.pressed]}>
+                <MaterialIcons color={palette.tint} name="star-rate" size={18} />
+                <Text style={[TypeScale.label, { color: palette.tint }]}>Rate this spot</Text>
+              </Pressable>
 
               <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={2}>
                 {selectedLocation.notes}
@@ -570,15 +654,48 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.md + 2,
   },
   mapAndSheet: {
-    gap: 0,
+    gap: Space.md,
+  },
+  locationList: {
+    borderRadius: Radius.xxl,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.sm,
+    padding: Space.md,
+  },
+  locationListHeader: {
+    gap: 2,
+  },
+  locationListItem: {
+    alignItems: 'center',
+    borderRadius: Radius.xl,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+    minHeight: 72,
+    padding: Space.md,
+  },
+  locationListCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  locationListActions: {
+    flexDirection: 'row',
+    gap: Space.xs,
+  },
+  locationListButton: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    justifyContent: 'center',
+    minHeight: 34,
+    paddingHorizontal: Space.md,
   },
   locationSheet: {
     borderRadius: Radius.xxl,
     borderWidth: StyleSheet.hairlineWidth * 2,
     gap: Space.md,
-    marginTop: -28,
     padding: Space.lg,
-    paddingTop: Space.sm,
     zIndex: 5,
   },
   sheetHandle: {
@@ -605,6 +722,13 @@ const styles = StyleSheet.create({
     gap: Space.xs,
     minHeight: 42,
     paddingHorizontal: Space.md,
+  },
+  rateLink: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    gap: Space.xs,
+    paddingVertical: Space.xs,
   },
   tagRow: {
     flexDirection: 'row',
