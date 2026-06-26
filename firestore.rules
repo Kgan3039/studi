@@ -180,14 +180,13 @@ service cloud.firestore {
         && !isBlockedEitherWay(incoming().participantIds[0], incoming().participantIds[1]);
     }
 
-    function otherParticipant() {
-      return resource.data.participantIds[0] == request.auth.uid
-        ? resource.data.participantIds[1]
-        : resource.data.participantIds[0];
-    }
-
     match /conversations/{conversationId} {
-      allow read: if isVerifiedUwUser()
+      allow get: if isVerifiedUwUser()
+        && (
+          !exists(/databases/$(database)/documents/conversations/$(conversationId))
+          || request.auth.uid in resource.data.participantIds
+        );
+      allow list: if isVerifiedUwUser()
         && request.auth.uid in resource.data.participantIds;
       allow create: if isVerifiedUwUser() && isValidNewConversation(conversationId);
       allow update: if isVerifiedUwUser()
