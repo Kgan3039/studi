@@ -1,10 +1,10 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import type { MapSessionTiming } from '@/components/campus-map.types';
 import { Brand, Colors, Elevation, FontFamily, Radius, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { StudyLocation } from '@/lib/firestore';
-import type { MapSessionTiming } from '@/components/campus-map.types';
 
 type CampusMapProps = {
   locations: StudyLocation[];
