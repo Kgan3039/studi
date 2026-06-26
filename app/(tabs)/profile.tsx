@@ -18,7 +18,6 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { SectionHeader } from '@/components/ui/SectionHeader';
-import { identifyUser, track } from '@/lib/analytics';
 import {
   STUDI_CONTACT_EMAIL,
   STUDI_PRIVACY_POLICY_URL,
@@ -26,6 +25,7 @@ import {
 } from '@/constants/app-info';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { identifyUser, track } from '@/lib/analytics';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
 import { UW_COURSE_CATALOG, UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
 import {
@@ -76,6 +76,7 @@ export default function ProfileScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isReauthenticatingDelete, setIsReauthenticatingDelete] = useState(false);
   const [showDeleteReauthModal, setShowDeleteReauthModal] = useState(false);
@@ -415,6 +416,14 @@ export default function ProfileScreen() {
         <Text style={[TypeScale.eyebrow, styles.classYear, { color: palette.icon }]}>
           Verified @wisc.edu
         </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setIsEditingName((editing) => !editing)}
+        >
+          <Text style={[TypeScale.label, { color: palette.tint }]}>
+            {isEditingName ? 'Done' : 'Edit'}
+          </Text>
+        </Pressable>
       </View>
 
       {/* Stats grid (board ProfileScreen ~1771). */}
@@ -428,6 +437,56 @@ export default function ProfileScreen() {
           </View>
         ))}
       </View>
+
+      {isEditingName ? (
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: palette.surface,
+              borderColor: palette.border,
+            },
+          ]}
+        >
+          <Text style={[TypeScale.heading, { color: palette.text }]}>
+            Your name
+          </Text>
+
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>
+            {nameStatus}
+          </Text>
+
+          <View style={styles.inlineRow}>
+            <TextInput
+              autoCapitalize="words"
+              editable={!isSaving}
+              onChangeText={setFirstName}
+              placeholder="First name"
+              placeholderTextColor={placeholderColor}
+              style={[styles.input, styles.flexInput, inputColors]}
+              value={firstName}
+            />
+
+            <TextInput
+              autoCapitalize="words"
+              editable={!isSaving}
+              onChangeText={setLastName}
+              placeholder="Last name"
+              placeholderTextColor={placeholderColor}
+              style={[styles.input, styles.flexInput, inputColors]}
+              value={lastName}
+            />
+          </View>
+
+          <Button
+            label="Save name"
+            variant="secondary"
+            fullWidth
+            loading={isSaving}
+            onPress={handleSaveName}
+          />
+        </View>
+      ) : null}
 
       {/* Current classes (board ProfileScreen ~1789). */}
       <View style={styles.section}>
@@ -464,31 +523,6 @@ export default function ProfileScreen() {
         ) : (
           <Text style={[TypeScale.caption, { color: palette.icon }]}>
             No classes saved yet. Tap Edit to add the courses you’re taking.
-          </Text>
-        )}
-      </View>
-
-      {/* Saved locations (board ProfileScreen ~1814). */}
-      <View style={styles.section}>
-        <SectionHeader eyebrow="Saved locations" />
-        {savedLocations.length > 0 ? (
-          <View style={styles.rowList}>
-            {savedLocations.map((location) => (
-              <View
-                key={location.name}
-                style={[styles.locationRow, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-                <Text style={[TypeScale.bodyStrong, styles.locationName, { color: palette.text }]} numberOfLines={1}>
-                  {location.name}
-                </Text>
-                <Text style={[TypeScale.label, { color: palette.icon }]}>
-                  {location.rating != null ? `★ ${location.rating.toFixed(1)}` : 'New'}
-                </Text>
-              </View>
-            ))}
-          </View>
-        ) : (
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            Rate a study spot to see your places here.
           </Text>
         )}
       </View>
@@ -568,40 +602,33 @@ export default function ProfileScreen() {
             </View>
           ) : null}
           <Button label="Save classes" fullWidth loading={isSaving} onPress={handleSaveClasses} />
-
-          <View style={[styles.editDivider, { backgroundColor: palette.border }]} />
-
-          <Text style={[TypeScale.heading, { color: palette.text }]}>Your name</Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>{nameStatus}</Text>
-          <View style={styles.inlineRow}>
-            <TextInput
-              autoCapitalize="words"
-              editable={!isSaving}
-              onChangeText={setFirstName}
-              placeholder="First name"
-              placeholderTextColor={placeholderColor}
-              style={[styles.input, styles.flexInput, inputColors]}
-              value={firstName}
-            />
-            <TextInput
-              autoCapitalize="words"
-              editable={!isSaving}
-              onChangeText={setLastName}
-              placeholder="Last name"
-              placeholderTextColor={placeholderColor}
-              style={[styles.input, styles.flexInput, inputColors]}
-              value={lastName}
-            />
-          </View>
-          <Button
-            label="Save name"
-            variant="secondary"
-            fullWidth
-            loading={isSaving}
-            onPress={handleSaveName}
-          />
         </View>
       ) : null}
+
+      {/* Saved locations (board ProfileScreen ~1814). */}
+      <View style={styles.section}>
+        <SectionHeader eyebrow="Saved locations" />
+        {savedLocations.length > 0 ? (
+          <View style={styles.rowList}>
+            {savedLocations.map((location) => (
+              <View
+                key={location.name}
+                style={[styles.locationRow, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+                <Text style={[TypeScale.bodyStrong, styles.locationName, { color: palette.text }]} numberOfLines={1}>
+                  {location.name}
+                </Text>
+                <Text style={[TypeScale.label, { color: palette.icon }]}>
+                  {location.rating != null ? `★ ${location.rating.toFixed(1)}` : 'New'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>
+            Rate a study spot to see your places here.
+          </Text>
+        )}
+      </View>
 
       {/* Account — board defers these behind its top-right Settings entry; with
           no settings screen they live here so nothing becomes unreachable. */}
