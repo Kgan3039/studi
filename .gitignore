@@ -43,3 +43,5 @@ app-example
 /ios
 /android
 firestore-debug.log
+.env
+.env.*

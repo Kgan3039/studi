@@ -4,6 +4,7 @@
 // first, here second.
 
 import PostHog from "posthog-react-native";
+import type { PostHogCustomStorage } from "posthog-react-native";
 
 // Project API key is a public client key (like the Firebase web key) — safe to ship.
 // Set EXPO_PUBLIC_POSTHOG_API_KEY from PostHog project settings.
@@ -12,6 +13,17 @@ const POSTHOG_HOST = "https://us.i.posthog.com";
 
 let client: PostHog | null = null;
 let warnedMissingKey = false;
+
+const memoryStorage: PostHogCustomStorage = (() => {
+  const memory: Record<string, string> = {};
+
+  return {
+    getItem: (key) => memory[key] ?? null,
+    setItem: (key, value) => {
+      memory[key] = value;
+    },
+  };
+})();
 
 export async function initAnalytics() {
   if (client) return;
@@ -27,6 +39,9 @@ export async function initAnalytics() {
   try {
     client = new PostHog(POSTHOG_API_KEY, {
       host: POSTHOG_HOST,
+      persistence: "memory",
+      customStorage: memoryStorage,
+      enableSessionReplay: false,
       flushAt: 10,
       flushInterval: 30_000,
     });
