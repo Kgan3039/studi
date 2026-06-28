@@ -173,9 +173,13 @@ export default function SessionsScreen() {
 
       if (result === 'joined') {
         const joinedSession = sessions.find((session) => session.sessionId === sessionId);
-        track('session_joined', {
-          ...(joinedSession ? { classId: joinedSession.classId } : {}),
-        });
+        if (joinedSession) {
+          track('session_joined', {
+            classId: joinedSession.classId,
+            participantCountAfter: joinedSession.participantIds.length + 1,
+            surface: 'sessions_tab',
+          });
+        }
         setStatus('Joined session successfully.');
         showToast('You’re in.', joinedSession?.title ?? 'See you at the table.');
       }

@@ -37,6 +37,7 @@ Sentry.init({
 });
 
 initAnalytics();
+let didTrackAppOpen = false;
 
 SplashScreen.preventAutoHideAsync();
 
@@ -91,6 +92,15 @@ function RootLayout() {
     if (ready) {
       SplashScreen.hideAsync();
     }
+  }, [ready]);
+
+  useEffect(() => {
+    if (!ready || didTrackAppOpen) {
+      return;
+    }
+
+    didTrackAppOpen = true;
+    track('app_open');
   }, [ready]);
 
   // Root-level gate: send signed-out users to /welcome and unverified users to

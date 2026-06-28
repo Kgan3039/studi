@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/Input';
 import { StepDots } from '@/components/ui/StepDots';
 import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import { invalidateProfileCache, updateUserDisplayName } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
@@ -87,6 +88,8 @@ export default function ProfileSetupScreen() {
       setIsSaving(true);
       await updateUserDisplayName(currentUser.uid, displayName);
       invalidateProfileCache(currentUser.uid);
+      track('profile_completed');
+      track('onboarding_complete');
       router.replace('/');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to save your name right now.';

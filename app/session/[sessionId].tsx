@@ -135,7 +135,11 @@ export default function SessionDetailScreen() {
 
       if (result === 'joined') {
         if (session) {
-          track('session_joined', { classId: session.classId });
+          track('session_joined', {
+            classId: session.classId,
+            participantCountAfter: session.participantIds.length + 1,
+            surface: 'session_detail',
+          });
         }
         setStatus('Joined session successfully.');
         showToast('You’re in.', session?.title ?? 'See you at the table.');

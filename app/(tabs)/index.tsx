@@ -356,7 +356,11 @@ export default function HomeScreen() {
       await loadSessions();
 
       if (result === 'joined') {
-        track('session_joined', { classId: hero.classId });
+        track('session_joined', {
+          classId: hero.classId,
+          participantCountAfter: hero.participantIds.length + 1,
+          surface: 'today',
+        });
         showToast('You’re in.', hero.title || 'See you at the table.');
       }
     } catch (error) {

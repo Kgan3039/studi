@@ -11,9 +11,18 @@ const POSTHOG_API_KEY = process.env.EXPO_PUBLIC_POSTHOG_API_KEY ?? "";
 const POSTHOG_HOST = "https://us.i.posthog.com";
 
 let client: PostHog | null = null;
+let warnedMissingKey = false;
 
 export async function initAnalytics() {
-  if (client || !POSTHOG_API_KEY) return;
+  if (client) return;
+
+  if (!POSTHOG_API_KEY) {
+    if (!warnedMissingKey && !__DEV__) {
+      warnedMissingKey = true;
+      console.warn("PostHog analytics disabled: EXPO_PUBLIC_POSTHOG_API_KEY is missing.");
+    }
+    return;
+  }
 
   try {
     client = new PostHog(POSTHOG_API_KEY, {
@@ -28,11 +37,14 @@ export async function initAnalytics() {
 }
 
 export type AnalyticsEvent =
+  | "app_open"
   | "sign_up_started"
   | "sign_up_completed"
   | "email_verified"
   | "sign_in_completed"
   | "classes_saved"
+  | "onboarding_complete"
+  | "profile_completed"
   | "session_create_started"
   | "session_created"
   | "session_joined"

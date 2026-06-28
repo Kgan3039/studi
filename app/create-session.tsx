@@ -312,6 +312,7 @@ export default function CreateSessionScreen() {
 
       track('session_created', {
         classId: selectedClass,
+        locationId: selectedLocationId,
         hoursUntilStart: Math.round(
           (new Date(validatedSchedule.startTimeIso).getTime() - Date.now()) / 3_600_000
         ),
