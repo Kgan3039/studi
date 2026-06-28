@@ -1,7 +1,7 @@
 export const STUDI_APP_NAME = 'Studi';
 
 const STUDI_FIREBASE_HOSTING_URL = 'https://studi-b02c3.web.app';
-const STUDI_DEFAULT_SUPPORT_EMAIL = 'studi@gmail.com';
+const STUDI_DEFAULT_SUPPORT_EMAIL = 'isp.studi@gmail.com';
 
 const configuredWebBaseUrl = process.env.EXPO_PUBLIC_STUDI_WEB_BASE_URL?.replace(/\/$/, '');
 
