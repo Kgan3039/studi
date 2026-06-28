@@ -10,6 +10,7 @@ admin.initializeApp();
 setGlobalOptions({ region: "us-central1", maxInstances: 5 });
 
 const db = admin.firestore();
+const DELETE_ACCOUNT_MAX_AUTH_AGE_SECONDS = 5 * 60;
 
 // ---------------------------------------------------------------------------
 // Location rating aggregates: locations/{id} gets ratingCount / ratingSum /
@@ -73,9 +74,20 @@ async function deleteQueryBatch(q) {
 
 exports.deleteUserAccount = onCall(async (request) => {
   const uid = request.auth?.uid;
+  const authTime = request.auth?.token?.auth_time;
 
   if (!uid) {
     throw new HttpsError("unauthenticated", "Sign in to delete your account.");
+  }
+
+  if (
+    typeof authTime !== "number" ||
+    Date.now() / 1000 - authTime > DELETE_ACCOUNT_MAX_AUTH_AGE_SECONDS
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Please sign in again before deleting your account."
+    );
   }
 
   // 1. Sessions hosted by the user: delete outright.

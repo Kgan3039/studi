@@ -1,7 +1,6 @@
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Modal,
   Pressable,
@@ -77,7 +76,6 @@ export default function ProfileScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
-  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isReauthenticatingDelete, setIsReauthenticatingDelete] = useState(false);
   const [showDeleteReauthModal, setShowDeleteReauthModal] = useState(false);
   const [deleteReauthPassword, setDeleteReauthPassword] = useState('');
@@ -268,22 +266,9 @@ export default function ProfileScreen() {
   }
 
   async function handleDeleteAccount() {
-    try {
-      setIsDeletingAccount(true);
-      const result = await deleteCurrentUserAccount();
-
-      if (result.status === 'requires-recent-login') {
-        setDeleteReauthPassword('');
-        setDeleteReauthEmail(result.email);
-        setShowDeleteReauthModal(true);
-        return;
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to delete your account right now.';
-      Alert.alert('Delete Account Error', message);
-    } finally {
-      setIsDeletingAccount(false);
-    }
+    setDeleteReauthPassword('');
+    setDeleteReauthEmail(currentUser?.email ?? '');
+    setShowDeleteReauthModal(true);
   }
 
   function closeDeleteReauthModal() {
@@ -324,7 +309,7 @@ export default function ProfileScreen() {
     }
   }
 
-  const isBusy = isSaving || isDeletingAccount || isReauthenticatingDelete;
+  const isBusy = isSaving || isReauthenticatingDelete;
   const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
   const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
   const inputColors = {
@@ -675,11 +660,7 @@ export default function ProfileScreen() {
             styles.deleteLink,
             { opacity: isBusy || pressed ? 0.6 : 1 },
           ]}>
-          {isDeletingAccount ? (
-            <ActivityIndicator color={palette.tint} />
-          ) : (
-            <Text style={[TypeScale.label, { color: palette.tint }]}>Delete account</Text>
-          )}
+          <Text style={[TypeScale.label, { color: palette.tint }]}>Delete account</Text>
         </Pressable>
       </View>
 

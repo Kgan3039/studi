@@ -232,7 +232,10 @@ type DeleteAccountOptions = {
 
 function isRecentLoginRequiredError(error: unknown) {
   const authError = error as AuthError;
-  return authError?.code === "auth/requires-recent-login";
+  return (
+    authError?.code === "auth/requires-recent-login" ||
+    authError?.code === "functions/failed-precondition"
+  );
 }
 
 async function reauthenticateForDelete(user: User, options: DeleteAccountOptions) {
@@ -246,6 +249,7 @@ async function reauthenticateForDelete(user: User, options: DeleteAccountOptions
 
   const credential = EmailAuthProvider.credential(user.email, options.password);
   await reauthenticateWithCredential(user, credential);
+  await user.getIdToken(true);
 }
 
 export async function deleteCurrentUserAccount(
@@ -259,9 +263,7 @@ export async function deleteCurrentUserAccount(
 
   const email = currentUser.email ?? "";
 
-  if (options.password) {
-    await reauthenticateForDelete(currentUser, options);
-  }
+  await reauthenticateForDelete(currentUser, options);
 
   try {
     const { getFunctions, httpsCallable } = await import("firebase/functions");
