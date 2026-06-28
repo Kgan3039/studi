@@ -11,6 +11,7 @@ setGlobalOptions({ region: "us-central1", maxInstances: 5 });
 
 const db = admin.firestore();
 const DELETE_ACCOUNT_MAX_AUTH_AGE_SECONDS = 5 * 60;
+const DELETE_ACCOUNT_RATE_LIMIT_SECONDS = 10 * 60;
 
 // ---------------------------------------------------------------------------
 // Location rating aggregates: locations/{id} gets ratingCount / ratingSum /
@@ -72,6 +73,28 @@ async function deleteQueryBatch(q) {
   }
 }
 
+async function enforceDeleteAccountRateLimit(uid) {
+  const ref = db.collection("rateLimits").doc(uid).collection("actions").doc("deleteAccount");
+  const now = admin.firestore.Timestamp.now();
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const previous = snap.exists ? snap.data()?.updatedAt : null;
+
+    if (
+      previous?.toMillis &&
+      now.toMillis() - previous.toMillis() < DELETE_ACCOUNT_RATE_LIMIT_SECONDS * 1000
+    ) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "Please wait a few minutes before trying to delete your account again."
+      );
+    }
+
+    tx.set(ref, { updatedAt: now }, { merge: true });
+  });
+}
+
 exports.deleteUserAccount = onCall(async (request) => {
   const uid = request.auth?.uid;
   const authTime = request.auth?.token?.auth_time;
@@ -89,6 +112,8 @@ exports.deleteUserAccount = onCall(async (request) => {
       "Please sign in again before deleting your account."
     );
   }
+
+  await enforceDeleteAccountRateLimit(uid);
 
   // 1. Sessions hosted by the user: delete outright.
   await deleteQueryBatch(db.collection("sessions").where("hostId", "==", uid));

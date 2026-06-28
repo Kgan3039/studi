@@ -31,6 +31,44 @@ service cloud.firestore {
         || exists(/databases/$(database)/documents/userBlocks/$(userB + '__' + userA));
     }
 
+    function rateLimitRef(userId, action) {
+      return /databases/$(database)/documents/rateLimits/$(userId)/actions/$(action);
+    }
+
+    function isKnownRateLimitedAction(action) {
+      return action in ['sendMessage', 'createSession', 'reportUser', 'locationRating'];
+    }
+
+    function respectsRateLimit(userId, action, previousUpdatedAt) {
+      return userId == request.auth.uid
+        && (
+          (action == 'sendMessage'
+            && previousUpdatedAt <= request.time - duration.value(2, 's'))
+          || (action == 'createSession'
+            && previousUpdatedAt <= request.time - duration.value(60, 's'))
+          || (action == 'reportUser'
+            && previousUpdatedAt <= request.time - duration.value(10, 'm'))
+          || (action == 'locationRating'
+            && previousUpdatedAt <= request.time - duration.value(10, 's'))
+        );
+    }
+
+    function isValidRateLimitWrite(userId, action) {
+      return isVerifiedUwUser()
+        && isKnownRateLimitedAction(action)
+        && userId == request.auth.uid
+        && incoming().keys().hasOnly(['updatedAt'])
+        && incoming().updatedAt == request.time
+        && (
+          !exists(rateLimitRef(userId, action))
+          || respectsRateLimit(userId, action, resource.data.updatedAt)
+        );
+    }
+
+    function hasFreshRateLimit(userId, action) {
+      return getAfter(rateLimitRef(userId, action)).data.updatedAt == request.time;
+    }
+
     // ------------------------------------------------------------------
     // Users — public profile: displayName + classes only. No PII.
     // ------------------------------------------------------------------
@@ -150,7 +188,9 @@ service cloud.firestore {
 
     match /sessions/{sessionId} {
       allow read: if isVerifiedUwUser();
-      allow create: if isVerifiedUwUser() && isValidNewSession();
+      allow create: if isVerifiedUwUser()
+        && isValidNewSession()
+        && hasFreshRateLimit(request.auth.uid, 'createSession');
       allow update: if isVerifiedUwUser()
         && (isHostEdit() || isSelfJoin() || isSelfJoinNoOp() || isSelfLeave());
       allow delete: if isVerifiedUwUser() && request.auth.uid == resource.data.hostId;
@@ -211,6 +251,7 @@ service cloud.firestore {
           && incoming().text.size() >= 1
           && incoming().text.size() <= 2000
           && incoming().createdAt == request.time
+          && hasFreshRateLimit(request.auth.uid, 'sendMessage')
           && !isBlockedEitherWay(
                parentConversation().participantIds[0],
                parentConversation().participantIds[1]
@@ -258,11 +299,25 @@ service cloud.firestore {
 
     match /locationRatings/{ratingId} {
       allow read: if isVerifiedUwUser();
-      allow create: if isVerifiedUwUser() && hasValidLocationRating(ratingId);
+      allow create: if isVerifiedUwUser()
+        && hasValidLocationRating(ratingId)
+        && hasFreshRateLimit(request.auth.uid, 'locationRating');
       allow update: if isVerifiedUwUser()
         && hasValidLocationRating(ratingId)
-        && incoming().createdAt == resource.data.createdAt;
+        && incoming().createdAt == resource.data.createdAt
+        && hasFreshRateLimit(request.auth.uid, 'locationRating');
       allow delete: if isVerifiedUwUser() && resource.data.userId == request.auth.uid;
+    }
+
+    // ------------------------------------------------------------------
+    // Rate limits — per-user action timestamps advanced atomically with
+    // abuse-prone writes. No client reads needed.
+    // ------------------------------------------------------------------
+
+    match /rateLimits/{userId}/actions/{action} {
+      allow read: if false;
+      allow create, update: if isValidRateLimitWrite(userId, action);
+      allow delete: if false;
     }
 
     // ------------------------------------------------------------------
@@ -302,7 +357,8 @@ service cloud.firestore {
         && incoming().details.size() <= 1000
         && incoming().context is string
         && incoming().context.size() <= 40
-        && incoming().createdAt == request.time;
+        && incoming().createdAt == request.time
+        && hasFreshRateLimit(request.auth.uid, 'reportUser');
       allow read, update, delete: if false;
     }
 

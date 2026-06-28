@@ -22,6 +22,7 @@ import {
   Timestamp,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 
 const PROJECT_ID = 'studi-rules-test';
@@ -91,6 +92,38 @@ async function seed(path, data) {
   await env.withSecurityRulesDisabled(async (c) => {
     await setDoc(doc(c.firestore(), path), data);
   });
+}
+
+function batchWithRateLimit(db, uid, action) {
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'rateLimits', uid, 'actions', action), {
+    updatedAt: serverTimestamp(),
+  });
+  return batch;
+}
+
+function createSessionWithRateLimit(db, uid, sessionId, session) {
+  const batch = batchWithRateLimit(db, uid, 'createSession');
+  batch.set(doc(db, 'sessions', sessionId), session);
+  return batch.commit();
+}
+
+function createMessageWithRateLimit(db, uid, conversationId, messageId, message) {
+  const batch = batchWithRateLimit(db, uid, 'sendMessage');
+  batch.set(doc(db, 'conversations', conversationId, 'messages', messageId), message);
+  return batch.commit();
+}
+
+function createReportWithRateLimit(db, uid, reportId, report) {
+  const batch = batchWithRateLimit(db, uid, 'reportUser');
+  batch.set(doc(db, 'reports', reportId), report);
+  return batch.commit();
+}
+
+function setRatingWithRateLimit(db, uid, ratingId, rating) {
+  const batch = batchWithRateLimit(db, uid, 'locationRating');
+  batch.set(doc(db, 'locationRatings', ratingId), rating);
+  return batch.commit();
 }
 
 // ---------------------------------------------------------------- identity
@@ -191,20 +224,29 @@ describe('users', () => {
 describe('sessions', () => {
   it('valid create succeeds', async () => {
     await assertSucceeds(
-      setDoc(doc(ctx(ALICE), 'sessions', 's1'), validSession(ALICE))
+      createSessionWithRateLimit(ctx(ALICE), ALICE, 's1', validSession(ALICE))
+    );
+  });
+
+  it('session create requires a fresh per-user rate-limit write', async () => {
+    await assertFails(setDoc(doc(ctx(ALICE), 'sessions', 's1'), validSession(ALICE)));
+
+    await seed(`rateLimits/${ALICE}/actions/createSession`, { updatedAt: Timestamp.now() });
+    await assertFails(
+      createSessionWithRateLimit(ctx(ALICE), ALICE, 's2', validSession(ALICE))
     );
   });
 
   it('rejects forged hostId, stuffed participants, bad status, past start', async () => {
-    await assertFails(setDoc(doc(ctx(MALLORY), 'sessions', 's1'),
+    await assertFails(createSessionWithRateLimit(ctx(MALLORY), MALLORY, 's1',
       validSession(ALICE)));
-    await assertFails(setDoc(doc(ctx(ALICE), 'sessions', 's1'),
+    await assertFails(createSessionWithRateLimit(ctx(ALICE), ALICE, 's1',
       validSession(ALICE, { participantIds: [ALICE, BOB] })));
-    await assertFails(setDoc(doc(ctx(ALICE), 'sessions', 's1'),
+    await assertFails(createSessionWithRateLimit(ctx(ALICE), ALICE, 's1',
       validSession(ALICE, { status: 'full' })));
-    await assertFails(setDoc(doc(ctx(ALICE), 'sessions', 's1'),
+    await assertFails(createSessionWithRateLimit(ctx(ALICE), ALICE, 's1',
       validSession(ALICE, { startTime: Timestamp.fromMillis(Date.now() - 3600_000) })));
-    await assertFails(setDoc(doc(ctx(ALICE), 'sessions', 's1'),
+    await assertFails(createSessionWithRateLimit(ctx(ALICE), ALICE, 's1',
       validSession(ALICE, { startTime: futureTs(24 * 40) }))); // >31 days
   });
 
@@ -373,8 +415,11 @@ describe('conversations + messages', () => {
       createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
       lastMessageAt: Timestamp.now(),
     });
-    await assertSucceeds(setDoc(doc(ctx(ALICE), 'conversations', cid, 'messages', 'm1'), {
+    await assertSucceeds(createMessageWithRateLimit(ctx(ALICE), ALICE, cid, 'm1', {
       senderId: ALICE, text: longText, createdAt: serverTimestamp(),
+    }));
+    await assertFails(setDoc(doc(ctx(ALICE), 'conversations', cid, 'messages', 'm1b'), {
+      senderId: ALICE, text: 'missing rate limit', createdAt: serverTimestamp(),
     }));
     await assertFails(updateDoc(doc(ctx(ALICE), 'conversations', cid), {
       lastMessagePreview: longText, lastMessageAt: serverTimestamp(),
@@ -393,22 +438,35 @@ describe('conversations + messages', () => {
       createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
       lastMessageAt: Timestamp.now(),
     });
-    await assertSucceeds(setDoc(doc(ctx(ALICE), 'conversations', cid, 'messages', 'm1'), {
+    await assertSucceeds(createMessageWithRateLimit(ctx(ALICE), ALICE, cid, 'm1', {
       senderId: ALICE, text: 'study at 7?', createdAt: serverTimestamp(),
     }));
-    await assertFails(setDoc(doc(ctx(ALICE), 'conversations', cid, 'messages', 'm2'), {
+    await seed(`rateLimits/${ALICE}/actions/sendMessage`, {
+      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
+    });
+    await assertFails(createMessageWithRateLimit(ctx(ALICE), ALICE, cid, 'm2', {
       senderId: BOB, text: 'spoofed', createdAt: serverTimestamp(),
     }));
-    await assertFails(setDoc(doc(ctx(MALLORY), 'conversations', cid, 'messages', 'm3'), {
+    await assertFails(createMessageWithRateLimit(ctx(MALLORY), MALLORY, cid, 'm3', {
       senderId: MALLORY, text: 'intruder', createdAt: serverTimestamp(),
     }));
-    await assertFails(setDoc(doc(ctx(ALICE), 'conversations', cid, 'messages', 'm4'), {
+    await seed(`rateLimits/${ALICE}/actions/sendMessage`, {
+      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
+    });
+    await assertFails(createMessageWithRateLimit(ctx(ALICE), ALICE, cid, 'm4', {
       senderId: ALICE, text: 'x'.repeat(2001), createdAt: serverTimestamp(),
+    }));
+    await seed(`rateLimits/${ALICE}/actions/sendMessage`, { updatedAt: Timestamp.now() });
+    await assertFails(createMessageWithRateLimit(ctx(ALICE), ALICE, cid, 'm4b', {
+      senderId: ALICE, text: 'too soon', createdAt: serverTimestamp(),
     }));
     await seed(`userBlocks/${BOB}__${ALICE}`, {
       blockerUserId: BOB, blockedUserId: ALICE, createdAt: Timestamp.now(),
     });
-    await assertFails(setDoc(doc(ctx(ALICE), 'conversations', cid, 'messages', 'm5'), {
+    await seed(`rateLimits/${ALICE}/actions/sendMessage`, {
+      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
+    });
+    await assertFails(createMessageWithRateLimit(ctx(ALICE), ALICE, cid, 'm5', {
       senderId: ALICE, text: 'still here', createdAt: serverTimestamp(),
     }));
   });
@@ -458,6 +516,44 @@ describe('userBlocks (D5: blocker-only visibility)', () => {
   });
 });
 
+// --------------------------------------------------------- location ratings
+describe('locationRatings', () => {
+  const validRating = (userId) => ({
+    locationId: 'college-library',
+    userId,
+    stars: 5,
+    tags: ['Quiet', 'Good WiFi'],
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  it('owner creates a valid rating with a fresh rate-limit write', async () => {
+    await assertSucceeds(
+      setRatingWithRateLimit(
+        ctx(ALICE),
+        ALICE,
+        `college-library__${ALICE}`,
+        validRating(ALICE)
+      )
+    );
+    await assertFails(
+      setDoc(doc(ctx(ALICE), 'locationRatings', `college-library__${ALICE}`), validRating(ALICE))
+    );
+  });
+
+  it('rating create/update is throttled per user', async () => {
+    await seed(`rateLimits/${ALICE}/actions/locationRating`, { updatedAt: Timestamp.now() });
+    await assertFails(
+      setRatingWithRateLimit(
+        ctx(ALICE),
+        ALICE,
+        `college-library__${ALICE}`,
+        validRating(ALICE)
+      )
+    );
+  });
+});
+
 // ---------------------------------------------------------------- reports
 describe('reports (immutable, write-only)', () => {
   const valid = (reporter) => ({
@@ -467,18 +563,24 @@ describe('reports (immutable, write-only)', () => {
   });
 
   it('reporter creates; nobody reads/updates/deletes', async () => {
-    await assertSucceeds(setDoc(doc(ctx(ALICE), 'reports', 'r1'), valid(ALICE)));
+    await assertSucceeds(createReportWithRateLimit(ctx(ALICE), ALICE, 'r1', valid(ALICE)));
+    await assertFails(setDoc(doc(ctx(ALICE), 'reports', 'r1b'), valid(ALICE)));
     await assertFails(getDoc(doc(ctx(ALICE), 'reports', 'r1')));
     await assertFails(deleteDoc(doc(ctx(ALICE), 'reports', 'r1')));
   });
 
+  it('report create is throttled per reporter', async () => {
+    await seed(`rateLimits/${ALICE}/actions/reportUser`, { updatedAt: Timestamp.now() });
+    await assertFails(createReportWithRateLimit(ctx(ALICE), ALICE, 'r1', valid(ALICE)));
+  });
+
   it('rejects spoofed reporter, bad reason, oversize details, self-report', async () => {
-    await assertFails(setDoc(doc(ctx(MALLORY), 'reports', 'r2'), valid(ALICE)));
-    await assertFails(setDoc(doc(ctx(ALICE), 'reports', 'r3'),
+    await assertFails(createReportWithRateLimit(ctx(MALLORY), MALLORY, 'r2', valid(ALICE)));
+    await assertFails(createReportWithRateLimit(ctx(ALICE), ALICE, 'r3',
       { ...valid(ALICE), reason: 'Just vibes' }));
-    await assertFails(setDoc(doc(ctx(ALICE), 'reports', 'r4'),
+    await assertFails(createReportWithRateLimit(ctx(ALICE), ALICE, 'r4',
       { ...valid(ALICE), details: 'x'.repeat(1001) }));
-    await assertFails(setDoc(doc(ctx(BOB), 'reports', 'r5'),
+    await assertFails(createReportWithRateLimit(ctx(BOB), BOB, 'r5',
       { ...valid(BOB), reportedUserId: BOB }));
   });
 });

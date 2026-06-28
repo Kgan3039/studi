@@ -1,5 +1,4 @@
 import {
-  addDoc,
   arrayRemove,
   arrayUnion,
   collection,
@@ -16,6 +15,7 @@ import {
   Timestamp,
   updateDoc,
   where,
+  writeBatch,
 } from "firebase/firestore";
 
 import { FirebaseError } from "firebase/app";
@@ -33,10 +33,25 @@ export const COLLECTIONS = {
   locationRatings: "locationRatings",
   locations: "locations",
   reports: "reports",
+  rateLimits: "rateLimits",
   sessions: "sessions",
   userBlocks: "userBlocks",
   users: "users",
 } as const;
+
+type RateLimitedAction = "createSession" | "locationRating" | "reportUser" | "sendMessage";
+
+function rateLimitDoc(userId: string, action: RateLimitedAction) {
+  return doc(db, COLLECTIONS.rateLimits, userId, "actions", action);
+}
+
+function stageRateLimit(
+  batch: ReturnType<typeof writeBatch>,
+  userId: string,
+  action: RateLimitedAction
+) {
+  batch.set(rateLimitDoc(userId, action), { updatedAt: serverTimestamp() });
+}
 
 /**
  * PUBLIC profile — readable by any verified UW user (rules, PR 4).
@@ -610,8 +625,9 @@ export async function createSession(input: {
   endTime: Date;
 }): Promise<string> {
   const sessionRef = doc(collection(db, COLLECTIONS.sessions));
+  const batch = writeBatch(db);
 
-  await setDoc(sessionRef, {
+  batch.set(sessionRef, {
     classId: input.classId,
     hostId: input.hostId,
     locationId: input.locationId,
@@ -623,6 +639,8 @@ export async function createSession(input: {
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  stageRateLimit(batch, input.hostId, "createSession");
+  await batch.commit();
 
   return sessionRef.id;
 }
@@ -670,18 +688,23 @@ export async function sendDirectMessage(
     throw new Error("Write a message before sending.");
   }
 
-  await addDoc(collection(db, COLLECTIONS.conversations, conversationId, "messages"), {
+  const batch = writeBatch(db);
+  const messageRef = doc(collection(db, COLLECTIONS.conversations, conversationId, "messages"));
+
+  batch.set(messageRef, {
     senderId,
     text: trimmedText,
     createdAt: serverTimestamp(),
   });
 
-  await updateDoc(doc(db, COLLECTIONS.conversations, conversationId), {
+  batch.update(doc(db, COLLECTIONS.conversations, conversationId), {
     // Rules cap the preview at 200 chars; messages themselves go up to 2000.
     lastMessagePreview: trimmedText.slice(0, 200),
     lastMessageAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  stageRateLimit(batch, senderId, "sendMessage");
+  await batch.commit();
   track("message_sent", { length: trimmedText.length });
 }
 
@@ -778,7 +801,10 @@ export async function reportUser(
   details: string,
   context: string
 ) {
-  await addDoc(collection(db, COLLECTIONS.reports), {
+  const batch = writeBatch(db);
+  const reportRef = doc(collection(db, COLLECTIONS.reports));
+
+  batch.set(reportRef, {
     reporterUserId,
     reportedUserId,
     reason: reason.trim(),
@@ -786,6 +812,8 @@ export async function reportUser(
     context,
     createdAt: serverTimestamp(),
   });
+  stageRateLimit(batch, reporterUserId, "reportUser");
+  await batch.commit();
 }
 
 export async function submitLocationRating(
@@ -800,8 +828,9 @@ export async function submitLocationRating(
 
   const ratingRef = doc(db, COLLECTIONS.locationRatings, `${locationId}__${userId}`);
   const existing = await getDoc(ratingRef);
+  const batch = writeBatch(db);
 
-  await setDoc(ratingRef, {
+  batch.set(ratingRef, {
     locationId,
     userId,
     stars,
@@ -809,6 +838,8 @@ export async function submitLocationRating(
     createdAt: existing.exists() ? existing.data()?.createdAt : serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  stageRateLimit(batch, userId, "locationRating");
+  await batch.commit();
 }
 
 export async function getUserLocationRating(locationId: string, userId: string) {
