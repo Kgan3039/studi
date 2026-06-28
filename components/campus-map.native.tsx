@@ -1,5 +1,4 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Marker, type LatLng } from 'react-native-maps';
@@ -56,8 +55,6 @@ function markerCoordinate(location: StudyLocation): LatLng {
 export function CampusMap({
   locations,
   onOpenCampusMap,
-  onSelectLocation,
-  selectedLocationId,
   sessionTimingByLocation,
   sessionsByLocation,
 }: CampusMapProps) {
@@ -75,21 +72,17 @@ export function CampusMap({
       }
 
       if (coordinates.length === 1) {
-        mapRef.current.animateToRegion(
-          {
-            ...coordinates[0],
-            latitudeDelta: 0.006,
-            longitudeDelta: 0.006,
-          },
-          animated ? 260 : 0
-        );
         return;
       }
 
-      mapRef.current.fitToCoordinates(coordinates, {
-        animated,
-        edgePadding: PIN_EDGE_PADDING,
-      });
+      try {
+        mapRef.current.fitToCoordinates(coordinates, {
+          animated,
+          edgePadding: PIN_EDGE_PADDING,
+        });
+      } catch (error) {
+        console.warn('Unable to fit campus map pins.', error);
+      }
     },
     [locations]
   );
@@ -103,22 +96,9 @@ export function CampusMap({
     return () => clearTimeout(timeout);
   }, [fitVisiblePins]);
 
-  function handleSelectLocation(location: StudyLocation) {
-    void Haptics.selectionAsync();
-    onSelectLocation(location.locationId);
-    mapRef.current?.animateToRegion(
-      {
-        ...markerCoordinate(location),
-        latitudeDelta: 0.008,
-        longitudeDelta: 0.008,
-      },
-      220
-    );
-  }
-
   return (
     <View
-      accessibilityLabel="Interactive campus study spot map"
+      accessibilityLabel="Campus study spot map"
       style={[styles.frame, { backgroundColor: palette.surfaceMuted, borderColor: palette.border }]}>
       <MapView
         initialRegion={CAMPUS_REGION}
@@ -145,7 +125,6 @@ export function CampusMap({
         toolbarEnabled={false}
         userInterfaceStyle={colorScheme}>
         {locations.map((location) => {
-          const isSelected = selectedLocationId === location.locationId;
           const sessionCount = sessionsByLocation.get(location.locationId) ?? 0;
           const timing = sessionTimingByLocation.get(location.locationId) ?? 'none';
           const timingColor =
@@ -163,38 +142,10 @@ export function CampusMap({
               coordinate={markerCoordinate(location)}
               identifier={location.locationId}
               key={location.locationId}
-              onPress={() => handleSelectLocation(location)}
-              zIndex={isSelected ? 3 : sessionCount > 0 ? 2 : 1}>
-              <View style={styles.markerWrap}>
-                <View
-                  style={[
-                    styles.markerHalo,
-                    isSelected && styles.markerHaloSelected,
-                    {
-                      backgroundColor: isSelected ? `${timingColor}20` : 'transparent',
-                    },
-                  ]}>
-                  <View
-                    style={[
-                      styles.markerCore,
-                      isSelected && styles.markerCoreSelected,
-                      Elevation.e1,
-                      {
-                        backgroundColor: palette.surface,
-                        borderColor: isSelected ? timingColor : palette.border,
-                      },
-                    ]}>
-                    <View
-                      style={[
-                        styles.markerStatus,
-                        isSelected && styles.markerStatusSelected,
-                        { backgroundColor: timingColor },
-                      ]}
-                    />
-                  </View>
-                </View>
-              </View>
-            </Marker>
+              pinColor={timingColor}
+              tappable={false}
+              zIndex={sessionCount > 0 ? 2 : 1}
+            />
           );
         })}
       </MapView>
@@ -258,44 +209,6 @@ const styles = StyleSheet.create({
     height: 420,
     overflow: 'hidden',
     position: 'relative',
-  },
-  markerWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 44,
-    minWidth: 44,
-  },
-  markerHalo: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    height: 32,
-    justifyContent: 'center',
-    width: 32,
-  },
-  markerHaloSelected: {
-    transform: [{ scale: 1.06 }],
-  },
-  markerCore: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: 1,
-    height: 20,
-    justifyContent: 'center',
-    width: 20,
-  },
-  markerCoreSelected: {
-    borderWidth: 1.5,
-    height: 24,
-    width: 24,
-  },
-  markerStatus: {
-    borderRadius: Radius.pill,
-    height: 7,
-    width: 7,
-  },
-  markerStatusSelected: {
-    height: 9,
-    width: 9,
   },
   legend: {
     alignItems: 'center',
