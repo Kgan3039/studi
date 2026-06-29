@@ -6,6 +6,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, FontFamily } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState, waitForAuthReady } from '@/lib/auth';
+import { registerForPushNotifications } from '@/lib/notifications';
 
 type AuthGateState = 'pending' | 'signed-out' | 'unverified' | 'signed-in';
 
@@ -34,6 +35,12 @@ export default function TabLayout() {
       unsubscribe?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (authState === 'signed-in') {
+      void registerForPushNotifications();
+    }
+  }, [authState]);
 
   // Hold rendering until Firebase resolves the persisted session so
   // signed-in users don't flash through the welcome screen on cold start.

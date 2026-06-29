@@ -2,16 +2,143 @@
 // Replaces the previous v1-style functions/index.js in full.
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const {
+  onDocumentCreated,
+  onDocumentUpdated,
+  onDocumentWritten,
+} = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
+const crypto = require("crypto");
+const { Expo } = require("expo-server-sdk");
 
 admin.initializeApp();
 setGlobalOptions({ region: "us-central1", maxInstances: 5 });
 
 const db = admin.firestore();
+const expo = new Expo();
 const DELETE_ACCOUNT_MAX_AUTH_AGE_SECONDS = 5 * 60;
 const DELETE_ACCOUNT_RATE_LIMIT_SECONDS = 10 * 60;
+
+function isVerifiedUwCallable(request) {
+  const token = request.auth?.token;
+  return (
+    !!request.auth?.uid &&
+    token?.email_verified === true &&
+    typeof token?.email === "string" &&
+    token.email.toLowerCase().endsWith("@wisc.edu")
+  );
+}
+
+function hashPushToken(expoPushToken) {
+  return crypto.createHash("sha256").update(expoPushToken).digest("hex");
+}
+
+function pushTokenRef(uid, expoPushToken) {
+  return db
+    .collection("users")
+    .doc(uid)
+    .collection("private")
+    .doc("pushTokens")
+    .collection("tokens")
+    .doc(hashPushToken(expoPushToken));
+}
+
+function normalizePreview(text, maxLength = 120) {
+  return String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+async function getDisplayName(uid) {
+  if (!uid) return "";
+
+  const snap = await db.collection("users").doc(uid).get();
+  const displayName = snap.exists ? snap.data()?.displayName : "";
+  return typeof displayName === "string" ? displayName.trim() : "";
+}
+
+async function getEnabledPushTokenDocs(uid) {
+  const snap = await db
+    .collection("users")
+    .doc(uid)
+    .collection("private")
+    .doc("pushTokens")
+    .collection("tokens")
+    .where("enabled", "==", true)
+    .get();
+
+  return snap.docs
+    .map((docSnap) => {
+      const expoPushToken = docSnap.data()?.expoPushToken;
+      return typeof expoPushToken === "string"
+        ? { expoPushToken, ref: docSnap.ref }
+        : null;
+    })
+    .filter(Boolean);
+}
+
+async function disablePushToken(ref) {
+  try {
+    await ref.set(
+      {
+        enabled: false,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  } catch (error) {
+    console.warn("Failed to disable push token", error);
+  }
+}
+
+async function sendPushToUsers(userIds, payload) {
+  const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+  const tokenDocs = (
+    await Promise.all(uniqueUserIds.map((uid) => getEnabledPushTokenDocs(uid)))
+  ).flat();
+
+  const messages = [];
+  const refs = [];
+
+  for (const tokenDoc of tokenDocs) {
+    if (!Expo.isExpoPushToken(tokenDoc.expoPushToken)) {
+      await disablePushToken(tokenDoc.ref);
+      continue;
+    }
+
+    messages.push({
+      to: tokenDoc.expoPushToken,
+      sound: "default",
+      title: payload.title,
+      body: payload.body,
+      data: payload.data,
+    });
+    refs.push(tokenDoc.ref);
+  }
+
+  const chunks = expo.chunkPushNotifications(messages);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    try {
+      const tickets = await expo.sendPushNotificationsAsync(chunk);
+      tickets.forEach((ticket, index) => {
+        if (
+          ticket.status === "error" &&
+          ticket.details?.error === "DeviceNotRegistered"
+        ) {
+          void disablePushToken(refs[offset + index]);
+        }
+      });
+    } catch (error) {
+      console.warn("Expo push send failed", error);
+    } finally {
+      offset += chunk.length;
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Location rating aggregates: locations/{id} gets ratingCount / ratingSum /
@@ -54,6 +181,151 @@ exports.onRatingWritten = onDocumentWritten("locationRatings/{ratingId}", async 
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Push notification token registration. Tokens are private and are written
+// only by Admin SDK callables, never directly by clients.
+// ---------------------------------------------------------------------------
+
+exports.registerPushToken = onCall(async (request) => {
+  const uid = request.auth?.uid;
+
+  if (!isVerifiedUwCallable(request)) {
+    throw new HttpsError("unauthenticated", "Sign in with a verified UW account.");
+  }
+
+  const expoPushToken = request.data?.expoPushToken;
+  const platform = request.data?.platform;
+  const projectId = request.data?.projectId;
+
+  if (!Expo.isExpoPushToken(expoPushToken)) {
+    throw new HttpsError("invalid-argument", "Invalid Expo push token.");
+  }
+
+  if (!["ios", "android"].includes(platform)) {
+    throw new HttpsError("invalid-argument", "Invalid push token platform.");
+  }
+
+  if (typeof projectId !== "string" || projectId.length < 1 || projectId.length > 120) {
+    throw new HttpsError("invalid-argument", "Invalid Expo project id.");
+  }
+
+  const ref = pushTokenRef(uid, expoPushToken);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    tx.set(
+      ref,
+      {
+        expoPushToken,
+        platform,
+        projectId,
+        enabled: true,
+        createdAt: snap.exists ? snap.data()?.createdAt ?? now : now,
+        updatedAt: now,
+        lastSeenAt: now,
+      },
+      { merge: true }
+    );
+  });
+
+  return { status: "registered" };
+});
+
+exports.unregisterPushToken = onCall(async (request) => {
+  const uid = request.auth?.uid;
+
+  if (!isVerifiedUwCallable(request)) {
+    throw new HttpsError("unauthenticated", "Sign in with a verified UW account.");
+  }
+
+  const expoPushToken = request.data?.expoPushToken;
+  if (!Expo.isExpoPushToken(expoPushToken)) {
+    throw new HttpsError("invalid-argument", "Invalid Expo push token.");
+  }
+
+  await pushTokenRef(uid, expoPushToken).set(
+    {
+      expoPushToken,
+      enabled: false,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  return { status: "unregistered" };
+});
+
+exports.onDirectMessageCreated = onDocumentCreated(
+  "conversations/{conversationId}/messages/{messageId}",
+  async (event) => {
+    const message = event.data?.data();
+    const senderId = message?.senderId;
+    const text = normalizePreview(message?.text);
+    const conversationId = event.params.conversationId;
+
+    if (!senderId || !conversationId || !text) {
+      return;
+    }
+
+    const conversationSnap = await db.collection("conversations").doc(conversationId).get();
+    if (!conversationSnap.exists) {
+      return;
+    }
+
+    const participantIds = Array.isArray(conversationSnap.data()?.participantIds)
+      ? conversationSnap.data().participantIds.filter((id) => typeof id === "string")
+      : [];
+    const recipients = participantIds.filter((uid) => uid !== senderId);
+
+    if (recipients.length === 0) {
+      return;
+    }
+
+    const senderName = await getDisplayName(senderId);
+    await sendPushToUsers(recipients, {
+      title: senderName || "New message",
+      body: text,
+      data: { url: `/conversation/${conversationId}` },
+    });
+  }
+);
+
+exports.onSessionParticipantsUpdated = onDocumentUpdated(
+  "sessions/{sessionId}",
+  async (event) => {
+    const before = event.data.before.data();
+    const after = event.data.after.data();
+    const hostId = after?.hostId;
+
+    if (!hostId) {
+      return;
+    }
+
+    const beforeParticipants = Array.isArray(before?.participantIds)
+      ? before.participantIds.filter((id) => typeof id === "string")
+      : [];
+    const afterParticipants = Array.isArray(after?.participantIds)
+      ? after.participantIds.filter((id) => typeof id === "string")
+      : [];
+    const newlyAdded = afterParticipants.filter((uid) => !beforeParticipants.includes(uid));
+    const joiners = newlyAdded.filter((uid) => uid !== hostId);
+
+    if (joiners.length === 0) {
+      return;
+    }
+
+    const displayName = (await getDisplayName(joiners[0])) || "Someone";
+    const classId = typeof after?.classId === "string" ? after.classId : "your session";
+
+    await sendPushToUsers([hostId], {
+      title: "New study partner",
+      body: `${displayName} joined ${classId}`,
+      data: { url: `/session/${event.params.sessionId}` },
+    });
+  }
+);
 
 // ---------------------------------------------------------------------------
 // Account deletion (D8): single authoritative path. Admin SDK bypasses rules,

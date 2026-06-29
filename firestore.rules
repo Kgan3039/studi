@@ -102,6 +102,12 @@ service cloud.firestore {
           && incoming().email is string
           && incoming().email == request.auth.token.email;
         allow delete: if false;
+
+        match /tokens/{tokenId} {
+          // Push tokens live under users/{uid}/private/pushTokens/tokens/{tokenId}
+          // and are managed only by Cloud Functions/Admin SDK.
+          allow read, write: if false;
+        }
       }
     }
 
