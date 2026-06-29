@@ -1,5 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -68,6 +68,7 @@ function formatSessionTime(session: StudySession) {
 
 export default function StudyLocationsScreen() {
   const router = useRouter();
+  const scrollViewRef = useRef<ScrollView>(null);
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
@@ -281,6 +282,14 @@ export default function StudyLocationsScreen() {
     setIsRefreshing(false);
   }
 
+  function selectLocation(locationId: string) {
+    setSelectedLocationId(locationId);
+
+    requestAnimationFrame(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    });
+  }
+
   function openDirections(location: StudyLocation) {
     const destination = encodeURIComponent(
       `${location.name}, ${location.building}, Madison, Wisconsin`
@@ -324,6 +333,7 @@ export default function StudyLocationsScreen() {
 
   return (
     <ScrollView
+      ref={scrollViewRef}
       keyboardShouldPersistTaps="handled"
       refreshControl={
         <RefreshControl
@@ -456,7 +466,7 @@ export default function StudyLocationsScreen() {
                     <Pressable
                       accessibilityRole="button"
                       accessibilityState={{ selected: isSelected }}
-                      onPress={() => setSelectedLocationId(location.locationId)}
+                      onPress={() => selectLocation(location.locationId)}
                       style={({ pressed }) => [
                         styles.locationListButton,
                         { borderColor: palette.border },
