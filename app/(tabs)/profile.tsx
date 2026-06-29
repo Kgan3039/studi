@@ -1,14 +1,15 @@
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    Alert,
+    Modal,
+    Pressable,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -18,9 +19,9 @@ import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import {
-  STUDI_CONTACT_EMAIL,
-  STUDI_PRIVACY_POLICY_URL,
-  STUDI_SUPPORT_URL,
+    STUDI_CONTACT_EMAIL,
+    STUDI_PRIVACY_POLICY_URL,
+    STUDI_SUPPORT_URL,
 } from '@/constants/app-info';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -28,16 +29,16 @@ import { identifyUser, track } from '@/lib/analytics';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
 import { UW_COURSE_CATALOG, UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
 import {
-  getLocationRatingAggregates,
-  getLocations,
-  getUpcomingSessions,
-  getUserProfile,
-  invalidateProfileCache,
-  updateUserClasses,
-  updateUserDisplayName,
-  type LocationRatingAggregate,
-  type StudyLocation,
-  type StudySession,
+    getLocationRatingAggregates,
+    getLocations,
+    getUpcomingSessions,
+    getUserProfile,
+    invalidateProfileCache,
+    updateUserClasses,
+    updateUserDisplayName,
+    type LocationRatingAggregate,
+    type StudyLocation,
+    type StudySession,
 } from '@/lib/firestore';
 import { type Href } from 'expo-router';
 import type { User } from 'firebase/auth';
@@ -89,6 +90,7 @@ export default function ProfileScreen() {
   const [ratingAggregates, setRatingAggregates] = useState<
     Map<string, LocationRatingAggregate>
   >(() => new Map());
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [nameStatus, setNameStatus] = useState('Save your name so Studi looks more personal.');
   const [classesStatus, setClassesStatus] = useState('Update the classes you take.');
   const courseResults = useMemo(() => {
@@ -113,64 +115,71 @@ export default function ProfileScreen() {
     return unsubscribe;
   }, []);
 
+  const loadProfile = useCallback(async () => {
+    if (!currentUser) {
+      setIsLoading(false);
+      setIsRefreshing(false);
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const profile = await getUserProfile(currentUser.uid);
+      const savedName = splitDisplayName(profile?.displayName);
+      const savedClasses = profile?.classes ?? [];
+      setFirstName(savedName.firstName);
+      setLastName(savedName.lastName);
+      setClasses(savedClasses);
+      setNameStatus(
+        profile?.displayName
+          ? `Saved as ${profile.displayName}.`
+          : 'Add your first and last name to personalize Studi.'
+      );
+      setClassesStatus(
+        savedClasses.length > 0
+          ? `You'll see sessions for ${savedClasses.length} class${
+              savedClasses.length === 1 ? '' : 'es'
+            }.`
+          : 'No classes saved yet.'
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to load your profile.';
+      setNameStatus(message);
+      setClassesStatus(message);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+
+    // Stats grid + per-class "N active" counts + saved locations all read
+    // from existing data sources. Failures here must not blank the
+    // identity block, so they degrade to empty quietly.
+    try {
+      const [loadedSessions, loadedLocations, aggregates] = await Promise.all([
+        getUpcomingSessions({ includeInProgress: true }),
+        getLocations(),
+        getLocationRatingAggregates(),
+      ]);
+      setSessions(loadedSessions);
+      setLocations(loadedLocations);
+      setRatingAggregates(aggregates);
+    } catch {
+      // Keep whatever was last loaded; the sections fall back to zero/empty.
+    }
+  }, [currentUser]);
+
   useFocusEffect(
     useCallback(() => {
-      async function loadProfile() {
-        if (!currentUser) {
-          setIsLoading(false);
-          return;
-        }
-
-        try {
-          setIsLoading(true);
-          const profile = await getUserProfile(currentUser.uid);
-          const savedName = splitDisplayName(profile?.displayName);
-          const savedClasses = profile?.classes ?? [];
-          setFirstName(savedName.firstName);
-          setLastName(savedName.lastName);
-          setClasses(savedClasses);
-          setNameStatus(
-            profile?.displayName
-              ? `Saved as ${profile.displayName}.`
-              : 'Add your first and last name to personalize Studi.'
-          );
-          setClassesStatus(
-            savedClasses.length > 0
-              ? `You'll see sessions for ${savedClasses.length} class${
-                  savedClasses.length === 1 ? '' : 'es'
-                }.`
-              : 'No classes saved yet.'
-          );
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unable to load your profile.';
-          setNameStatus(message);
-          setClassesStatus(message);
-        } finally {
-          setIsLoading(false);
-        }
-
-        // Stats grid + per-class "N active" counts + saved locations all read
-        // from existing data sources. Failures here must not blank the
-        // identity block, so they degrade to empty quietly.
-        try {
-          const [loadedSessions, loadedLocations, aggregates] = await Promise.all([
-            getUpcomingSessions({ includeInProgress: true }),
-            getLocations(),
-            getLocationRatingAggregates(),
-          ]);
-          setSessions(loadedSessions);
-          setLocations(loadedLocations);
-          setRatingAggregates(aggregates);
-        } catch {
-          // Keep whatever was last loaded; the sections fall back to zero/empty.
-        }
-      }
-
       loadProfile();
 
       return () => {};
-    }, [currentUser])
+    }, [loadProfile])
   );
+
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    await loadProfile();
+  }
 
   function toggleClassSelection(classCode: string) {
     setClasses((currentClasses) =>
@@ -382,6 +391,9 @@ export default function ProfileScreen() {
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
+      refreshControl={
+        <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+      }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.xl }]}>
       {/* Avatar header + name / class-year block (board ProfileScreen ~1761). */}
       <View style={styles.identity}>

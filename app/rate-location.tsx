@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   View,
@@ -33,6 +34,7 @@ export default function RateLocationScreen() {
   const [selectedStars, setSelectedStars] = useState(0);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasExistingRating, setHasExistingRating] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
@@ -51,25 +53,30 @@ export default function RateLocationScreen() {
     }
   }, [authResolved, currentUser, router]);
 
-  useEffect(() => {
-    if (!currentUser || !locationId) return;
-
-    async function loadExistingRating() {
-      if (!currentUser || !locationId) return;
-      try {
-        const existing = await getUserLocationRating(locationId, currentUser.uid);
-        if (existing) {
-          setSelectedStars(existing.stars);
-          setSelectedTags(existing.tags);
-          setHasExistingRating(true);
-        }
-      } finally {
-        setIsLoading(false);
-      }
+  const loadExistingRating = useCallback(async () => {
+    if (!currentUser || !locationId) {
+      setIsLoading(false);
+      setIsRefreshing(false);
+      return;
     }
 
-    loadExistingRating();
+    try {
+      setIsLoading(true);
+      const existing = await getUserLocationRating(locationId, currentUser.uid);
+      if (existing) {
+        setSelectedStars(existing.stars);
+        setSelectedTags(existing.tags);
+        setHasExistingRating(true);
+      }
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
   }, [currentUser, locationId]);
+
+  useEffect(() => {
+    loadExistingRating();
+  }, [loadExistingRating]);
 
   function toggleTag(tag: string) {
     setSelectedTags((prev) =>
@@ -94,6 +101,15 @@ export default function RateLocationScreen() {
     }
   }
 
+  async function handleRefresh() {
+    if (!currentUser || !locationId) {
+      return;
+    }
+
+    setIsRefreshing(true);
+    await loadExistingRating();
+  }
+
   if (!authResolved || !currentUser || isLoading) {
     return (
       <View style={[styles.loadingScreen, { backgroundColor: palette.background }]}>
@@ -105,6 +121,9 @@ export default function RateLocationScreen() {
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
+      refreshControl={
+        <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+      }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
       <ThemedView
         style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>

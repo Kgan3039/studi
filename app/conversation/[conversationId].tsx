@@ -5,6 +5,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -83,6 +84,8 @@ export default function ConversationScreen() {
   const [draft, setDraft] = useState('');
   const [status, setStatus] = useState('Loading conversation...');
   const [isSending, setIsSending] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -108,21 +111,26 @@ export default function ConversationScreen() {
     });
 
     return unsubscribe;
-  }, [conversationId, currentUser, otherUserName]);
+  }, [conversationId, currentUser, otherUserName, refreshNonce]);
 
   useEffect(() => {
     async function loadBlocks() {
       if (!currentUser) {
         setBlockedUserIds([]);
+        setIsRefreshing(false);
         return;
       }
 
-      const loadedBlockedUserIds = await getBlockedUserIds(currentUser.uid);
-      setBlockedUserIds(loadedBlockedUserIds);
+      try {
+        const loadedBlockedUserIds = await getBlockedUserIds(currentUser.uid);
+        setBlockedUserIds(loadedBlockedUserIds);
+      } finally {
+        setIsRefreshing(false);
+      }
     }
 
     loadBlocks();
-  }, [currentUser]);
+  }, [currentUser, refreshNonce]);
 
   async function handleSendMessage() {
     if (!currentUser || !conversationId) {
@@ -160,6 +168,16 @@ export default function ConversationScreen() {
       const message = error instanceof Error ? error.message : 'Unable to block this user.';
       Alert.alert('Block Error', message);
     }
+  }
+
+  async function handleRefresh() {
+    if (!currentUser || !conversationId) {
+      return;
+    }
+
+    setStatus(`Refreshing ${otherUserName || 'Student'}...`);
+    setIsRefreshing(true);
+    setRefreshNonce((value) => value + 1);
   }
 
   const isBlocked = !!otherUserId && blockedUserIds.includes(otherUserId);
@@ -206,6 +224,9 @@ export default function ConversationScreen() {
 
       <ScrollView
         style={styles.thread}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+        }
         contentContainerStyle={styles.threadContent}>
         {messages.length > 0 ? (
           messages.map((message, index) => {

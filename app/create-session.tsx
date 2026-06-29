@@ -7,6 +7,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -146,6 +147,7 @@ export default function CreateSessionScreen() {
     `Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`
   );
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const filteredLocations = useMemo(() => {
     const normalizedQuery = locationQuery.trim().toLowerCase();
@@ -266,6 +268,19 @@ export default function CreateSessionScreen() {
     loadSetupData();
   }, [loadSetupData]);
 
+  async function handleRefresh() {
+    if (!currentUser) {
+      return;
+    }
+
+    setIsRefreshing(true);
+    try {
+      await loadSetupData();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
   async function handleCreateSession() {
     if (!currentUser) {
       Alert.alert('Sign In Required', 'Sign in before creating a study session.');
@@ -371,6 +386,9 @@ export default function CreateSessionScreen() {
       <ScrollView
         keyboardShouldPersistTaps="handled"
         style={styles.screen}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+        }
         contentContainerStyle={[
           styles.content,
           { paddingBottom: insets.bottom + 56, paddingTop: Space.lg },

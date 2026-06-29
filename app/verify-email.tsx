@@ -1,6 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
+import {
+    ActivityIndicator,
+    Alert,
+    Pressable,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -8,10 +16,10 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
-  logOut,
-  refreshVerificationState,
-  resendVerificationEmail,
-  subscribeToAuthState,
+    logOut,
+    refreshVerificationState,
+    resendVerificationEmail,
+    subscribeToAuthState,
 } from '@/lib/auth';
 import type { User } from 'firebase/auth';
 
@@ -26,6 +34,7 @@ export default function VerifyEmailScreen() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [isResending, setIsResending] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [status, setStatus] = useState(
     'We sent a verification link to your @wisc.edu inbox. Open it, then come back here.'
@@ -85,7 +94,13 @@ export default function VerifyEmailScreen() {
       Alert.alert('Verification Error', message);
     } finally {
       setIsChecking(false);
+      setIsRefreshing(false);
     }
+  }
+
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    await handleCheckVerified();
   }
 
   async function handleResend() {
@@ -111,6 +126,9 @@ export default function VerifyEmailScreen() {
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
+      refreshControl={
+        <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+      }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
       <ThemedView style={[styles.hero, { backgroundColor: palette.hero }]}>
         <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Account security</ThemedText>

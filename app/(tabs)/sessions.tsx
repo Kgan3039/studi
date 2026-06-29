@@ -1,14 +1,16 @@
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    ActivityIndicator,
+    Alert,
+    Pressable,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SessionCard } from '@/components/session-card';
@@ -20,12 +22,12 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
-  getLocations,
-  getProfilesByIds,
-  getUpcomingSessions,
-  getUserProfile,
-  joinSession,
-  type StudySession,
+    getLocations,
+    getProfilesByIds,
+    getUpcomingSessions,
+    getUserProfile,
+    joinSession,
+    type StudySession,
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
@@ -46,6 +48,7 @@ export default function SessionsScreen() {
   const [sessions, setSessions] = useState<SessionListEntry[]>([]);
   const [status, setStatus] = useState('Loading sessions...');
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [joiningSessionId, setJoiningSessionId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
@@ -153,8 +156,14 @@ export default function SessionsScreen() {
       setStatus(message);
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   }, [isFilteredToMyClasses, normalizedRequestedClass, profileClasses]);
+
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    await loadSessions();
+  }
 
   useEffect(() => {
     loadSessions();
@@ -225,6 +234,9 @@ export default function SessionsScreen() {
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
       <ScrollView
         style={styles.screen}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+        }
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <View style={styles.header}>
         <View style={styles.headerText}>
@@ -233,12 +245,13 @@ export default function SessionsScreen() {
         </View>
         <Pressable
           accessibilityRole="button"
-          disabled={isLoading}
-          onPress={loadSessions}
-          style={({ pressed }) => ({ opacity: pressed || isLoading ? 0.5 : 1 })}>
-          <Text style={[TypeScale.label, { color: palette.tint }]}>
-            {isLoading ? 'Loading…' : 'Refresh'}
-          </Text>
+          disabled={isLoading || isRefreshing}
+          onPress={handleRefresh}
+          style={({ pressed }) => ({ opacity: pressed || isLoading || isRefreshing ? 0.5 : 1 })}>
+          <View style={styles.refreshButtonContent}>
+            {isLoading || isRefreshing ? <ActivityIndicator size="small" color={palette.tint} /> : null}
+            <Text style={[TypeScale.label, { color: palette.tint }]}>Refresh</Text>
+          </View>
         </Pressable>
       </View>
 
@@ -396,6 +409,11 @@ const styles = StyleSheet.create({
   },
   headerText: {
     flexShrink: 1,
+    gap: Space.xs,
+  },
+  refreshButtonContent: {
+    alignItems: 'center',
+    flexDirection: 'row',
     gap: Space.xs,
   },
   searchInput: {
