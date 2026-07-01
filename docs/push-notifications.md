@@ -18,10 +18,11 @@ Not implemented:
 
 ## Required EAS setup
 
+Launch scope: **iOS / TestFlight only** for V1. Android is deferred, so `android.package` and Android (FCM) push credentials are intentionally not configured yet.
+
 Before this branch can ship, configure EAS and push credentials:
-- Add `expo.extra.eas.projectId` to `app.json`.
-- Configure APNs credentials for iOS through EAS.
-- Configure Android push credentials if Android launch is included.
+- Run `eas init` to create the EAS project and populate `expo.extra.eas.projectId` (currently an empty placeholder in `app.json`).
+- Configure APNs credentials for iOS through EAS (`eas credentials`).
 - Verify token registration in a development build or TestFlight build.
 
 Expo Go may warn that notifications are not fully supported. The app should degrade gracefully, but remote push should be verified in an EAS development or TestFlight build.
@@ -29,17 +30,20 @@ Expo Go may warn that notifications are not fully supported. The app should degr
 ## Required app identifiers
 
 Before EAS/TestFlight QA:
-- Add `expo.ios.bundleIdentifier`.
-- Add `expo.android.package`.
+- `expo.ios.bundleIdentifier` is set to `com.studi.app` — register/confirm this exact id in App Store Connect.
+- Populate `expo.extra.eas.projectId` via `eas init` (empty placeholder until then).
+- `expo.android.package` is deferred (iOS-only launch).
 - Keep the existing `scheme` value unless deep-link behavior is intentionally changed.
 
 ## Privacy policy update
 
-Before merge/release, update the in-app and hosted privacy policy plus App Store privacy answers to mention:
+Status: **done.** The in-app policy (`app/privacy.tsx`) and hosted policy (`frontend/website/app/privacy/page.tsx`) both mention:
 - Expo push tokens/device notification identifiers.
 - Notification delivery through Expo Push Service.
 - That tokens are used only to send Studi notifications such as messages and session updates.
 - How users can disable notifications through OS settings.
+
+Still required before release: update the App Store Connect privacy answers to match (push token as a collected identifier used for app functionality, not tracking).
 
 ## Manual QA checklist
 
