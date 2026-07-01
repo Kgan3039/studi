@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.studi.app"
+      "bundleIdentifier": "com.joinstudi.app"
     },
     "android": {
       "adaptiveIcon": {
