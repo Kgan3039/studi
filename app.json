@@ -49,8 +49,10 @@
     },
     "extra": {
       "eas": {
-        "projectId": ""
-      }
-    }
+        "projectId": "cefee105-ad53-4b95-a822-770d78148ba7"
+      },
+      "router": {}
+    },
+    "owner": "studi-app"
   }
 }
