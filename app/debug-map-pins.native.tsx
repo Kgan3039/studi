@@ -16,10 +16,9 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 type DebugStage =
   | 'minimal'
   | 'real-data'
-  | 'timing-colors'
+  | 'press-no-state'
   | 'selected-state'
   | 'bottom-card'
-  | 'delayed-selection'
   | 'callout';
 
 type DebugMarker = {
@@ -39,38 +38,33 @@ const CAMPUS_REGION = {
 const STAGES: { id: DebugStage; label: string; detail: string }[] = [
   {
     id: 'minimal',
-    label: '1. Minimal',
-    detail: 'Three hardcoded default markers with direct onPress setState.',
+    label: '1. Default 3',
+    detail: 'Plain MapView with three default markers. No marker press handler.',
   },
   {
     id: 'real-data',
-    label: '2. Real data',
-    detail: 'UW locations, default markers, direct onPress setState.',
+    label: '2. All real',
+    detail: 'Plain MapView with all real Studi markers. No marker press handler.',
   },
   {
-    id: 'timing-colors',
-    label: '3. Colors',
-    detail: 'Real locations with default marker pinColor.',
+    id: 'press-no-state',
+    label: '3. Press only',
+    detail: 'All real Studi markers with onPress logging only. No state update.',
   },
   {
     id: 'selected-state',
-    label: '4. Selected',
-    detail: 'Adds selected marker color/zIndex only. No custom marker children.',
+    label: '4. State only',
+    detail: 'All real Studi markers. onPress updates selectedLocationId state only.',
   },
   {
     id: 'bottom-card',
     label: '5. Card',
-    detail: 'Updates a local bottom card when marker is pressed.',
-  },
-  {
-    id: 'delayed-selection',
-    label: '6. Delayed',
-    detail: 'Defers selection state with requestAnimationFrame.',
+    detail: 'Adds a selected location bottom card after marker selection.',
   },
   {
     id: 'callout',
-    label: '7. Callout',
-    detail: 'Uses native Callout instead of an app bottom-card update.',
+    label: '6. Callout',
+    detail: 'Adds native Callout children. Only test this after stages 1-5 are stable.',
   },
 ];
 
@@ -97,27 +91,6 @@ const MINIMAL_MARKERS: DebugMarker[] = [
 
 function timingForIndex(index: number): DebugMarker['timing'] {
   return index % 4 === 0 ? 'live' : index % 4 === 1 ? 'soon' : index % 4 === 2 ? 'later' : 'none';
-}
-
-function markerColor(
-  timing: DebugMarker['timing'],
-  selected: boolean,
-  tint: string
-) {
-  if (selected) {
-    return tint;
-  }
-
-  switch (timing) {
-    case 'live':
-      return tint;
-    case 'soon':
-      return '#B7791F';
-    case 'later':
-      return '#2563EB';
-    default:
-      return '#6B7280';
-  }
 }
 
 export default function DebugMapPinsNative() {
@@ -150,26 +123,23 @@ export default function DebugMapPinsNative() {
 
   const selectedMarker = markers.find((marker) => marker.id === selectedMarkerId) ?? null;
   const stageConfig = STAGES.find((item) => item.id === stage) ?? STAGES[0];
-  const usesTimingColors =
-    stage === 'timing-colors' ||
-    stage === 'selected-state' ||
-    stage === 'bottom-card' ||
-    stage === 'delayed-selection' ||
-    stage === 'callout';
-  const usesSelectedVisual =
-    stage === 'selected-state' || stage === 'bottom-card' || stage === 'delayed-selection';
 
   function recordMarkerPress(marker: DebugMarker) {
+    if (stage === 'minimal' || stage === 'real-data') {
+      return;
+    }
+
+    if (stage === 'press-no-state') {
+      console.log(`[debug-map-pins] marker press without state: ${marker.id}`);
+      return;
+    }
+
     const nextTapCount = tapCount + 1;
     setTapCount(nextTapCount);
     setLastEvent(`${nextTapCount}. ${marker.name}`);
 
     if (stage === 'callout') {
-      return;
-    }
-
-    if (stage === 'delayed-selection') {
-      requestAnimationFrame(() => setSelectedMarkerId(marker.id));
+      setSelectedMarkerId(marker.id);
       return;
     }
 
@@ -240,17 +210,17 @@ export default function DebugMapPinsNative() {
           toolbarEnabled={false}
           userInterfaceStyle={colorScheme}>
           {markers.map((marker) => {
-            const isSelected = marker.id === selectedMarkerId;
-
             return (
               <Marker
                 coordinate={marker.coordinate}
                 identifier={marker.id}
                 key={marker.id}
-                onPress={() => recordMarkerPress(marker)}
-                pinColor={usesTimingColors ? markerColor(marker.timing, isSelected, palette.tint) : undefined}
-                title={marker.name}
-                zIndex={usesSelectedVisual && isSelected ? 2 : 1}>
+                onPress={
+                  stage === 'minimal' || stage === 'real-data'
+                    ? undefined
+                    : () => recordMarkerPress(marker)
+                }
+                title={marker.name}>
                 {stage === 'callout' ? (
                   <Callout>
                     <View style={styles.callout}>
@@ -264,7 +234,7 @@ export default function DebugMapPinsNative() {
         </MapView>
       </View>
 
-      {stage === 'bottom-card' || stage === 'delayed-selection' ? (
+      {stage === 'bottom-card' ? (
         <View style={[styles.panel, { backgroundColor: palette.surface, borderColor: palette.border }]}>
           <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Selected marker</Text>
           <Text style={[TypeScale.heading, { color: palette.text }]}>
