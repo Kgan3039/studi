@@ -13,7 +13,8 @@ const sections = [
       "Account information, including email address, display name, and sign-in provider details.",
       "Profile information you choose to add, including your display name and classes.",
       "Study activity you create in the app, including sessions, session participation, messages, reports, blocks, and study location ratings.",
-      "Technical data needed to operate the app, such as authentication state, timestamps, and Firebase service logs.",
+      "Analytics and usage information, such as app opens, screen interactions, feature usage, engagement metrics, and diagnostic or crash-related data.",
+      "Technical data needed to operate the app, such as authentication state, timestamps, Firebase service logs, and device push identifiers or push notification tokens if you enable notifications.",
     ],
   },
   {
@@ -22,13 +23,22 @@ const sections = [
       "Create and secure your account.",
       "Show study sessions relevant to your classes.",
       "Show sessions, messages, location ratings, and profile details to the people who need them for app features.",
+      "Send account, message, session, and app-related notifications if you enable notifications.",
       "Investigate reports, prevent abuse, debug issues, and keep the service reliable.",
+      "Understand app performance, usability, reliability, and feature quality.",
+    ],
+  },
+  {
+    title: "Campus Locations and Maps",
+    body: [
+      "Studi displays campus study locations and map-based study spot data so students can find places to study. Studi does not continuously track or store precise background location. If precise device location is added later, Studi will request permission through your device settings.",
     ],
   },
   {
     title: "Sharing and Service Providers",
     body: [
-      "Studi uses Firebase services from Google for authentication and cloud data storage. Data is shared with service providers only as needed to operate Studi. We do not share personal information with advertising networks or data brokers.",
+      "Studi uses Firebase services from Google for authentication and cloud data storage. Studi uses PostHog for product analytics and usage insights. Analytics are used to improve app performance, usability, reliability, and feature quality.",
+      "Push notification support may use Expo Push Service. Data is shared with service providers only as needed to operate Studi. Studi does not use third-party advertising or cross-app tracking, and we do not share personal information with advertising networks or data brokers.",
     ],
   },
   {
@@ -42,13 +52,14 @@ const sections = [
     items: [
       "You can edit your display name and classes from Profile.",
       "You can delete your account from Profile > Account actions > Delete Account.",
+      "You can control notifications through your device settings.",
       "You can contact us to request access, correction, deletion, or consent withdrawal help.",
     ],
   },
   {
     title: "Children and Sensitive Data",
     body: [
-      "Studi is intended for college students and is not directed to children under 13. Studi does not request HealthKit data, precise location tracking, payment card information, or government identifiers.",
+      "Studi is intended for college students and is not directed to children under 13. Studi does not request HealthKit data, continuous precise background location tracking, payment card information, or government identifiers.",
     ],
   },
   {
