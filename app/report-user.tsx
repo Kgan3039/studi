@@ -1,11 +1,20 @@
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
+import { Button } from '@/components/ui/Button';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -28,6 +37,8 @@ export default function ReportUserScreen() {
   const [selectedReason, setSelectedReason] = useState(REPORT_REASONS[0]);
   const [details, setDetails] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -58,132 +69,143 @@ export default function ReportUserScreen() {
   }
 
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView style={[styles.hero, { backgroundColor: palette.hero }]}>
-        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Safety</ThemedText>
-        <ThemedText type="title" style={styles.heroTitle}>
-          Report User
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Let us know if something felt unsafe or inappropriate so the app can stay useful and respectful.
-        </ThemedText>
-      </ThemedView>
-
-      <ThemedView style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.sectionLabel}>Reporting</ThemedText>
-        <ThemedText type="subtitle">{reportedUserName || 'This user'}</ThemedText>
-        <View style={styles.chipRow}>
-          {REPORT_REASONS.map((reason) => {
-            const isSelected = selectedReason === reason;
-
-            return (
-              <Pressable
-                key={reason}
-                onPress={() => setSelectedReason(reason)}
-                style={[
-                  styles.chip,
-                  {
-                    backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
-                    borderColor: isSelected ? palette.tint : palette.outline,
-                  },
-                ]}>
-                <ThemedText
-                  type="defaultSemiBold"
-                  lightColor={isSelected ? '#ffffff' : undefined}
-                  darkColor={isSelected ? '#ffffff' : undefined}>
-                  {reason}
-                </ThemedText>
-              </Pressable>
-            );
-          })}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+      style={[styles.screen, { backgroundColor: palette.background }]}>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        style={styles.screen}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: insets.bottom + Space.xxl, paddingTop: Space.lg },
+        ]}>
+        <View style={styles.header}>
+          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Safety</Text>
+          <Text style={[styles.headerTitle, { color: palette.text }]}>Help keep Studi safe</Text>
+          <Text style={[TypeScale.body, { color: palette.icon }]}>
+            Tell us what happened. Reports are private and reviewed by the Studi team.
+          </Text>
         </View>
-        <TextInput
-          maxLength={1000}
-          multiline
-          onChangeText={setDetails}
-          placeholder="Add any context that would help explain what happened"
-          placeholderTextColor={colorScheme === 'dark' ? '#8aa1a8' : '#7a8f97'}
-          style={[styles.input, { borderColor: palette.outline, color: palette.text }]}
-          value={details}
-        />
-        <Pressable
-          disabled={isSubmitting}
-          onPress={handleSubmitReport}
-          style={[styles.primaryButton, { backgroundColor: palette.tint, opacity: isSubmitting ? 0.6 : 1 }]}>
-          <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-            Submit Report
-          </ThemedText>
-        </Pressable>
-      </ThemedView>
-    </ScrollView>
+
+        <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+          <View style={styles.fieldGroup}>
+            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Reporting</Text>
+            <Text style={[TypeScale.heading, { color: palette.text }]}>
+              {reportedUserName || 'This user'}
+            </Text>
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Reason</Text>
+            <View style={styles.chipRow}>
+              {REPORT_REASONS.map((reason) => {
+                const isSelected = selectedReason === reason;
+
+                return (
+                  <Pressable
+                    key={reason}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isSelected }}
+                    onPress={() => setSelectedReason(reason)}
+                    style={({ pressed }) => [
+                      styles.chip,
+                      {
+                        backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
+                        borderColor: isSelected ? palette.tint : palette.border,
+                        opacity: pressed ? 0.7 : 1,
+                      },
+                    ]}>
+                    <Text style={[TypeScale.label, { color: isSelected ? '#FFFFFF' : palette.text }]}>
+                      {reason}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Details (optional)</Text>
+            <TextInput
+              maxLength={1000}
+              multiline
+              onChangeText={setDetails}
+              placeholder="Add any context that would help explain what happened"
+              placeholderTextColor={placeholderColor}
+              style={[
+                styles.input,
+                {
+                  backgroundColor: palette.surfaceMuted,
+                  borderColor: palette.border,
+                  color: palette.text,
+                },
+              ]}
+              value={details}
+            />
+          </View>
+
+          <Button
+            fullWidth
+            label="Submit Report"
+            loading={isSubmitting}
+            onPress={handleSubmitReport}
+            size="lg"
+          />
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1 },
+  screen: {
+    flex: 1,
+  },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    gap: Space.xl,
+    padding: Space.lg + 4,
   },
-  hero: {
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
+  header: {
+    gap: Space.xs,
   },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  heroTitle: { marginBottom: 4 },
-  heroText: {
-    lineHeight: 30,
-    maxWidth: 420,
+  headerTitle: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 24,
+    lineHeight: 29,
   },
   card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
+    borderRadius: Radius.card,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    gap: Space.lg,
+    padding: Space.lg + 4,
   },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
-  },
-  mutedText: {
-    opacity: 0.78,
+  fieldGroup: {
+    gap: Space.sm,
   },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: Space.sm + 2,
   },
   chip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    minHeight: 40,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    justifyContent: 'center',
+    minHeight: 36,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.sm - 2,
   },
   input: {
-    borderRadius: 14,
-    borderWidth: 1,
-    fontSize: 16,
-    minHeight: 140,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    fontFamily: FontFamily.body,
+    fontSize: 15,
+    lineHeight: 21,
+    minHeight: 120,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.md,
     textAlignVertical: 'top',
-  },
-  primaryButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
   },
 });
