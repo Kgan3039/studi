@@ -4,10 +4,7 @@ export default function Home() {
   return (
     <section className="hero">
       <div className="hero-copy">
-        <p className="eyebrow">
-          <span aria-hidden="true" />
-          Studi for students
-        </p>
+        <p className="eyebrow">Studi for students</p>
         <h1 className="hero-title">
           Study <em>smarter</em>
           <span className="title-secondary">with students</span>
@@ -28,7 +25,6 @@ export default function Home() {
       <div className="spotlight" aria-label="Studi preview">
         <div className="spotlight-orbit orbit-one" aria-hidden="true" />
         <div className="spotlight-orbit orbit-two" aria-hidden="true" />
-        <p className="preview-label">A night on Studi</p>
         <div className="spotlight-card">
           <div className="card-topline">
             <p className="card-kicker">Tonight</p>

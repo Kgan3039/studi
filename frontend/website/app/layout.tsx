@@ -47,7 +47,6 @@ export default function RootLayout({
         </header>
         <main>{children}</main>
         <footer className="footer">
-          <p>Made for students, by students.</p>
           <div className="footer-links">
             <Link href="/privacy">Privacy</Link>
             <span aria-hidden="true">•</span>

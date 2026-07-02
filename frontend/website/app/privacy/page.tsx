@@ -72,10 +72,7 @@ export default function PrivacyPage() {
   return (
     <article className="content-page privacy-page">
       <div className="page-heading">
-        <p className="eyebrow">
-          <span aria-hidden="true" />
-          Privacy Policy
-        </p>
+        <p className="eyebrow">Privacy Policy</p>
         <h1>
           Studi <em>Privacy</em> Policy
         </h1>

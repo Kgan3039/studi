@@ -169,27 +169,9 @@ main {
   display: flex;
   font-size: 0.72rem;
   font-weight: 850;
-  gap: 10px;
   letter-spacing: 0.11em;
   margin: 0 0 20px;
   text-transform: uppercase;
-}
-
-.eyebrow > span {
-  background: currentColor;
-  border-radius: 50%;
-  height: 6px;
-  position: relative;
-  width: 6px;
-}
-
-.eyebrow > span::after {
-  animation: ping 2.4s ease-out infinite;
-  border: 1px solid currentColor;
-  border-radius: inherit;
-  content: "";
-  inset: -5px;
-  position: absolute;
 }
 
 h1 {
@@ -314,14 +296,6 @@ h1 {
   justify-self: stretch;
   perspective: 1200px;
   position: relative;
-}
-
-.preview-label {
-  color: var(--soft-muted);
-  font-family: var(--font-arapey), Georgia, serif;
-  font-size: 1.1rem;
-  font-style: italic;
-  margin: 0 0 0 5px;
 }
 
 .spotlight-orbit {
@@ -838,17 +812,10 @@ h1 {
   color: var(--muted);
   display: flex;
   font-size: 0.82rem;
-  justify-content: space-between;
+  justify-content: center;
   margin: 0 auto;
   max-width: 1240px;
   padding: 22px 32px 30px;
-}
-
-.footer p {
-  font-family: var(--font-arapey), Georgia, serif;
-  font-size: 1rem;
-  font-style: italic;
-  margin: 0;
 }
 
 .footer-links {
@@ -897,18 +864,6 @@ h1 {
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-@keyframes ping {
-  0% {
-    opacity: 0.7;
-    transform: scale(0.5);
-  }
-  70%,
-  100% {
-    opacity: 0;
-    transform: scale(1.45);
   }
 }
 
@@ -1067,9 +1022,6 @@ h1 {
   }
 
   .footer {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 15px;
     padding: 20px 20px 26px;
   }
 }
