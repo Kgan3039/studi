@@ -36,9 +36,7 @@ export default function SupportPage() {
         <h1>
           How can we <em>help?</em>
         </h1>
-        <p className="lead">
-          Tell us what happened. A real person on the Studi team will get back to you.
-        </p>
+        <p className="lead">Tell us what happened and we will get back to you.</p>
         <a className="support-email-card" href={`mailto:${contactEmail}`}>
           <span>
             <small>Email Studi support</small>

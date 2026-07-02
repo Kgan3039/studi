@@ -516,19 +516,25 @@ h1 {
 
 .content-page {
   margin: 0 auto;
-  max-width: 1120px;
+  max-width: 1240px;
   padding: 92px 32px 130px;
 }
 
 .page-heading {
   animation: fade-up 800ms 80ms cubic-bezier(0.16, 0.85, 0.25, 1) both;
-  margin-bottom: 72px;
+  margin: 0 auto 72px;
+  max-width: 880px;
+  text-align: center;
+}
+
+.page-heading .eyebrow {
+  justify-content: center;
 }
 
 .page-heading h1 {
-  font-size: clamp(4.4rem, 9.2vw, 8rem);
-  line-height: 0.83;
-  max-width: 1000px;
+  font-size: clamp(4rem, 8vw, 7rem);
+  line-height: 0.9;
+  margin: 0 auto;
 }
 
 .page-heading h1 em,
@@ -546,7 +552,7 @@ h1 {
   color: var(--muted);
   display: flex;
   font-size: 0.86rem;
-  justify-content: space-between;
+  justify-content: center;
   margin-top: 46px;
   padding-top: 18px;
 }
@@ -585,6 +591,10 @@ h1 {
 
 .policy-section:hover {
   border-color: var(--accent);
+}
+
+.section-body {
+  min-width: 0;
 }
 
 .section-heading {
@@ -656,12 +666,10 @@ h1 {
   margin-bottom: 120px;
 }
 
-.support-page .page-heading h1 {
-  max-width: 880px;
-}
-
 .support-page .lead {
-  max-width: 530px;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 560px;
 }
 
 .support-email-card {
@@ -672,8 +680,9 @@ h1 {
   color: #fff;
   display: flex;
   justify-content: space-between;
-  margin-top: 42px;
+  margin: 42px auto 0;
   max-width: 620px;
+  text-align: left;
   overflow: hidden;
   padding: 23px 26px;
   position: relative;
@@ -988,9 +997,6 @@ h1 {
   }
 
   .heading-meta {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 7px;
     margin-top: 35px;
   }
 

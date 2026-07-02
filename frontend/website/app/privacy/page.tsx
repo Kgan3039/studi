@@ -78,7 +78,6 @@ export default function PrivacyPage() {
         </h1>
         <div className="heading-meta">
           <p>Last updated June 28, 2026</p>
-          <p>Clear words about your data, without the fog.</p>
         </div>
       </div>
 
@@ -93,16 +92,18 @@ export default function PrivacyPage() {
               <span>{String(index + 1).padStart(2, "0")}</span>
               <h2>{section.title}</h2>
             </div>
-            {section.body?.map((paragraph) => (
-              <p key={paragraph}>{paragraph}</p>
-            ))}
-            {section.items ? (
-              <ul>
-                {section.items.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            ) : null}
+            <div className="section-body">
+              {section.body?.map((paragraph) => (
+                <p key={paragraph}>{paragraph}</p>
+              ))}
+              {section.items ? (
+                <ul>
+                  {section.items.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
           </section>
         ))}
       </div>
