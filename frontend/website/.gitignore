@@ -2,4 +2,7 @@
 node_modules
 out
 .vercel
+.env
+.env.*
+!.env.example
 *.log
