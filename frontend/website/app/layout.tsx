@@ -24,8 +24,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={arapey.variable}>
-      <body>
+    <html lang="en" className={arapey.variable} data-scroll-behavior="smooth">
+      <body suppressHydrationWarning>
         <header className="site-header">
           <nav className="nav" aria-label="Main navigation">
             <Link className="brand" href="/">
