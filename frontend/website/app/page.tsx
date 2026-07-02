@@ -4,7 +4,6 @@ export default function Home() {
   return (
     <section className="hero">
       <div className="hero-copy">
-        <p className="eyebrow">Studi for students</p>
         <h1 className="hero-title">
           Study <em>smarter</em>
           <span className="title-secondary">with students</span>

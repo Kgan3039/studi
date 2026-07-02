@@ -32,7 +32,6 @@ export default function SupportPage() {
   return (
     <article className="content-page support-page">
       <div className="page-heading">
-        <p className="eyebrow">Support</p>
         <h1>
           How can we <em>help?</em>
         </h1>
@@ -50,7 +49,6 @@ export default function SupportPage() {
 
       <section className="faq-section">
         <div className="faq-heading">
-          <p className="eyebrow">Quick answers</p>
           <h2>
             You might find it <em>right here.</em>
           </h2>

@@ -72,9 +72,8 @@ export default function PrivacyPage() {
   return (
     <article className="content-page privacy-page">
       <div className="page-heading">
-        <p className="eyebrow">Privacy Policy</p>
         <h1>
-          Studi <em>Privacy</em> Policy
+          Privacy <em>Policy</em>
         </h1>
         <div className="heading-meta">
           <p>Last updated June 28, 2026</p>

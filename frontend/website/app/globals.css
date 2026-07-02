@@ -175,18 +175,6 @@ main {
   z-index: 1;
 }
 
-.eyebrow {
-  align-items: center;
-  animation: fade-up 700ms 100ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
-  color: var(--accent);
-  display: flex;
-  font-size: 0.72rem;
-  font-weight: 850;
-  letter-spacing: 0.11em;
-  margin: 0 0 20px;
-  text-transform: uppercase;
-}
-
 h1 {
   font-size: clamp(4rem, 6.25vw, 6.15rem);
   letter-spacing: -0.077em;
@@ -541,14 +529,14 @@ h1 {
   text-align: center;
 }
 
-.page-heading .eyebrow {
-  justify-content: center;
-}
-
 .page-heading h1 {
   font-size: clamp(4rem, 8vw, 7rem);
   line-height: 0.9;
   margin: 0 auto;
+}
+
+.privacy-page .page-heading h1 {
+  white-space: nowrap;
 }
 
 .page-heading h1 em,
@@ -768,11 +756,6 @@ h1 {
   top: 40px;
 }
 
-.faq-heading .eyebrow {
-  animation: none;
-  margin-bottom: 22px;
-}
-
 .faq-heading h2 {
   font-size: clamp(2.5rem, 4.8vw, 4.4rem);
   letter-spacing: -0.065em;
@@ -986,6 +969,10 @@ h1 {
 
   .page-heading h1 {
     font-size: clamp(3.6rem, 17vw, 5.7rem);
+  }
+
+  .privacy-page .page-heading h1 {
+    font-size: clamp(2.8rem, 15.5vw, 5.7rem);
   }
 
   .heading-meta {
