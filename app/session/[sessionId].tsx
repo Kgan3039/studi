@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
+    ActivityIndicator,
+    Alert,
+    Pressable,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -18,26 +19,26 @@ import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import {
-  Brand,
-  Colors,
-  deptColorFor,
-  Elevation,
-  FontFamily,
-  Radius,
-  Space,
-  TypeScale,
+    Brand,
+    Colors,
+    deptColorFor,
+    Elevation,
+    FontFamily,
+    Radius,
+    Space,
+    TypeScale,
 } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
-  cancelSession,
-  getBlockedUserIds,
-  getOrCreateDirectConversation,
-  getSessionById,
-  joinSession,
-  leaveSession,
-  type StudySessionListItem,
+    cancelSession,
+    getBlockedUserIds,
+    getOrCreateDirectConversation,
+    getSessionById,
+    joinSession,
+    leaveSession,
+    type StudySessionListItem,
 } from '@/lib/firestore';
 import { FirebaseError } from 'firebase/app';
 import type { User } from 'firebase/auth';
@@ -61,6 +62,7 @@ export default function SessionDetailScreen() {
   const [session, setSession] = useState<StudySessionListItem | null>(null);
   const [status, setStatus] = useState('Loading session details...');
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const [isOpeningHostChat, setIsOpeningHostChat] = useState(false);
@@ -111,12 +113,18 @@ export default function SessionDetailScreen() {
       setStatus(message);
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   }, [sessionId]);
 
   useEffect(() => {
     loadSession();
   }, [loadSession]);
+
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    await loadSession();
+  }
 
   async function handleJoinSession() {
     if (!sessionId) {
@@ -314,6 +322,9 @@ export default function SessionDetailScreen() {
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
       <ScrollView
         style={styles.screen}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+        }
         contentContainerStyle={[styles.content, { paddingTop: Space.lg }]}>
         {session ? (
           <>
@@ -520,14 +531,15 @@ export default function SessionDetailScreen() {
               </Text>
               <Pressable
                 accessibilityRole="button"
-                disabled={isLoading}
-                onPress={loadSession}
-                style={({ pressed }) => ({ opacity: pressed || isLoading ? 0.5 : 1 })}>
-                {isLoading ? (
-                  <ActivityIndicator size="small" color={palette.tint} />
-                ) : (
+                disabled={isLoading || isRefreshing}
+                onPress={handleRefresh}
+                style={({ pressed }) => ({ opacity: pressed || isLoading || isRefreshing ? 0.5 : 1 })}>
+                <View style={styles.refreshButtonContent}>
+                  {isLoading || isRefreshing ? (
+                    <ActivityIndicator size="small" color={palette.tint} />
+                  ) : null}
                   <Text style={[TypeScale.label, { color: palette.tint }]}>Refresh</Text>
-                )}
+                </View>
               </Pressable>
             </View>
           </>
@@ -713,6 +725,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
+  },
+  refreshButtonContent: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.xs,
   },
   statusText: {
     flexShrink: 1,

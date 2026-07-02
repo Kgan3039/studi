@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -83,6 +84,9 @@ export default function ConversationScreen() {
   const [draft, setDraft] = useState('');
   const [status, setStatus] = useState('Loading conversation...');
   const [isSending, setIsSending] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const isRefreshingRef = useRef(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -100,6 +104,10 @@ export default function ConversationScreen() {
 
     const unsubscribe = subscribeToConversationMessages(conversationId, (loadedMessages) => {
       setMessages(loadedMessages);
+      if (isRefreshingRef.current) {
+        isRefreshingRef.current = false;
+        setIsRefreshing(false);
+      }
       setStatus(
         loadedMessages.length > 0
           ? `Chatting with ${otherUserName || 'Student'}.`
@@ -108,12 +116,14 @@ export default function ConversationScreen() {
     });
 
     return unsubscribe;
-  }, [conversationId, currentUser, otherUserName]);
+  }, [conversationId, currentUser, otherUserName, refreshNonce]);
 
   useEffect(() => {
     async function loadBlocks() {
       if (!currentUser) {
         setBlockedUserIds([]);
+        isRefreshingRef.current = false;
+        setIsRefreshing(false);
         return;
       }
 
@@ -122,7 +132,7 @@ export default function ConversationScreen() {
     }
 
     loadBlocks();
-  }, [currentUser]);
+  }, [currentUser, refreshNonce]);
 
   async function handleSendMessage() {
     if (!currentUser || !conversationId) {
@@ -160,6 +170,17 @@ export default function ConversationScreen() {
       const message = error instanceof Error ? error.message : 'Unable to block this user.';
       Alert.alert('Block Error', message);
     }
+  }
+
+  async function handleRefresh() {
+    if (!currentUser || !conversationId) {
+      return;
+    }
+
+    setStatus(`Refreshing ${otherUserName || 'Student'}...`);
+    isRefreshingRef.current = true;
+    setIsRefreshing(true);
+    setRefreshNonce((value) => value + 1);
   }
 
   const isBlocked = !!otherUserId && blockedUserIds.includes(otherUserId);
@@ -206,6 +227,9 @@ export default function ConversationScreen() {
 
       <ScrollView
         style={styles.thread}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+        }
         contentContainerStyle={styles.threadContent}>
         {messages.length > 0 ? (
           messages.map((message, index) => {

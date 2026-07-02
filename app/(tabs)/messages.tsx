@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -43,6 +44,8 @@ export default function MessagesScreen() {
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -56,6 +59,7 @@ export default function MessagesScreen() {
     if (!currentUser) {
       setConversations([]);
       setIsLoading(false);
+      setIsRefreshing(false);
       return;
     }
 
@@ -63,10 +67,20 @@ export default function MessagesScreen() {
     const unsubscribe = subscribeToUserConversations(currentUser.uid, (loadedConversations) => {
       setConversations(loadedConversations);
       setIsLoading(false);
+      setIsRefreshing(false);
     });
 
     return unsubscribe;
-  }, [currentUser]);
+  }, [currentUser, refreshNonce]);
+
+  async function handleRefresh() {
+    if (!currentUser) {
+      return;
+    }
+
+    setIsRefreshing(true);
+    setRefreshNonce((value) => value + 1);
+  }
 
   // Board MessagesListScreen has a "Search messages" field. Conversations are
   // already loaded by the subscription, so this filters them client-side —
@@ -90,6 +104,9 @@ export default function MessagesScreen() {
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
+      refreshControl={
+        <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+      }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       {/* Utility screen — sans-only header (handoff §1.3). */}
       <View style={styles.header}>

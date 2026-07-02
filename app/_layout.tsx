@@ -159,7 +159,11 @@ function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
+      <Stack
+        screenOptions={{
+          headerBackTitle: 'Back',
+        }}
+      >
         {/* Public — always registered. */}
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="privacy" options={{ title: 'Privacy Policy' }} />
