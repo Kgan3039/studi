@@ -1,8 +1,17 @@
 import type { Metadata } from "next";
+import { Arapey } from "next/font/google";
+import Image from "next/image";
 import Link from "next/link";
 import "./globals.css";
 
 const contactEmail = "isp.studi@gmail.com";
+const arapey = Arapey({
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
+  variable: "--font-arapey",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Studi",
@@ -15,12 +24,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={arapey.variable}>
       <body>
         <header className="site-header">
           <nav className="nav" aria-label="Main navigation">
             <Link className="brand" href="/">
-              <img src="/studi-logo.png" alt="" className="brand-logo" />
+              <Image
+                src="/studi-logo.png"
+                alt=""
+                className="brand-logo"
+                width={46}
+                height={50}
+                priority
+              />
               <span>Studi</span>
             </Link>
             <div className="nav-links">
@@ -31,11 +47,14 @@ export default function RootLayout({
         </header>
         <main>{children}</main>
         <footer className="footer">
-          <Link href="/privacy">Privacy</Link>
-          <span aria-hidden="true">•</span>
-          <Link href="/support">Support</Link>
-          <span aria-hidden="true">•</span>
-          <a href={`mailto:${contactEmail}`}>Contact: {contactEmail}</a>
+          <p>Made for students, by students.</p>
+          <div className="footer-links">
+            <Link href="/privacy">Privacy</Link>
+            <span aria-hidden="true">•</span>
+            <Link href="/support">Support</Link>
+            <span aria-hidden="true">•</span>
+            <a href={`mailto:${contactEmail}`}>Contact: {contactEmail}</a>
+          </div>
         </footer>
       </body>
     </html>
