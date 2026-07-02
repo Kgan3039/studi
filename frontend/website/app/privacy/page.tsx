@@ -75,9 +75,7 @@ export default function PrivacyPage() {
         <h1>
           Privacy <em>Policy</em>
         </h1>
-        <div className="heading-meta">
-          <p>Last updated June 28, 2026</p>
-        </div>
+        <p className="lead">Last updated June 28, 2026</p>
       </div>
 
       <div className="section-stack">
