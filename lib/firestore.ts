@@ -2,6 +2,7 @@ import {
   arrayRemove,
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   documentId,
   getDoc,
@@ -782,6 +783,19 @@ export async function blockUser(blockerUserId: string, blockedUserId: string) {
     blockedUserId,
     createdAt: serverTimestamp(),
   } satisfies UserBlock);
+}
+
+export async function unblockUser(blockerUserId: string, blockedUserId: string) {
+  const blockId = `${blockerUserId}__${blockedUserId}`;
+
+  await deleteDoc(doc(db, COLLECTIONS.userBlocks, blockId));
+}
+
+export async function isBlockedByUser(userId: string, possibleBlockerUserId: string) {
+  const blockId = `${possibleBlockerUserId}__${userId}`;
+  const snapshot = await getDoc(doc(db, COLLECTIONS.userBlocks, blockId));
+
+  return snapshot.exists();
 }
 
 export async function getBlockedUserIds(blockerUserId: string) {

@@ -23,8 +23,10 @@ import { subscribeToAuthState } from '@/lib/auth';
 import {
   blockUser,
   getBlockedUserIds,
+  isBlockedByUser,
   sendDirectMessage,
   subscribeToConversationMessages,
+  unblockUser,
   type ConversationMessage,
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
@@ -88,6 +90,7 @@ export default function ConversationScreen() {
   const isRefreshingRef = useRef(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
+  const [isBlockedByOther, setIsBlockedByOther] = useState(false);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -122,17 +125,22 @@ export default function ConversationScreen() {
     async function loadBlocks() {
       if (!currentUser) {
         setBlockedUserIds([]);
+        setIsBlockedByOther(false);
         isRefreshingRef.current = false;
         setIsRefreshing(false);
         return;
       }
 
-      const loadedBlockedUserIds = await getBlockedUserIds(currentUser.uid);
+      const [loadedBlockedUserIds, blockedByOther] = await Promise.all([
+        getBlockedUserIds(currentUser.uid),
+        otherUserId ? isBlockedByUser(currentUser.uid, otherUserId) : false,
+      ]);
       setBlockedUserIds(loadedBlockedUserIds);
+      setIsBlockedByOther(blockedByOther);
     }
 
     loadBlocks();
-  }, [currentUser, refreshNonce]);
+  }, [currentUser, otherUserId, refreshNonce]);
 
   async function handleSendMessage() {
     if (!currentUser || !conversationId) {
@@ -172,6 +180,21 @@ export default function ConversationScreen() {
     }
   }
 
+  async function handleUnblockUser() {
+    if (!currentUser || !otherUserId) {
+      return;
+    }
+
+    try {
+      await unblockUser(currentUser.uid, otherUserId);
+      track('user_unblocked', { context: 'conversation' });
+      setBlockedUserIds((currentIds) => currentIds.filter((id) => id !== otherUserId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to unblock this user.';
+      Alert.alert('Unblock Error', message);
+    }
+  }
+
   async function handleRefresh() {
     if (!currentUser || !conversationId) {
       return;
@@ -183,8 +206,9 @@ export default function ConversationScreen() {
     setRefreshNonce((value) => value + 1);
   }
 
-  const isBlocked = !!otherUserId && blockedUserIds.includes(otherUserId);
-  const canSend = !isSending && !isBlocked && draft.trim().length > 0;
+  const hasBlockedOther = !!otherUserId && blockedUserIds.includes(otherUserId);
+  const isMessagingDisabled = hasBlockedOther || isBlockedByOther;
+  const canSend = !isSending && !isMessagingDisabled && draft.trim().length > 0;
 
   return (
     <KeyboardAvoidingView
@@ -217,12 +241,16 @@ export default function ConversationScreen() {
           style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
           <Text style={[TypeScale.label, { color: palette.icon }]}>Report</Text>
         </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          onPress={handleBlockUser}
-          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
-          <Text style={[TypeScale.label, { color: palette.tint }]}>Block</Text>
-        </Pressable>
+        {!isBlockedByOther ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={hasBlockedOther ? handleUnblockUser : handleBlockUser}
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+            <Text style={[TypeScale.label, { color: palette.tint }]}>
+              {hasBlockedOther ? 'Unblock' : 'Block'}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <ScrollView
@@ -303,13 +331,19 @@ export default function ConversationScreen() {
         <View
           style={[
             styles.composer,
-            { backgroundColor: palette.surfaceMuted, opacity: isBlocked ? 0.55 : 1 },
+            { backgroundColor: palette.surfaceMuted, opacity: isMessagingDisabled ? 0.55 : 1 },
           ]}>
           <TextInput
-            editable={!isSending && !isBlocked}
+            editable={!isSending && !isMessagingDisabled}
             multiline
             onChangeText={setDraft}
-            placeholder={isBlocked ? 'This user is blocked.' : 'Message…'}
+            placeholder={
+              hasBlockedOther
+                ? 'This user is blocked.'
+                : isBlockedByOther
+                  ? 'Messaging unavailable.'
+                  : 'Message…'
+            }
             placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
             style={[styles.composerInput, { color: palette.text }]}
             value={draft}

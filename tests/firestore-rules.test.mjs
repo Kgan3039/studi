@@ -646,17 +646,39 @@ describe('locations (curated public data)', () => {
   });
 });
 
-describe('userBlocks (D5: blocker-only visibility)', () => {
-  it('blocker creates/reads/deletes; blocked party cannot read', async () => {
+describe('userBlocks (D5: involved-party get, blocker-only list)', () => {
+  it('blocker creates/reads/deletes; blocked party can get the doc naming them', async () => {
     await assertSucceeds(setDoc(doc(ctx(ALICE), 'userBlocks', `${ALICE}__${BOB}`), {
       blockerUserId: ALICE, blockedUserId: BOB, createdAt: serverTimestamp(),
     }));
     await assertSucceeds(getDoc(doc(ctx(ALICE), 'userBlocks', `${ALICE}__${BOB}`)));
-    await assertFails(getDoc(doc(ctx(BOB), 'userBlocks', `${ALICE}__${BOB}`)));
+    // Blocked side may probe the single doc that targets them (drives the
+    // conversation screen's "messaging unavailable" state)…
+    await assertSucceeds(getDoc(doc(ctx(BOB), 'userBlocks', `${ALICE}__${BOB}`)));
+    // …but uninvolved users cannot, and nobody can list another's blocks.
+    await assertFails(getDoc(doc(ctx(MALLORY), 'userBlocks', `${ALICE}__${BOB}`)));
+    await assertFails(getDocs(query(
+      collection(ctx(BOB), 'userBlocks'),
+      where('blockedUserId', '==', BOB)
+    )));
     await assertFails(setDoc(doc(ctx(MALLORY), 'userBlocks', `${ALICE}__${BOB}`), {
       blockerUserId: ALICE, blockedUserId: BOB, createdAt: serverTimestamp(),
     }));
+    await assertFails(deleteDoc(doc(ctx(BOB), 'userBlocks', `${ALICE}__${BOB}`)));
     await assertSucceeds(deleteDoc(doc(ctx(ALICE), 'userBlocks', `${ALICE}__${BOB}`)));
+  });
+
+  it('blocker lists own blocks; involved get succeeds even when doc is absent', async () => {
+    await seed(`userBlocks/${ALICE}__${BOB}`, {
+      blockerUserId: ALICE, blockedUserId: BOB, createdAt: Timestamp.now(),
+    });
+    await assertSucceeds(getDocs(query(
+      collection(ctx(ALICE), 'userBlocks'),
+      where('blockerUserId', '==', ALICE)
+    )));
+    // The app probes `other__me` before knowing whether a block exists; the
+    // get must be allowed (returning exists=false) rather than denied.
+    await assertSucceeds(getDoc(doc(ctx(ALICE), 'userBlocks', `${BOB}__${ALICE}`)));
   });
 
   it('cannot block yourself; id must match fields', async () => {
