@@ -4,10 +4,14 @@ import { useEffect } from "react";
 
 export default function ScrollReveal() {
   useEffect(() => {
+    if (!("IntersectionObserver" in window)) return;
+
     const pending = new Set(
       Array.from(document.querySelectorAll<HTMLElement>("[data-reveal]")),
     );
     if (pending.size === 0) return;
+
+    document.documentElement.classList.add("reveal-ready");
 
     const reveal = (el: HTMLElement, delay: number) => {
       el.style.transitionDelay = `${delay}ms`;
@@ -21,11 +25,6 @@ export default function ScrollReveal() {
       );
       pending.delete(el);
     };
-
-    if (!("IntersectionObserver" in window)) {
-      pending.forEach((el) => reveal(el, 0));
-      return;
-    }
 
     const observer = new IntersectionObserver(
       (entries) => {
