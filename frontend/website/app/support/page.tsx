@@ -57,11 +57,7 @@ export default function SupportPage() {
         </div>
         <div className="faq-list">
           {faqs.map((faq, index) => (
-            <article
-              className="faq-item"
-              key={faq.question}
-              style={{ animationDelay: `${160 + index * 70}ms` }}
-            >
+            <article className="faq-item" key={faq.question} data-reveal>
               <div className="faq-number">{String(index + 1).padStart(2, "0")}</div>
               <div>
                 <h3>{faq.question}</h3>

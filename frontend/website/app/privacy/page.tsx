@@ -83,11 +83,7 @@ export default function PrivacyPage() {
 
       <div className="section-stack">
         {sections.map((section, index) => (
-          <section
-            className="info-section policy-section"
-            key={section.title}
-            style={{ animationDelay: `${100 + index * 55}ms` }}
-          >
+          <section className="info-section policy-section" key={section.title} data-reveal>
             <div className="section-heading">
               <span>{String(index + 1).padStart(2, "0")}</span>
               <h2>{section.title}</h2>

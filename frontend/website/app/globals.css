@@ -72,6 +72,19 @@ main {
   animation: route-in 520ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
 }
 
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(28px);
+  transition:
+    opacity 700ms cubic-bezier(0.2, 0.75, 0.25, 1),
+    transform 700ms cubic-bezier(0.2, 0.75, 0.25, 1);
+}
+
+[data-reveal].is-revealed {
+  opacity: 1;
+  transform: none;
+}
+
 .site-header {
   padding: 26px 32px 14px;
 }
@@ -200,14 +213,15 @@ h1 {
 }
 
 .hero-title em::after {
-  background: url("data:image/svg+xml,%3Csvg width='180' height='14' viewBox='0 0 180 14' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 10C40 4 105 4 178 8' fill='none' stroke='%23c5050c' stroke-width='2.2' stroke-linecap='round' opacity='.75'/%3E%3C/svg%3E")
-    center / 100% 100% no-repeat;
-  bottom: -0.03em;
+  background: var(--accent);
+  border-radius: 999px;
+  bottom: 0;
   content: "";
-  height: 0.13em;
-  left: 5%;
+  height: 0.05em;
+  left: 4%;
+  opacity: 0.75;
   position: absolute;
-  width: 94%;
+  width: 92%;
 }
 
 .hero-title span {
@@ -577,7 +591,6 @@ h1 {
 }
 
 .policy-section {
-  animation: fade-up 720ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
   backdrop-filter: none;
   background: transparent;
   border: 0;
@@ -586,7 +599,10 @@ h1 {
   display: grid;
   gap: clamp(30px, 7vw, 90px);
   grid-template-columns: minmax(220px, 0.75fr) minmax(0, 1.5fr);
-  transition: border-color 300ms ease;
+  transition:
+    border-color 300ms ease,
+    opacity 700ms cubic-bezier(0.2, 0.75, 0.25, 1),
+    transform 700ms cubic-bezier(0.2, 0.75, 0.25, 1);
 }
 
 .policy-section:hover {
@@ -775,7 +791,6 @@ h1 {
 }
 
 .faq-item {
-  animation: fade-up 700ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
   background: rgba(255, 253, 249, 0.72);
   border: 1px solid var(--border);
   border-radius: 18px;
@@ -786,7 +801,8 @@ h1 {
   transition:
     background 300ms ease,
     border-color 300ms ease,
-    transform 300ms ease;
+    opacity 700ms cubic-bezier(0.2, 0.75, 0.25, 1),
+    transform 450ms cubic-bezier(0.2, 0.75, 0.25, 1);
 }
 
 .faq-item:hover {
@@ -865,17 +881,6 @@ h1 {
   }
 }
 
-@keyframes reveal-scroll {
-  from {
-    opacity: 0;
-    transform: translateY(34px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 @keyframes pulse-dot {
   0%,
   100% {
@@ -895,19 +900,6 @@ h1 {
   }
   50% {
     transform: translate3d(-12px, 15px, 0) rotate(8deg);
-  }
-}
-
-@supports (animation-timeline: view()) {
-  .policy-section,
-  .faq-item {
-    animation-delay: 0ms !important;
-    animation-duration: 1ms;
-    animation-fill-mode: both;
-    animation-name: reveal-scroll;
-    animation-range: entry 0% cover 28%;
-    animation-timeline: view();
-    animation-timing-function: cubic-bezier(0.2, 0.75, 0.25, 1);
   }
 }
 
@@ -1109,12 +1101,16 @@ h1 {
     transition-duration: 1ms !important;
   }
 
-  .route-frame,
-  .policy-section,
-  .faq-item {
+  .route-frame {
     animation: none !important;
     filter: none !important;
     opacity: 1 !important;
     transform: none !important;
+  }
+
+  [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
   }
 }
