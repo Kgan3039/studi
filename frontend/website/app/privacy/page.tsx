@@ -70,17 +70,32 @@ const sections = [
 
 export default function PrivacyPage() {
   return (
-    <article className="content-page">
+    <article className="content-page privacy-page">
       <div className="page-heading">
-        <p className="eyebrow">Privacy Policy</p>
-        <h1>Studi Privacy Policy</h1>
-        <p className="lead">Last Updated: June 28, 2026</p>
+        <p className="eyebrow">
+          <span aria-hidden="true" />
+          Privacy Policy
+        </p>
+        <h1>
+          Studi <em>Privacy</em> Policy
+        </h1>
+        <div className="heading-meta">
+          <p>Last updated June 28, 2026</p>
+          <p>Clear words about your data, without the fog.</p>
+        </div>
       </div>
 
       <div className="section-stack">
-        {sections.map((section) => (
-          <section className="info-section" key={section.title}>
-            <h2>{section.title}</h2>
+        {sections.map((section, index) => (
+          <section
+            className="info-section policy-section"
+            key={section.title}
+            style={{ animationDelay: `${100 + index * 55}ms` }}
+          >
+            <div className="section-heading">
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <h2>{section.title}</h2>
+            </div>
             {section.body?.map((paragraph) => (
               <p key={paragraph}>{paragraph}</p>
             ))}

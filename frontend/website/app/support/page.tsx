@@ -30,23 +30,49 @@ const faqs = [
 
 export default function SupportPage() {
   return (
-    <article className="content-page">
+    <article className="content-page support-page">
       <div className="page-heading">
-        <p className="eyebrow">Support</p>
-        <h1>How can we help?</h1>
-        <p className="lead">
-          For Studi support, email <a href={`mailto:${contactEmail}`}>{contactEmail}</a>.
+        <p className="eyebrow">
+          <span aria-hidden="true" />
+          Support
         </p>
+        <h1>
+          How can we <em>help?</em>
+        </h1>
+        <p className="lead">
+          Tell us what happened. A real person on the Studi team will get back to you.
+        </p>
+        <a className="support-email-card" href={`mailto:${contactEmail}`}>
+          <span>
+            <small>Email Studi support</small>
+            {contactEmail}
+          </span>
+          <span className="mail-arrow" aria-hidden="true">
+            ↗
+          </span>
+        </a>
       </div>
 
-      <section className="info-section">
-        <h2>FAQ</h2>
+      <section className="faq-section">
+        <div className="faq-heading">
+          <p className="eyebrow">Quick answers</p>
+          <h2>
+            You might find it <em>right here.</em>
+          </h2>
+        </div>
         <div className="faq-list">
-          {faqs.map((faq) => (
-            <div className="faq-item" key={faq.question}>
-              <h3>{faq.question}</h3>
-              <p>{faq.answer}</p>
-            </div>
+          {faqs.map((faq, index) => (
+            <article
+              className="faq-item"
+              key={faq.question}
+              style={{ animationDelay: `${160 + index * 70}ms` }}
+            >
+              <div className="faq-number">{String(index + 1).padStart(2, "0")}</div>
+              <div>
+                <h3>{faq.question}</h3>
+                <p>{faq.answer}</p>
+              </div>
+            </article>
           ))}
         </div>
       </section>
