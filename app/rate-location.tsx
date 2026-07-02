@@ -53,7 +53,7 @@ export default function RateLocationScreen() {
     }
   }, [authResolved, currentUser, router]);
 
-  const loadExistingRating = useCallback(async () => {
+  const loadExistingRating = useCallback(async (options?: { showInitialLoader?: boolean }) => {
     if (!currentUser || !locationId) {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -61,7 +61,9 @@ export default function RateLocationScreen() {
     }
 
     try {
-      setIsLoading(true);
+      if (options?.showInitialLoader ?? true) {
+        setIsLoading(true);
+      }
       const existing = await getUserLocationRating(locationId, currentUser.uid);
       if (existing) {
         setSelectedStars(existing.stars);
@@ -107,7 +109,7 @@ export default function RateLocationScreen() {
     }
 
     setIsRefreshing(true);
-    await loadExistingRating();
+    await loadExistingRating({ showInitialLoader: false });
   }
 
   if (!authResolved || !currentUser || isLoading) {

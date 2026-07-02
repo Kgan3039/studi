@@ -124,47 +124,49 @@ export default function ProfileScreen() {
 
     try {
       setIsLoading(true);
-      const profile = await getUserProfile(currentUser.uid);
-      const savedName = splitDisplayName(profile?.displayName);
-      const savedClasses = profile?.classes ?? [];
-      setFirstName(savedName.firstName);
-      setLastName(savedName.lastName);
-      setClasses(savedClasses);
-      setNameStatus(
-        profile?.displayName
-          ? `Saved as ${profile.displayName}.`
-          : 'Add your first and last name to personalize Studi.'
-      );
-      setClassesStatus(
-        savedClasses.length > 0
-          ? `You'll see sessions for ${savedClasses.length} class${
-              savedClasses.length === 1 ? '' : 'es'
-            }.`
-          : 'No classes saved yet.'
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to load your profile.';
-      setNameStatus(message);
-      setClassesStatus(message);
+      try {
+        const profile = await getUserProfile(currentUser.uid);
+        const savedName = splitDisplayName(profile?.displayName);
+        const savedClasses = profile?.classes ?? [];
+        setFirstName(savedName.firstName);
+        setLastName(savedName.lastName);
+        setClasses(savedClasses);
+        setNameStatus(
+          profile?.displayName
+            ? `Saved as ${profile.displayName}.`
+            : 'Add your first and last name to personalize Studi.'
+        );
+        setClassesStatus(
+          savedClasses.length > 0
+            ? `You'll see sessions for ${savedClasses.length} class${
+                savedClasses.length === 1 ? '' : 'es'
+              }.`
+            : 'No classes saved yet.'
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to load your profile.';
+        setNameStatus(message);
+        setClassesStatus(message);
+      }
+
+      // Stats grid + per-class "N active" counts + saved locations all read
+      // from existing data sources. Failures here must not blank the
+      // identity block, so they degrade to empty quietly.
+      try {
+        const [loadedSessions, loadedLocations, aggregates] = await Promise.all([
+          getUpcomingSessions({ includeInProgress: true }),
+          getLocations(),
+          getLocationRatingAggregates(),
+        ]);
+        setSessions(loadedSessions);
+        setLocations(loadedLocations);
+        setRatingAggregates(aggregates);
+      } catch {
+        // Keep whatever was last loaded; the sections fall back to zero/empty.
+      }
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
-    }
-
-    // Stats grid + per-class "N active" counts + saved locations all read
-    // from existing data sources. Failures here must not blank the
-    // identity block, so they degrade to empty quietly.
-    try {
-      const [loadedSessions, loadedLocations, aggregates] = await Promise.all([
-        getUpcomingSessions({ includeInProgress: true }),
-        getLocations(),
-        getLocationRatingAggregates(),
-      ]);
-      setSessions(loadedSessions);
-      setLocations(loadedLocations);
-      setRatingAggregates(aggregates);
-    } catch {
-      // Keep whatever was last loaded; the sections fall back to zero/empty.
     }
   }, [currentUser]);
 

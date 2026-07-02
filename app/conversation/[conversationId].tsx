@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -85,6 +85,7 @@ export default function ConversationScreen() {
   const [status, setStatus] = useState('Loading conversation...');
   const [isSending, setIsSending] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const isRefreshingRef = useRef(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
 
@@ -103,6 +104,10 @@ export default function ConversationScreen() {
 
     const unsubscribe = subscribeToConversationMessages(conversationId, (loadedMessages) => {
       setMessages(loadedMessages);
+      if (isRefreshingRef.current) {
+        isRefreshingRef.current = false;
+        setIsRefreshing(false);
+      }
       setStatus(
         loadedMessages.length > 0
           ? `Chatting with ${otherUserName || 'Student'}.`
@@ -117,16 +122,13 @@ export default function ConversationScreen() {
     async function loadBlocks() {
       if (!currentUser) {
         setBlockedUserIds([]);
+        isRefreshingRef.current = false;
         setIsRefreshing(false);
         return;
       }
 
-      try {
-        const loadedBlockedUserIds = await getBlockedUserIds(currentUser.uid);
-        setBlockedUserIds(loadedBlockedUserIds);
-      } finally {
-        setIsRefreshing(false);
-      }
+      const loadedBlockedUserIds = await getBlockedUserIds(currentUser.uid);
+      setBlockedUserIds(loadedBlockedUserIds);
     }
 
     loadBlocks();
@@ -176,6 +178,7 @@ export default function ConversationScreen() {
     }
 
     setStatus(`Refreshing ${otherUserName || 'Student'}...`);
+    isRefreshingRef.current = true;
     setIsRefreshing(true);
     setRefreshNonce((value) => value + 1);
   }

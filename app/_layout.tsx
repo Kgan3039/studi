@@ -162,7 +162,6 @@ function RootLayout() {
       <Stack
         screenOptions={{
           headerBackTitle: 'Back',
-          headerBackTitleVisible: true,
         }}
       >
         {/* Public — always registered. */}

@@ -418,7 +418,7 @@ export default function StudyLocationsScreen() {
           <CampusMap
             locations={filteredLocations}
             onOpenCampusMap={openCampusMap}
-            onSelectLocation={setSelectedLocationId}
+            onSelectLocation={selectLocation}
             selectedLocationId={selectedLocationId}
             sessionTimingByLocation={sessionTimingByLocation}
             sessionsByLocation={sessionsByLocation}
