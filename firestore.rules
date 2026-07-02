@@ -352,7 +352,12 @@ service cloud.firestore {
     // ------------------------------------------------------------------
 
     match /userBlocks/{blockId} {
-      allow read: if isVerifiedUwUser()
+      // Either side of a block may `get` the single doc naming them — the
+      // blocked side needs it to render conversation state — but only the
+      // blocker may list, so nobody can enumerate who blocked them.
+      allow get: if isVerifiedUwUser()
+        && request.auth.uid in blockId.split('__');
+      allow list: if isVerifiedUwUser()
         && resource.data.blockerUserId == request.auth.uid;
       allow create: if isVerifiedUwUser()
         && incoming().keys().hasOnly(['blockerUserId', 'blockedUserId', 'createdAt'])

@@ -72,6 +72,7 @@ export type AnalyticsEvent =
   | "conversation_started"
   | "report_submitted"
   | "user_blocked"
+  | "user_unblocked"
   | "account_deleted"
   | "screen_view";
 
