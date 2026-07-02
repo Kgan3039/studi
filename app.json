@@ -9,7 +9,8 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.joinstudi.app"
     },
     "android": {
       "adaptiveIcon": {
@@ -39,11 +40,19 @@
         }
       ],
       "expo-web-browser",
+      "expo-notifications",
       "@sentry/react-native"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "cefee105-ad53-4b95-a822-770d78148ba7"
+      },
+      "router": {}
+    },
+    "owner": "studi-app"
   }
 }

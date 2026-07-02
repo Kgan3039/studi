@@ -14,7 +14,7 @@ import {
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-const LAST_UPDATED = 'June 4, 2026';
+const LAST_UPDATED = 'July 1, 2026';
 
 function buildMailtoHref(subject: string) {
   return `mailto:${STUDI_CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}` as Href & string;
@@ -53,7 +53,7 @@ export default function PrivacyPolicyScreen() {
         <Bullet text="Account information, including email address, display name, and sign-in provider details." />
         <Bullet text="Profile information you choose to add, including your display name and classes." />
         <Bullet text="Study activity you create in the app, including sessions, session participation, messages, reports, blocks, and study location ratings." />
-        <Bullet text="Technical data needed to operate the app, such as authentication state, timestamps, and Firebase service logs." />
+        <Bullet text="Technical data needed to operate the app, such as authentication state, timestamps, Firebase service logs, and device push identifiers or push notification tokens if you enable notifications." />
       </PolicySection>
 
       <PolicySection title="How We Use Information">
@@ -61,13 +61,15 @@ export default function PrivacyPolicyScreen() {
         <Bullet text="Show study sessions relevant to your classes." />
         <Bullet text="Show sessions, messages, location ratings, and profile details to the people who need them for app features." />
         <Bullet text="Investigate reports, prevent abuse, debug issues, and keep the service reliable." />
+        <Bullet text="Send account, message, session, and app-related notifications if you enable notifications." />
       </PolicySection>
 
       <PolicySection title="Sharing and Service Providers">
         <ThemedText style={styles.bodyText}>
-          Studi uses Firebase services from Google for authentication and cloud data storage. Data is
-          shared with service providers only as needed to operate Studi. We do not share personal
-          information with advertising networks or data brokers.
+          Studi uses Firebase services from Google for authentication and cloud data storage. Push
+          notification support may use Expo Push Service to deliver notifications. Data is shared with
+          service providers only as needed to operate Studi. We do not share personal information with
+          advertising networks or data brokers.
         </ThemedText>
       </PolicySection>
 
@@ -83,6 +85,7 @@ export default function PrivacyPolicyScreen() {
       <PolicySection title="Your Choices">
         <Bullet text="You can edit your display name and classes from Profile." />
         <Bullet text="You can delete your account from Profile > Account actions > Delete Account." />
+        <Bullet text="You can control notifications through your device settings." />
         <Bullet text="You can contact us to request access, correction, deletion, or consent withdrawal help." />
       </PolicySection>
 

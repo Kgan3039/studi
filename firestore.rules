@@ -102,6 +102,12 @@ service cloud.firestore {
           && incoming().email is string
           && incoming().email == request.auth.token.email;
         allow delete: if false;
+
+        match /tokens/{tokenId} {
+          // Push tokens live under users/{uid}/private/pushTokens/tokens/{tokenId}
+          // and are managed only by Cloud Functions/Admin SDK.
+          allow read, write: if false;
+        }
       }
     }
 
@@ -149,6 +155,17 @@ service cloud.firestore {
         && incoming().status in ['open', 'full', 'cancelled']
         && incoming().title is string && incoming().title.size() >= 1
         && incoming().title.size() <= 80
+        && incoming().locationId is string
+        && incoming().locationId.size() >= 1 && incoming().locationId.size() <= 60
+        && incoming().startTime is timestamp
+        && incoming().endTime is timestamp
+        && incoming().endTime > incoming().startTime
+        && incoming().endTime < incoming().startTime + duration.value(12, 'h')
+        // Rescheduling must land in the same future window as create; leaving
+        // startTime untouched keeps cancel/kick possible on in-progress sessions.
+        && (incoming().startTime == resource.data.startTime
+            || (incoming().startTime > request.time
+                && incoming().startTime < request.time + duration.value(31, 'd')))
         // Host may only REMOVE participants (kick), never inject anyone:
         && incoming().participantIds.toSet().intersection(
              resource.data.participantIds.toSet()
@@ -229,11 +246,21 @@ service cloud.firestore {
       allow list: if isVerifiedUwUser()
         && request.auth.uid in resource.data.participantIds;
       allow create: if isVerifiedUwUser() && isValidNewConversation(conversationId);
+      // Metadata bumps are only valid as part of the send-message batch: they
+      // must ride the same fresh sendMessage rate-limit write as the message
+      // itself, and blocks stop them just like message creation.
       allow update: if isVerifiedUwUser()
         && request.auth.uid in resource.data.participantIds
         && affectedKeys().hasOnly(['lastMessagePreview', 'lastMessageAt', 'updatedAt'])
         && incoming().lastMessagePreview is string
-        && incoming().lastMessagePreview.size() <= 200;
+        && incoming().lastMessagePreview.size() <= 200
+        && incoming().lastMessageAt == request.time
+        && incoming().updatedAt == request.time
+        && !isBlockedEitherWay(
+             resource.data.participantIds[0],
+             resource.data.participantIds[1]
+           )
+        && hasFreshRateLimit(request.auth.uid, 'sendMessage');
       allow delete: if false;
 
       match /messages/{messageId} {

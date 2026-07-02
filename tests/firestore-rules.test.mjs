@@ -114,6 +114,27 @@ function createMessageWithRateLimit(db, uid, conversationId, messageId, message)
   return batch.commit();
 }
 
+function updateConversationWithRateLimit(db, uid, conversationId, data) {
+  const batch = batchWithRateLimit(db, uid, 'sendMessage');
+  batch.update(doc(db, 'conversations', conversationId), data);
+  return batch.commit();
+}
+
+// Mirrors sendDirectMessage in lib/firestore.ts: message + metadata bump +
+// sendMessage rate-limit write in a single batch.
+function clientSendFlow(db, uid, conversationId, messageId, text) {
+  const batch = batchWithRateLimit(db, uid, 'sendMessage');
+  batch.set(doc(db, 'conversations', conversationId, 'messages', messageId), {
+    senderId: uid, text, createdAt: serverTimestamp(),
+  });
+  batch.update(doc(db, 'conversations', conversationId), {
+    lastMessagePreview: text.slice(0, 200),
+    lastMessageAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return batch.commit();
+}
+
 function createReportWithRateLimit(db, uid, reportId, report) {
   const batch = batchWithRateLimit(db, uid, 'reportUser');
   batch.set(doc(db, 'reports', reportId), report);
@@ -329,6 +350,67 @@ describe('sessions', () => {
     }));
   });
 
+  it('host edit revalidates times: no past start, ordered, max 12h', async () => {
+    await seed('sessions/s1', validSession(ALICE, {
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+    }));
+    // Valid reschedule within the window:
+    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      startTime: futureTs(48), endTime: futureTs(50), updatedAt: serverTimestamp(),
+    }));
+    // Past startTime:
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      startTime: Timestamp.fromMillis(Date.now() - 3600_000),
+      updatedAt: serverTimestamp(),
+    }));
+    // startTime beyond the 31-day window:
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      startTime: futureTs(24 * 40), endTime: futureTs(24 * 40 + 2),
+      updatedAt: serverTimestamp(),
+    }));
+    // endTime before startTime:
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      endTime: futureTs(47), updatedAt: serverTimestamp(),
+    }));
+    // Duration over 12 hours:
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      endTime: futureTs(48 + 13), updatedAt: serverTimestamp(),
+    }));
+    // Non-timestamp times:
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      startTime: 'tomorrow', updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('host edit revalidates status, title, and locationId', async () => {
+    await seed('sessions/s1', validSession(ALICE, {
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+    }));
+    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      title: 'Moved to Memorial', locationId: 'memorial-library',
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      status: 'archived', updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      title: '', updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      title: 'T'.repeat(81), updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      locationId: '', updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      locationId: 'L'.repeat(61), updatedAt: serverTimestamp(),
+    }));
+    // Identity stays pinned:
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      classId: 'MATH 221', updatedAt: serverTimestamp(),
+    }));
+  });
+
   it('host can delete; others cannot', async () => {
     await seed('sessions/s1', validSession(ALICE, {
       createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
@@ -387,21 +469,86 @@ describe('conversations + messages', () => {
   });
 
   it('participants cannot mutate participantIds; preview capped at 200', async () => {
-    await seed(`conversations/${convoId(ALICE, BOB)}`, {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
       ...validConversation(ALICE, BOB),
       createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
       lastMessageAt: Timestamp.now(),
     });
-    await assertFails(updateDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)), {
-      participantIds: [ALICE, MALLORY].sort(), updatedAt: serverTimestamp(),
+    await assertFails(updateConversationWithRateLimit(ctx(ALICE), ALICE, cid, {
+      participantIds: [ALICE, MALLORY].sort(),
+      lastMessageAt: serverTimestamp(), updatedAt: serverTimestamp(),
     }));
-    await assertFails(updateDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)), {
-      lastMessagePreview: 'x'.repeat(201), updatedAt: serverTimestamp(),
+    await assertFails(updateConversationWithRateLimit(ctx(ALICE), ALICE, cid, {
+      lastMessagePreview: 'x'.repeat(201),
+      lastMessageAt: serverTimestamp(), updatedAt: serverTimestamp(),
     }));
-    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)), {
+    await assertSucceeds(updateConversationWithRateLimit(ctx(ALICE), ALICE, cid, {
       lastMessagePreview: 'hey', lastMessageAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     }));
+  });
+
+  it('metadata bump requires the fresh sendMessage rate-limit write', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB),
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+      lastMessageAt: Timestamp.now(),
+    });
+    // Bare update outside the send-message batch:
+    await assertFails(updateDoc(doc(ctx(ALICE), 'conversations', cid), {
+      lastMessagePreview: 'hey', lastMessageAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
+    // Stale rate-limit doc alone doesn't count either:
+    await seed(`rateLimits/${ALICE}/actions/sendMessage`, {
+      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
+    });
+    await assertFails(updateDoc(doc(ctx(ALICE), 'conversations', cid), {
+      lastMessagePreview: 'hey', lastMessageAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
+    // Metadata timestamps must be server time (consistent with a real send):
+    await assertFails(updateConversationWithRateLimit(ctx(ALICE), ALICE, cid, {
+      lastMessagePreview: 'hey',
+      lastMessageAt: Timestamp.fromMillis(Date.now() + 86_400_000),
+      updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('blocked participant cannot bump conversation preview/time', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB),
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+      lastMessageAt: Timestamp.now(),
+    });
+    await seed(`userBlocks/${BOB}__${ALICE}`, {
+      blockerUserId: BOB, blockedUserId: ALICE, createdAt: Timestamp.now(),
+    });
+    // Even with the fresh rate-limit write, the blocked pair cannot resurface
+    // the thread — in either direction.
+    await assertFails(updateConversationWithRateLimit(ctx(ALICE), ALICE, cid, {
+      lastMessagePreview: 'still here', lastMessageAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateConversationWithRateLimit(ctx(BOB), BOB, cid, {
+      lastMessagePreview: 'ping', lastMessageAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('full client send batch (message + metadata + rate limit) passes', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB),
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+      lastMessageAt: Timestamp.now(),
+    });
+    await assertSucceeds(clientSendFlow(ctx(ALICE), ALICE, cid, 'm1', 'study at 7?'));
+    // Outsider can't run the same batch:
+    await assertFails(clientSendFlow(ctx(MALLORY), MALLORY, cid, 'm2', 'intruder'));
   });
 
   it('client send flow for a max-length message: sliced preview passes, full text does not', async () => {
@@ -421,11 +568,17 @@ describe('conversations + messages', () => {
     await assertFails(setDoc(doc(ctx(ALICE), 'conversations', cid, 'messages', 'm1b'), {
       senderId: ALICE, text: 'missing rate limit', createdAt: serverTimestamp(),
     }));
-    await assertFails(updateDoc(doc(ctx(ALICE), 'conversations', cid), {
+    await seed(`rateLimits/${ALICE}/actions/sendMessage`, {
+      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
+    });
+    await assertFails(updateConversationWithRateLimit(ctx(ALICE), ALICE, cid, {
       lastMessagePreview: longText, lastMessageAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     }));
-    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'conversations', cid), {
+    await seed(`rateLimits/${ALICE}/actions/sendMessage`, {
+      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
+    });
+    await assertSucceeds(updateConversationWithRateLimit(ctx(ALICE), ALICE, cid, {
       lastMessagePreview: longText.slice(0, 200), lastMessageAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     }));

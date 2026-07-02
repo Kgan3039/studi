@@ -16,6 +16,7 @@ import 'react-native-reanimated';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initAnalytics, track } from '@/lib/analytics';
 import { subscribeToAuthState, waitForAuthReady } from '@/lib/auth';
+import { addNotificationResponseListener } from '@/lib/notifications';
 
 type AuthGateState = 'pending' | 'signed-out' | 'unverified' | 'signed-in';
 
@@ -87,6 +88,32 @@ function RootLayout() {
 
   const fontsReady = fontsLoaded || fontError;
   const ready = fontsReady && authState !== 'pending';
+
+  useEffect(() => {
+    if (!ready || authState !== 'signed-in') {
+      return;
+    }
+
+    let cleanup: (() => void) | undefined;
+    let cancelled = false;
+
+    addNotificationResponseListener((url) => {
+      if (!cancelled) {
+        router.push(url as never);
+      }
+    }).then((unsubscribe) => {
+      if (cancelled) {
+        unsubscribe();
+      } else {
+        cleanup = unsubscribe;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
+  }, [ready, authState, router]);
 
   useEffect(() => {
     if (ready) {
