@@ -45,7 +45,7 @@ export default function Home() {
         </div>
         <div className="spotlight-row">
           <div className="location-mark" aria-hidden="true">
-            <span>S</span>
+            <span />
           </div>
           <div className="spotlight-location">
             <p className="card-kicker">Nearby spot: College Library</p>

@@ -484,10 +484,7 @@ h1 {
   align-items: center;
   background: var(--text);
   border-radius: 50% 50% 50% 14%;
-  color: #fff;
   display: flex;
-  font-family: var(--font-arapey), Georgia, serif;
-  font-size: 1.2rem;
   height: 39px;
   justify-content: center;
   transform: rotate(-45deg);
@@ -495,8 +492,11 @@ h1 {
 }
 
 .location-mark span {
+  background: var(--surface);
+  border-radius: 50%;
   display: block;
-  transform: rotate(45deg);
+  height: 10px;
+  width: 10px;
 }
 
 .spotlight-location {
