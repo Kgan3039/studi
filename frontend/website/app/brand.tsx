@@ -5,13 +5,17 @@ import Link from "next/link";
 import { useState } from "react";
 
 export default function Brand() {
-  const [ripple, setRipple] = useState(0);
+  const [pop, setPop] = useState(0);
 
   return (
-    <Link className="brand" href="/" onClick={() => setRipple(Date.now())}>
+    <Link className="brand" href="/" onClick={() => setPop(Date.now())}>
       <span className="brand-mark">
-        <span className="brand-ring" aria-hidden="true" />
-        {ripple > 0 ? <span className="brand-ripple" aria-hidden="true" key={ripple} /> : null}
+        <span
+          className={`brand-ring${pop ? " ring-pop" : ""}`}
+          key={pop}
+          aria-hidden="true"
+          onAnimationEnd={() => setPop(0)}
+        />
         <Image
           src="/studi-logo.png"
           alt=""

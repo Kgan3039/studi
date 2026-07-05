@@ -111,20 +111,23 @@ main {
 }
 
 .brand-logo {
-  animation: logo-bounce 2.6s ease-in-out infinite;
+  animation: logo-bounce 3.4s ease-in-out infinite;
   display: block;
   height: 50px;
   object-fit: contain;
   object-position: center;
+  position: relative;
   transition: scale 150ms ease;
   width: 46px;
+  z-index: 1;
 }
 
+/* sits around the pin's tip so the pin dips through it */
 .brand-ring {
-  animation: ring-breathe 2.6s ease-in-out infinite;
+  animation: ring-breathe 3.4s ease-in-out infinite;
   border: 2.5px solid var(--accent-dark);
   border-radius: 50%;
-  bottom: -5px;
+  bottom: 1px;
   height: 9px;
   left: 50%;
   margin-left: -13px;
@@ -132,40 +135,40 @@ main {
   width: 26px;
 }
 
-/* the pin gets excited on hover */
+/* the pin perks up a little on hover */
 .brand:hover .brand-logo {
-  animation-duration: 0.9s;
+  animation-duration: 1.7s;
 }
 
 .brand:hover .brand-ring {
-  animation-duration: 0.9s;
+  animation-duration: 1.7s;
 }
 
 .brand:active .brand-logo {
-  scale: 0.88;
+  scale: 0.9;
 }
 
-.brand-ripple {
-  animation: ripple-out 700ms ease-out forwards;
-  border: 2px solid var(--accent);
-  border-radius: 50%;
-  bottom: -5px;
-  height: 9px;
-  left: 50%;
-  margin-left: -13px;
-  pointer-events: none;
-  position: absolute;
-  width: 26px;
+/* click: the ring itself bursts outward, then breathes back in */
+.brand-ring.ring-pop {
+  animation: ring-pop 650ms ease-out;
 }
 
-@keyframes ripple-out {
-  from {
+@keyframes ring-pop {
+  0% {
     opacity: 0.9;
-    transform: scale(0.6);
+    transform: scale(1);
   }
-  to {
+  55% {
     opacity: 0;
-    transform: scale(2.7);
+    transform: scale(2.3);
+  }
+  60% {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  100% {
+    opacity: 0.9;
+    transform: scale(1);
   }
 }
 
@@ -203,19 +206,19 @@ main {
     transform: translateY(0);
   }
   50% {
-    transform: translateY(-6px);
+    transform: translateY(-4px);
   }
 }
 
 @keyframes ring-breathe {
   0%,
   100% {
-    opacity: 0.85;
+    opacity: 0.8;
     transform: scale(1);
   }
   50% {
-    opacity: 0.4;
-    transform: scale(0.72);
+    opacity: 0.55;
+    transform: scale(0.82);
   }
 }
 
