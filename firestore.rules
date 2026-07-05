@@ -234,6 +234,12 @@ service cloud.firestore {
         && conversationId == incoming().participantKey
         && incoming().lastMessagePreview is string
         && incoming().lastMessagePreview.size() <= 200
+        // Pin all timestamps to the server clock (matches the update branch);
+        // otherwise a forged lastMessageAt can park a thread atop the
+        // counterpart's inbox forever.
+        && incoming().lastMessageAt == request.time
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
         && !isBlockedEitherWay(incoming().participantIds[0], incoming().participantIds[1]);
     }
 
