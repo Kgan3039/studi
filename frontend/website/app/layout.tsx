@@ -30,7 +30,7 @@ export default function RootLayout({
           <nav className="nav" aria-label="Main navigation">
             <Link className="brand" href="/">
               <span className="brand-mark">
-                <span className="brand-glow" aria-hidden="true" />
+                <span className="brand-ring" aria-hidden="true" />
                 <Image
                   src="/studi-logo.png"
                   alt=""
@@ -40,7 +40,7 @@ export default function RootLayout({
                   priority
                 />
               </span>
-              <span>Studi</span>
+              <span className="brand-text">Studi</span>
             </Link>
             <div className="nav-links">
               <Link href="/privacy">Privacy</Link>

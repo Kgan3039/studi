@@ -119,21 +119,44 @@ main {
   width: 46px;
 }
 
-.brand-glow {
-  animation: glow-pulse 2.6s ease-in-out infinite;
-  background: radial-gradient(
-    closest-side,
-    rgba(197, 5, 12, 0.45),
-    rgba(197, 5, 12, 0.14) 62%,
-    transparent
-  );
+.brand-ring {
+  animation: ring-breathe 2.6s ease-in-out infinite;
+  border: 2.5px solid var(--accent-dark);
   border-radius: 50%;
-  bottom: -4px;
-  height: 10px;
+  bottom: -6px;
+  height: 11px;
   left: 50%;
-  margin-left: -17px;
+  margin-left: -15px;
   position: absolute;
-  width: 34px;
+  width: 30px;
+}
+
+.brand-text {
+  position: relative;
+  transition: color 300ms ease;
+}
+
+.brand-text::after {
+  background: var(--accent);
+  border-radius: 999px;
+  bottom: -6px;
+  content: "";
+  height: 3px;
+  left: 0;
+  position: absolute;
+  transform: scaleX(0);
+  transform-origin: right;
+  transition: transform 300ms ease;
+  width: 100%;
+}
+
+.brand:hover .brand-text {
+  color: var(--accent);
+}
+
+.brand:hover .brand-text::after {
+  transform: scaleX(1);
+  transform-origin: left;
 }
 
 @keyframes logo-bounce {
@@ -146,15 +169,15 @@ main {
   }
 }
 
-@keyframes glow-pulse {
+@keyframes ring-breathe {
   0%,
   100% {
-    opacity: 0.9;
+    opacity: 0.85;
     transform: scale(1);
   }
   50% {
-    opacity: 0.45;
-    transform: scale(0.68);
+    opacity: 0.4;
+    transform: scale(0.72);
   }
 }
 
