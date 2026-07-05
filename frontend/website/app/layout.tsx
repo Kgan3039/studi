@@ -29,14 +29,17 @@ export default function RootLayout({
         <header className="site-header">
           <nav className="nav" aria-label="Main navigation">
             <Link className="brand" href="/">
-              <Image
-                src="/studi-logo.png"
-                alt=""
-                className="brand-logo"
-                width={46}
-                height={50}
-                priority
-              />
+              <span className="brand-mark">
+                <span className="brand-glow" aria-hidden="true" />
+                <Image
+                  src="/studi-logo.png"
+                  alt=""
+                  className="brand-logo"
+                  width={46}
+                  height={50}
+                  priority
+                />
+              </span>
               <span>Studi</span>
             </Link>
             <div className="nav-links">

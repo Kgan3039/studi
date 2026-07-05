@@ -105,12 +105,57 @@ main {
   text-decoration: none;
 }
 
+.brand-mark {
+  display: inline-flex;
+  position: relative;
+}
+
 .brand-logo {
+  animation: logo-bounce 2.6s ease-in-out infinite;
   display: block;
   height: 50px;
   object-fit: contain;
   object-position: center;
   width: 46px;
+}
+
+.brand-glow {
+  animation: glow-pulse 2.6s ease-in-out infinite;
+  background: radial-gradient(
+    closest-side,
+    rgba(197, 5, 12, 0.45),
+    rgba(197, 5, 12, 0.14) 62%,
+    transparent
+  );
+  border-radius: 50%;
+  bottom: -4px;
+  height: 10px;
+  left: 50%;
+  margin-left: -17px;
+  position: absolute;
+  width: 34px;
+}
+
+@keyframes logo-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes glow-pulse {
+  0%,
+  100% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.68);
+  }
 }
 
 .nav-links {
