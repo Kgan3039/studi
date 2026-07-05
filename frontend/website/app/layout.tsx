@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Arapey } from "next/font/google";
-import Image from "next/image";
 import Link from "next/link";
+import Brand from "./brand";
 import "./globals.css";
 
 const contactEmail = "isp.studi@gmail.com";
@@ -28,20 +28,7 @@ export default function RootLayout({
       <body suppressHydrationWarning>
         <header className="site-header">
           <nav className="nav" aria-label="Main navigation">
-            <Link className="brand" href="/">
-              <span className="brand-mark">
-                <span className="brand-ring" aria-hidden="true" />
-                <Image
-                  src="/studi-logo.png"
-                  alt=""
-                  className="brand-logo"
-                  width={46}
-                  height={50}
-                  priority
-                />
-              </span>
-              <span className="brand-text">Studi</span>
-            </Link>
+            <Brand />
             <div className="nav-links">
               <Link href="/privacy">Privacy</Link>
               <Link href="/support">Support</Link>

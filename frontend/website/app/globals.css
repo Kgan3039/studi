@@ -116,6 +116,7 @@ main {
   height: 50px;
   object-fit: contain;
   object-position: center;
+  transition: scale 150ms ease;
   width: 46px;
 }
 
@@ -123,12 +124,49 @@ main {
   animation: ring-breathe 2.6s ease-in-out infinite;
   border: 2.5px solid var(--accent-dark);
   border-radius: 50%;
-  bottom: -6px;
-  height: 11px;
+  bottom: -5px;
+  height: 9px;
   left: 50%;
-  margin-left: -15px;
+  margin-left: -13px;
   position: absolute;
-  width: 30px;
+  width: 26px;
+}
+
+/* the pin gets excited on hover */
+.brand:hover .brand-logo {
+  animation-duration: 0.9s;
+}
+
+.brand:hover .brand-ring {
+  animation-duration: 0.9s;
+}
+
+.brand:active .brand-logo {
+  scale: 0.88;
+}
+
+.brand-ripple {
+  animation: ripple-out 700ms ease-out forwards;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  bottom: -5px;
+  height: 9px;
+  left: 50%;
+  margin-left: -13px;
+  pointer-events: none;
+  position: absolute;
+  width: 26px;
+}
+
+@keyframes ripple-out {
+  from {
+    opacity: 0.9;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.7);
+  }
 }
 
 .brand-text {
