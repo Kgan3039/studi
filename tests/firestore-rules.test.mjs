@@ -452,6 +452,19 @@ describe('conversations + messages', () => {
     );
   });
 
+  it('rejects forged timestamps on create', async () => {
+    const future = Timestamp.fromMillis(Date.now() + 365 * 24 * 60 * 60 * 1000);
+    await assertFails(setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)), {
+      ...validConversation(ALICE, BOB), lastMessageAt: future,
+    }));
+    await assertFails(setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)), {
+      ...validConversation(ALICE, BOB), createdAt: future,
+    }));
+    await assertFails(setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)), {
+      ...validConversation(ALICE, BOB), updatedAt: Timestamp.fromMillis(0),
+    }));
+  });
+
   it('rejects wrong id, >2 people, third-party creation, blocked pairs', async () => {
     await assertFails(setDoc(doc(ctx(ALICE), 'conversations', 'randomId'),
       validConversation(ALICE, BOB)));

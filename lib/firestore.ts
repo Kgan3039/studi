@@ -293,7 +293,9 @@ export async function getProfilesByIds(
       const profile: UserProfile = {
         uid: docSnap.id,
         displayName: typeof data.displayName === "string" ? data.displayName : "",
-        classes: Array.isArray(data.classes) ? data.classes : [],
+        classes: Array.isArray(data.classes)
+          ? data.classes.filter((c) => typeof c === "string")
+          : [],
       };
       profileCache.set(docSnap.id, { profile, fetchedAt: now });
       result.set(docSnap.id, profile);
@@ -463,9 +465,11 @@ function normalizeSessionDoc(
 
 const SESSIONS_PAGE_SIZE = 50;
 
-// How far back to scan for sessions that are still running (longest hostable
-// session is 3h; 6h leaves margin without meaningfully widening the query).
-const IN_PROGRESS_LOOKBACK_MS = 6 * 60 * 60 * 1000;
+// How far back to scan for sessions that are still running. Rules allow
+// sessions up to 12h (endTime < startTime + 12h), and manual end-time entry
+// lets hosts exceed the 3h preset — scan the full window so no in-progress
+// session drops off the "happening now" view.
+const IN_PROGRESS_LOOKBACK_MS = 12 * 60 * 60 * 1000;
 
 export async function getUpcomingSessions(options?: {
   classIds?: string[];
