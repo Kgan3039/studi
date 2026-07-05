@@ -108,8 +108,7 @@ main {
 .brand-logo {
   display: block;
   height: 50px;
-  mix-blend-mode: multiply;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
   width: 46px;
 }

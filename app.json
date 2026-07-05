@@ -30,7 +30,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/studi-logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#FFF8F4",
