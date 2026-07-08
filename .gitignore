@@ -45,3 +45,4 @@ app-example
 firestore-debug.log
 .env
 .env.*
+.vercel/
