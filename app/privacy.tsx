@@ -14,7 +14,7 @@ import {
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-const LAST_UPDATED = 'July 1, 2026';
+const LAST_UPDATED = 'July 8, 2026';
 
 function buildMailtoHref(subject: string) {
   return `mailto:${STUDI_CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}` as Href & string;
@@ -53,6 +53,7 @@ export default function PrivacyPolicyScreen() {
         <Bullet text="Account information, including email address, display name, and sign-in provider details." />
         <Bullet text="Profile information you choose to add, including your display name and classes." />
         <Bullet text="Study activity you create in the app, including sessions, session participation, messages, reports, blocks, and study location ratings." />
+        <Bullet text="Analytics and usage information, such as app opens, screen interactions, feature usage, engagement metrics, and diagnostic or crash-related data." />
         <Bullet text="Technical data needed to operate the app, such as authentication state, timestamps, Firebase service logs, and device push identifiers or push notification tokens if you enable notifications." />
       </PolicySection>
 
@@ -62,14 +63,16 @@ export default function PrivacyPolicyScreen() {
         <Bullet text="Show sessions, messages, location ratings, and profile details to the people who need them for app features." />
         <Bullet text="Investigate reports, prevent abuse, debug issues, and keep the service reliable." />
         <Bullet text="Send account, message, session, and app-related notifications if you enable notifications." />
+        <Bullet text="Understand app performance, usability, reliability, and feature quality." />
       </PolicySection>
 
       <PolicySection title="Sharing and Service Providers">
         <ThemedText style={styles.bodyText}>
-          Studi uses Firebase services from Google for authentication and cloud data storage. Push
-          notification support may use Expo Push Service to deliver notifications. Data is shared with
-          service providers only as needed to operate Studi. We do not share personal information with
-          advertising networks or data brokers.
+          Studi uses Firebase services from Google for authentication and cloud data storage. Studi
+          uses PostHog for product analytics and usage insights, and Sentry for crash reporting and
+          performance diagnostics. Push notification support may use Expo Push Service to deliver
+          notifications. Data is shared with service providers only as needed to operate Studi. We do
+          not share personal information with advertising networks or data brokers.
         </ThemedText>
       </PolicySection>
 
