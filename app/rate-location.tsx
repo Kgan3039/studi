@@ -5,14 +5,15 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Text,
   View,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
+import { BadgeChip } from '@/components/ui/BadgeChip';
+import { Button } from '@/components/ui/Button';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { LOCATION_RATING_TAG_GROUPS } from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -27,7 +28,9 @@ export default function RateLocationScreen() {
   }>();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
+  const isDark = colorScheme === 'dark';
   const insets = useSafeAreaInsets();
+  const starActiveColor = isDark ? '#D9A45C' : Brand.warning;
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authResolved, setAuthResolved] = useState(false);
@@ -126,23 +129,25 @@ export default function RateLocationScreen() {
       refreshControl={
         <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
       }
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView
-        style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.cardLabel}>Reviewing</ThemedText>
-        <ThemedText type="title">{locationName}</ThemedText>
-        {hasExistingRating && (
-          <ThemedView style={[styles.noticePill, { backgroundColor: palette.surfaceMuted }]}>
-            <ThemedText>
-              You already rated this spot. Submitting will update your rating.
-            </ThemedText>
-          </ThemedView>
-        )}
-      </ThemedView>
+      contentContainerStyle={[
+        styles.content,
+        { paddingTop: Space.lg, paddingBottom: insets.bottom + Space.xxl },
+      ]}>
+      <View style={styles.header}>
+        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Reviewing</Text>
+        <Text style={[TypeScale.title, { color: palette.text }]}>{locationName}</Text>
+        {hasExistingRating ? (
+          <View style={styles.noticeRow}>
+            <BadgeChip label="Already rated" tone="info" />
+            <Text style={[TypeScale.caption, styles.noticeText, { color: palette.icon }]}>
+              Submitting will update your rating.
+            </Text>
+          </View>
+        ) : null}
+      </View>
 
-      <ThemedView
-        style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText type="subtitle">Your rating</ThemedText>
+      <View style={styles.section}>
+        <Text style={[styles.question, { color: palette.text }]}>Your rating</Text>
         <View style={styles.starRow}>
           {[1, 2, 3, 4, 5].map((star) => (
             <Pressable
@@ -151,31 +156,33 @@ export default function RateLocationScreen() {
               accessibilityState={{ selected: selectedStars === star }}
               key={star}
               onPress={() => setSelectedStars(star)}
-              style={styles.starButton}>
-              <ThemedText
+              style={({ pressed }) => [
+                styles.starButton,
+                pressed && { opacity: 0.6, transform: [{ scale: 0.88 }] },
+              ]}>
+              <Text
                 style={[
                   styles.starChar,
-                  { color: star <= selectedStars ? '#F5A623' : palette.outline },
+                  { color: star <= selectedStars ? starActiveColor : palette.outline },
                 ]}>
                 ★
-              </ThemedText>
+              </Text>
             </Pressable>
           ))}
         </View>
-        {selectedStars === 0 && (
-          <ThemedText style={styles.hintText}>Tap a star to rate this spot.</ThemedText>
-        )}
-      </ThemedView>
+        <Text style={[TypeScale.caption, { color: palette.icon }]}>
+          {selectedStars === 0 ? 'Tap a star to rate this spot.' : `${selectedStars} of 5 stars`}
+        </Text>
+      </View>
 
-      <ThemedView
-        style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText type="subtitle">Tags</ThemedText>
-        <ThemedText style={styles.hintText}>
+      <View style={styles.section}>
+        <Text style={[styles.question, { color: palette.text }]}>Tags</Text>
+        <Text style={[TypeScale.caption, { color: palette.icon }]}>
           Select any that apply. These help other students filter study spots.
-        </ThemedText>
+        </Text>
         {LOCATION_RATING_TAG_GROUPS.map((group) => (
           <View key={group.label} style={styles.tagGroup}>
-            <ThemedText style={styles.tagGroupLabel}>{group.label}</ThemedText>
+            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{group.label}</Text>
             <View style={styles.tagGrid}>
               {group.tags.map((tag) => {
                 const isSelected = selectedTags.includes(tag);
@@ -185,52 +192,48 @@ export default function RateLocationScreen() {
                     accessibilityState={{ selected: isSelected }}
                     key={tag}
                     onPress={() => toggleTag(tag)}
-                    style={[
+                    style={({ pressed }) => [
                       styles.tagChip,
-                      {
-                        backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
-                        borderColor: isSelected ? palette.tint : palette.outline,
-                      },
+                      isSelected
+                        ? {
+                            backgroundColor: isDark ? `${palette.tint}26` : Brand.accentSoft,
+                            borderColor: palette.tint,
+                          }
+                        : {
+                            backgroundColor: palette.surface,
+                            borderColor: palette.border,
+                          },
+                      pressed && { transform: [{ scale: 0.97 }] },
                     ]}>
-                    <ThemedText
-                      lightColor={isSelected ? '#ffffff' : undefined}
-                      darkColor={isSelected ? '#ffffff' : undefined}
-                      type="defaultSemiBold">
+                    <Text
+                      style={[
+                        TypeScale.label,
+                        { color: isSelected ? palette.tint : palette.icon },
+                      ]}>
                       {tag}
-                    </ThemedText>
+                    </Text>
                   </Pressable>
                 );
               })}
             </View>
           </View>
         ))}
-      </ThemedView>
+      </View>
 
       {statusMessage ? (
-        <ThemedView
-          style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <ThemedText>{statusMessage}</ThemedText>
-        </ThemedView>
+        <Text style={[TypeScale.meta, styles.statusText, { color: palette.icon }]}>
+          {statusMessage}
+        </Text>
       ) : null}
 
-      <Pressable
+      <Button
+        label={hasExistingRating ? 'Update rating' : 'Submit rating'}
+        size="lg"
+        fullWidth
+        loading={isSubmitting}
+        disabled={selectedStars === 0}
         onPress={handleSubmit}
-        disabled={selectedStars === 0 || isSubmitting}
-        style={[
-          styles.submitButton,
-          {
-            backgroundColor: palette.tint,
-            opacity: selectedStars === 0 || isSubmitting ? 0.5 : 1,
-          },
-        ]}>
-        {isSubmitting ? (
-          <ActivityIndicator color="#ffffff" />
-        ) : (
-          <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-            {hasExistingRating ? 'Update Rating' : 'Submit Rating'}
-          </ThemedText>
-        )}
-      </Pressable>
+      />
     </ScrollView>
   );
 }
@@ -245,71 +248,59 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    gap: Space.xl,
+    padding: Space.lg + 4,
   },
-  card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
+  header: {
+    gap: Space.xs,
   },
-  cardLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.65,
-    textTransform: 'uppercase',
+  noticeRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
+    marginTop: Space.xs,
   },
-  noticePill: {
-    borderRadius: 12,
-    padding: 12,
+  noticeText: {
+    flexShrink: 1,
+  },
+  section: {
+    gap: Space.md,
+  },
+  question: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 24,
+    lineHeight: 29,
   },
   starRow: {
     flexDirection: 'row',
-    gap: 4,
+    gap: Space.sm,
   },
   starButton: {
-    padding: 4,
+    padding: Space.xs,
   },
   starChar: {
-    fontSize: 40,
-    lineHeight: 50,
-  },
-  hintText: {
-    opacity: 0.65,
+    fontSize: 34,
+    lineHeight: 40,
   },
   tagGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: Space.sm,
   },
   tagGroup: {
-    gap: 8,
-    marginTop: 4,
-  },
-  tagGroupLabel: {
-    fontSize: 12,
-    letterSpacing: 0.8,
-    opacity: 0.65,
-    textTransform: 'uppercase',
+    gap: Space.sm,
+    marginTop: Space.xs,
   },
   tagChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    minHeight: 36,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  submitButton: {
     alignItems: 'center',
-    borderRadius: 14,
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
     justifyContent: 'center',
-    minHeight: 52,
-    paddingHorizontal: 16,
+    minHeight: 38,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.sm,
+  },
+  statusText: {
+    textAlign: 'center',
   },
 });
