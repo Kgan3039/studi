@@ -37,7 +37,7 @@ const sections = [
   {
     title: "Sharing and Service Providers",
     body: [
-      "Studi uses Firebase services from Google for authentication and cloud data storage. Studi uses PostHog for product analytics and usage insights. Analytics are used to improve app performance, usability, reliability, and feature quality.",
+      "Studi uses Firebase services from Google for authentication and cloud data storage. Studi uses PostHog for product analytics and usage insights, and Sentry for crash reporting and performance diagnostics. Analytics are used to improve app performance, usability, reliability, and feature quality.",
       "Push notification support may use Expo Push Service. Data is shared with service providers only as needed to operate Studi. Studi does not use third-party advertising or cross-app tracking, and we do not share personal information with advertising networks or data brokers.",
     ],
   },
@@ -75,7 +75,7 @@ export default function PrivacyPage() {
         <h1>
           Privacy <em>Policy</em>
         </h1>
-        <p className="lead">Last updated June 28, 2026</p>
+        <p className="lead">Last updated July 8, 2026</p>
       </div>
 
       <div className="section-stack">
