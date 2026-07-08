@@ -264,10 +264,6 @@ export default function CreateSessionScreen() {
     }, [loadSetupData])
   );
 
-  useEffect(() => {
-    loadSetupData();
-  }, [loadSetupData]);
-
   async function handleRefresh() {
     if (!currentUser) {
       return;
