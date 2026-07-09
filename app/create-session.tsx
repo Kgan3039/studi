@@ -33,6 +33,7 @@ import {
   type LocationRatingAggregate,
   type StudyLocation,
 } from '@/lib/firestore';
+import { canonicalStudyLocationId } from '@/lib/catalog';
 import {
   MAX_DAYS_IN_FUTURE,
   validateSessionSchedule,
@@ -218,10 +219,15 @@ export default function CreateSessionScreen() {
         normalizedRequestedClass && profileClasses.includes(normalizedRequestedClass)
           ? normalizedRequestedClass
           : profileClasses[0] ?? '';
+      // The picker only lists canonical ids, so resolve alias ids (e.g. a
+      // deep link carrying `morgridge`) before matching.
+      const canonicalRequestedId = requestedLocationId
+        ? canonicalStudyLocationId(requestedLocationId)
+        : '';
       const defaultLocationId = loadedLocations.some(
-        (location) => location.locationId === requestedLocationId
+        (location) => location.locationId === canonicalRequestedId
       )
-        ? requestedLocationId ?? ''
+        ? canonicalRequestedId
         : loadedLocations[0]?.locationId ?? '';
 
       setClasses(profileClasses);

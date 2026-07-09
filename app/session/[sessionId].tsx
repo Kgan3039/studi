@@ -39,6 +39,7 @@ import {
     leaveSession,
     type StudySessionListItem,
 } from '@/lib/firestore';
+import { getStudyLocationDisplayName } from '@/lib/catalog';
 import { FirebaseError } from 'firebase/app';
 import type { User } from 'firebase/auth';
 
@@ -305,6 +306,9 @@ export default function SessionDetailScreen() {
   // The course chip already names the class, so a title like
   // "COMP SCI 400 Study Session" would repeat it — show just the rest
   // ("Study Session"). Custom titles without the class prefix pass through.
+  const locationDisplayName = session
+    ? getStudyLocationDisplayName(session.locationId, session.location?.name)
+    : '';
   const rawTitle = session?.title.trim() ?? '';
   const classPrefix = session ? `${session.classId.trim()} ` : '';
   const heroTitle =
@@ -340,7 +344,7 @@ export default function SessionDetailScreen() {
                 for the banner instead of an empty placeholder block. */}
             <View style={styles.heroBlock}>
               <Text style={[TypeScale.eyebrow, { color: palette.icon }]} numberOfLines={1}>
-                {session.location?.name ?? session.locationId}
+                {locationDisplayName}
                 {session.location?.campusArea ? ` · ${session.location.campusArea}` : ''}
               </Text>
               <View style={styles.heroChipRow}>
@@ -495,7 +499,7 @@ export default function SessionDetailScreen() {
               ]}>
               <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Where</Text>
               <Text style={[TypeScale.heading, { color: palette.text }]}>
-                {session.location?.name ?? session.locationId}
+                {locationDisplayName}
               </Text>
               <Text style={[TypeScale.body, { color: palette.icon }]}>
                 {session.location?.building ?? 'Campus location'}
@@ -517,7 +521,7 @@ export default function SessionDetailScreen() {
                       pathname: '/rate-location',
                       params: {
                         locationId: session.locationId,
-                        locationName: session.location?.name ?? session.locationId,
+                        locationName: locationDisplayName,
                       },
                     })
                   }

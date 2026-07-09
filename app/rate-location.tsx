@@ -17,6 +17,7 @@ import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants
 import { LOCATION_RATING_TAG_GROUPS } from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
+import { getStudyLocationDisplayName } from '@/lib/catalog';
 import { getUserLocationRating, submitLocationRating } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
@@ -135,7 +136,9 @@ export default function RateLocationScreen() {
       ]}>
       <View style={styles.header}>
         <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Reviewing</Text>
-        <Text style={[TypeScale.title, { color: palette.text }]}>{locationName}</Text>
+        <Text style={[TypeScale.title, { color: palette.text }]}>
+          {getStudyLocationDisplayName(locationId ?? '', locationName)}
+        </Text>
         {hasExistingRating ? (
           <View style={styles.noticeRow}>
             <BadgeChip label="Already rated" tone="info" />

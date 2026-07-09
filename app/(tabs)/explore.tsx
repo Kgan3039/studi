@@ -33,6 +33,7 @@ import {
   type StudyLocation,
   type StudySession,
 } from '@/lib/firestore';
+import { canonicalStudyLocationId } from '@/lib/catalog';
 import type { User } from 'firebase/auth';
 
 type MapFilter = 'all' | 'live' | 'next-hour' | 'my-classes' | 'quiet';
@@ -116,9 +117,16 @@ export default function StudyLocationsScreen() {
         getLocationRatingAggregates().catch(() => new Map<string, LocationRatingAggregate>()),
         getUserProfile(currentUser.uid).catch(() => null),
       ]);
+      // Sessions may reference Firestore-only alias ids (e.g. `morgridge`);
+      // the pin list only carries the curated ids, so canonicalize before
+      // grouping or those sessions never show up on the map.
+      const canonicalSessions = loadedSessions.map((session) => ({
+        ...session,
+        locationId: canonicalStudyLocationId(session.locationId),
+      }));
       const counts = new Map<string, number>();
 
-      loadedSessions.forEach((session) => {
+      canonicalSessions.forEach((session) => {
         counts.set(session.locationId, (counts.get(session.locationId) ?? 0) + 1);
       });
 
@@ -128,7 +136,7 @@ export default function StudyLocationsScreen() {
       )[0];
 
       setLocations(loadedLocations);
-      setSessions(loadedSessions);
+      setSessions(canonicalSessions);
       setRatingAggregates(aggregatesResult);
       setProfileClasses(profileResult?.classes ?? []);
       setSelectedLocationId((current) => current ?? firstLocation?.locationId ?? null);
