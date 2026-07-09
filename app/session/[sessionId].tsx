@@ -304,6 +304,15 @@ export default function SessionDetailScreen() {
           ? `${durationMinutes / 60} hr`
           : `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m`;
   const deptTint = session ? deptColorFor(session.classId) ?? palette.text : palette.text;
+  // The course chip already names the class, so a title like
+  // "COMP SCI 400 Study Session" would repeat it — show just the rest
+  // ("Study Session"). Custom titles without the class prefix pass through.
+  const rawTitle = session?.title.trim() ?? '';
+  const classPrefix = session ? `${session.classId.trim()} ` : '';
+  const heroTitle =
+    classPrefix.length > 1 && rawTitle.toUpperCase().startsWith(classPrefix.toUpperCase())
+      ? rawTitle.slice(classPrefix.length).trim() || rawTitle
+      : rawTitle;
 
   // Board lists three authored "house rules"; per-session rules are not in the
   // data model, so the spot's own notes + tags (the closest real guidance)
@@ -325,7 +334,7 @@ export default function SessionDetailScreen() {
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
         }
-        contentContainerStyle={[styles.content, { paddingTop: Space.lg }]}>
+        contentContainerStyle={[styles.content, { paddingTop: Space.sm }]}>
         {session ? (
           <>
             {/* 1. HERO — banner, course chip, title, time/location summary.
@@ -352,10 +361,11 @@ export default function SessionDetailScreen() {
                   <BadgeChip label="Full" tone="neutral" />
                 ) : null}
               </View>
-              <Text style={[styles.heroTitle, { color: palette.text }]}>{session.title}</Text>
+              <Text style={[styles.heroTitle, { color: palette.text }]}>{heroTitle}</Text>
+              {/* The banner directly above already names the spot, so the
+                  meta line only carries the time window. */}
               <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
                 {formatSessionWindow(session.startTime, session.endTime)}
-                {session.location?.name ? ` · ${session.location.name}` : ''}
               </Text>
             </View>
 

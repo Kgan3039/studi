@@ -421,6 +421,8 @@ export default function CreateSessionScreen() {
           <Text style={[styles.question, { color: palette.text }]}>Where are you studying?</Text>
           <TextInput
             autoCapitalize="words"
+            autoCorrect={false}
+            spellCheck={false}
             onChangeText={setLocationQuery}
             placeholder="Search spots by name, building, or tag"
             placeholderTextColor={placeholderColor}

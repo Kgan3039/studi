@@ -22,6 +22,8 @@ const MAPPING = {
   'map.fill': 'map',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
+  eye: 'visibility',
+  'eye.slash': 'visibility-off',
 } as IconMapping;
 
 /**
