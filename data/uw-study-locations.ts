@@ -168,7 +168,7 @@ export const UW_STUDY_LOCATIONS: OfficialStudyLocation[] = [
     locationId: 'parkside',
     mapPosition: { xPercent: 32, yPercent: 56 },
     name: 'DeLuca Forum at Discovery Building',
-    building: 'Discovery Building',
+    building: 'Discovery Building (Morgridge Institute for Research)',
     campusArea: 'West Campus',
     notes: 'Open, bright collaborative area that works well for group meetups and flexible sessions.',
     tags: ['collaborative', 'bright', 'west-campus', 'meetup'],
