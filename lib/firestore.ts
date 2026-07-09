@@ -27,7 +27,7 @@ import {
   UW_STUDY_LOCATIONS,
 } from "@/data/uw-study-locations";
 import { sanitizeLocationRatingTags } from "@/data/location-rating-options";
-import { findStudyLocationById } from "@/lib/catalog";
+import { findStudyLocationById, formatStudyLocationLabel } from "@/lib/catalog";
 import { db } from "../firebaseConfig";
 import { track } from "./analytics";
 export const COLLECTIONS = {
@@ -195,7 +195,12 @@ function normalizeStudyLocation(
       typeof location.mapPosition.yPercent === "number"
         ? location.mapPosition
         : fallback?.mapPosition ?? { xPercent: 50, yPercent: 50 },
-    name: location.name ?? fallback?.name ?? locationId,
+    // A stored name that just repeats the doc id is a slug, not a display
+    // name — prefer the curated name (or a humanized label) instead.
+    name:
+      location.name && location.name.trim() && location.name.trim() !== locationId
+        ? location.name.trim()
+        : fallback?.name ?? formatStudyLocationLabel(locationId),
     notes: location.notes ?? fallback?.notes ?? "Study location on or near campus.",
     tags: Array.isArray(location.tags) ? location.tags : fallback?.tags ?? [],
   };
@@ -646,10 +651,13 @@ export async function getSessionById(sessionId: string) {
       .filter((participant): participant is UserProfile => !!participant),
     hostProfile: profilesById.get(session.hostId) ?? null,
     location: location.exists()
-      ? ({
-          locationId: location.id,
-          ...(location.data() as Omit<StudyLocation, "locationId">),
-        } satisfies StudyLocation)
+      ? // Normalize rather than spreading the raw doc — alias docs (e.g.
+        // `morgridge`) may lack a display name, and normalization backfills
+        // it from the curated record so the UI never shows the id.
+        normalizeStudyLocation(
+          location.id,
+          location.data() as Partial<Omit<StudyLocation, "locationId">>
+        )
       : findStudyLocationById(session.locationId),
   } satisfies StudySessionListItem;
 }

@@ -1,5 +1,9 @@
 import rawCourseCatalog from '@/data/uw-course-catalog.json';
-import { UW_STUDY_LOCATIONS, type OfficialStudyLocation } from '@/data/uw-study-locations';
+import {
+  UW_STUDY_LOCATIONS,
+  UW_STUDY_LOCATION_ALIASES,
+  type OfficialStudyLocation,
+} from '@/data/uw-study-locations';
 import * as catalogSearch from './catalog-search.js';
 
 export type CatalogCourse = {
@@ -96,6 +100,36 @@ export function searchStudyLocations(query: string) {
   });
 }
 
+export function canonicalStudyLocationId(locationId: string): string {
+  return UW_STUDY_LOCATION_ALIASES[locationId] ?? locationId;
+}
+
 export function findStudyLocationById(locationId: string): OfficialStudyLocation | null {
-  return UW_STUDY_LOCATIONS.find((location) => location.locationId === locationId) ?? null;
+  const canonicalId = canonicalStudyLocationId(locationId);
+  return UW_STUDY_LOCATIONS.find((location) => location.locationId === canonicalId) ?? null;
+}
+
+// Last-resort label for ids with no curated record and no stored name:
+// "math-library" → "Math Library". Never surfaces the raw slug.
+export function formatStudyLocationLabel(locationId: string): string {
+  const label = locationId
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(' ');
+
+  return label || 'Campus study spot';
+}
+
+export function getStudyLocationDisplayName(
+  locationId: string,
+  preferredName?: string | null
+): string {
+  const trimmedName = preferredName?.trim();
+
+  if (trimmedName && trimmedName !== locationId) {
+    return trimmedName;
+  }
+
+  return findStudyLocationById(locationId)?.name ?? formatStudyLocationLabel(locationId);
 }

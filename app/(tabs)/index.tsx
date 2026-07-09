@@ -32,6 +32,7 @@ import {
   type StudySession,
   type UserProfile,
 } from '@/lib/firestore';
+import { getStudyLocationDisplayName } from '@/lib/catalog';
 import type { User } from 'firebase/auth';
 
 type TodaySession = StudySession & { locationName: string };
@@ -272,7 +273,10 @@ export default function HomeScreen() {
       setSessions(
         loadedSessions.map((session) => ({
           ...session,
-          locationName: locationsById.get(session.locationId)?.name ?? session.locationId,
+          locationName: getStudyLocationDisplayName(
+            session.locationId,
+            locationsById.get(session.locationId)?.name
+          ),
         }))
       );
     } catch (error) {

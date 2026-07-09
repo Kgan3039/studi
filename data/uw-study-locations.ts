@@ -15,6 +15,16 @@ export type OfficialStudyLocation = {
   tags: string[];
 };
 
+// Firestore-only alias ids found on existing session/location docs, mapped to
+// the curated location record they refer to (coordinates match exactly). Lets
+// old sessions resolve to the curated display name without a data migration.
+export const UW_STUDY_LOCATION_ALIASES: Record<string, string> = {
+  morgridge: 'morgridge-hall',
+  'steenbock-lib': 'steenbock-library',
+  'whs-reading-room': 'wisconsin-historical-society',
+  'wsb-library': 'business-learning-commons',
+};
+
 export const UW_STUDY_LOCATION_COORDINATE_OVERRIDES: Record<
   string,
   OfficialStudyLocation['coordinates']

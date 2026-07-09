@@ -29,6 +29,7 @@ import {
     joinSession,
     type StudySession,
 } from '@/lib/firestore';
+import { getStudyLocationDisplayName } from '@/lib/catalog';
 import type { User } from 'firebase/auth';
 
 type SessionListEntry = StudySession & {
@@ -141,7 +142,10 @@ export default function SessionsScreen() {
         loadedSessions.map((session) => ({
           ...session,
           hostName: hostsById.get(session.hostId)?.displayName || 'Student',
-          locationName: locationsById.get(session.locationId)?.name ?? session.locationId,
+          locationName: getStudyLocationDisplayName(
+            session.locationId,
+            locationsById.get(session.locationId)?.name
+          ),
         }))
       );
       setStatus(
