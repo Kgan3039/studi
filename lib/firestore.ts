@@ -380,7 +380,22 @@ export async function getLocations() {
       mergedLocations.set(location.locationId, withBuiltInLocationFallback(location));
     }
 
-    return [...mergedLocations.values()].sort((firstLocation, secondLocation) =>
+    // Firestore alias docs (e.g. `morgridge`) can carry the same display name
+    // as a built-in spot under a different id, rendering as duplicate rows in
+    // the location picker. Keep one entry per display name — built-ins are
+    // inserted first, so the curated record (real map position, notes, tags)
+    // wins over the alias.
+    const dedupedByName = new Map<string, StudyLocation>();
+
+    for (const location of mergedLocations.values()) {
+      const nameKey = location.name.trim().toLowerCase();
+
+      if (!dedupedByName.has(nameKey)) {
+        dedupedByName.set(nameKey, location);
+      }
+    }
+
+    return [...dedupedByName.values()].sort((firstLocation, secondLocation) =>
       firstLocation.name.localeCompare(secondLocation.name)
     );
   } catch (error) {

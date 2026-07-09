@@ -17,6 +17,7 @@ import { ExternalLink } from '@/components/external-link';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import {
     STUDI_CONTACT_EMAIL,
@@ -80,6 +81,7 @@ export default function ProfileScreen() {
   const [isReauthenticatingDelete, setIsReauthenticatingDelete] = useState(false);
   const [showDeleteReauthModal, setShowDeleteReauthModal] = useState(false);
   const [deleteReauthPassword, setDeleteReauthPassword] = useState('');
+  const [isDeletePasswordVisible, setIsDeletePasswordVisible] = useState(false);
   const [deleteReauthEmail, setDeleteReauthEmail] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -279,6 +281,7 @@ export default function ProfileScreen() {
   async function handleDeleteAccount() {
     setDeleteReauthPassword('');
     setDeleteReauthEmail(currentUser?.email ?? '');
+    setIsDeletePasswordVisible(false);
     setShowDeleteReauthModal(true);
   }
 
@@ -289,6 +292,7 @@ export default function ProfileScreen() {
 
     setShowDeleteReauthModal(false);
     setDeleteReauthPassword('');
+    setIsDeletePasswordVisible(false);
   }
 
   async function handleDeleteWithReauthPassword() {
@@ -689,17 +693,31 @@ export default function ProfileScreen() {
             <Text style={[TypeScale.body, { color: palette.icon }]}>
               For security, please re-enter your password for {deleteReauthEmail || 'your account'}.
             </Text>
-            <TextInput
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!isReauthenticatingDelete}
-              onChangeText={setDeleteReauthPassword}
-              placeholder="Password"
-              placeholderTextColor={placeholderColor}
-              secureTextEntry
-              style={[styles.input, inputColors]}
-              value={deleteReauthPassword}
-            />
+            <View>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!isReauthenticatingDelete}
+                onChangeText={setDeleteReauthPassword}
+                placeholder="Password"
+                placeholderTextColor={placeholderColor}
+                secureTextEntry={!isDeletePasswordVisible}
+                style={[styles.input, styles.secureInput, inputColors]}
+                value={deleteReauthPassword}
+              />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={isDeletePasswordVisible ? 'Hide password' : 'Show password'}
+                hitSlop={8}
+                onPress={() => setIsDeletePasswordVisible((visible) => !visible)}
+                style={styles.secureToggle}>
+                <IconSymbol
+                  name={isDeletePasswordVisible ? 'eye.slash' : 'eye'}
+                  size={20}
+                  color={palette.icon}
+                />
+              </Pressable>
+            </View>
             <View style={styles.modalActions}>
               <Button
                 label="Cancel"
@@ -874,6 +892,18 @@ const styles = StyleSheet.create({
     minHeight: 52,
     paddingHorizontal: Space.lg,
     paddingVertical: Space.md,
+  },
+  secureInput: {
+    paddingRight: Space.lg + 28,
+  },
+  secureToggle: {
+    alignItems: 'center',
+    bottom: 0,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: Space.md,
+    top: 0,
+    width: 28,
   },
   searchResults: {
     gap: Space.sm + 2,

@@ -98,6 +98,8 @@ export default function SignUpScreen() {
             label="UW email"
             autoCapitalize="none"
             autoComplete="email"
+            autoCorrect={false}
+            spellCheck={false}
             editable={!isBusy}
             keyboardType="email-address"
             onChangeText={setEmail}
