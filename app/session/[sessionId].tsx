@@ -21,7 +21,6 @@ import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import {
     Brand,
     Colors,
-    deptColorFor,
     Elevation,
     FontFamily,
     Radius,
@@ -303,7 +302,6 @@ export default function SessionDetailScreen() {
         : durationMinutes % 60 === 0
           ? `${durationMinutes / 60} hr`
           : `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m`;
-  const deptTint = session ? deptColorFor(session.classId) ?? palette.text : palette.text;
   // The course chip already names the class, so a title like
   // "COMP SCI 400 Study Session" would repeat it — show just the rest
   // ("Study Session"). Custom titles without the class prefix pass through.
@@ -337,22 +335,14 @@ export default function SessionDetailScreen() {
         contentContainerStyle={[styles.content, { paddingTop: Space.sm }]}>
         {session ? (
           <>
-            {/* 1. HERO — banner, course chip, title, time/location summary.
-                Dept tint stands in for the location imagery the app lacks. */}
-            <View
-              style={[
-                styles.banner,
-                {
-                  backgroundColor:
-                    colorScheme === 'dark' ? `${deptTint}26` : `${deptTint}14`,
-                },
-              ]}>
+            {/* 1. HERO — location eyebrow, course chip, title, time. The app
+                has no location imagery, so a compact eyebrow row stands in
+                for the banner instead of an empty placeholder block. */}
+            <View style={styles.heroBlock}>
               <Text style={[TypeScale.eyebrow, { color: palette.icon }]} numberOfLines={1}>
                 {session.location?.name ?? session.locationId}
                 {session.location?.campusArea ? ` · ${session.location.campusArea}` : ''}
               </Text>
-            </View>
-            <View style={styles.heroBlock}>
               <View style={styles.heroChipRow}>
                 <CourseChip code={session.classId} size="lg" />
                 {isCancelled ? (
@@ -637,12 +627,6 @@ const styles = StyleSheet.create({
     gap: Space.lg,
     padding: Space.lg + 4,
     paddingBottom: Space.xxl,
-  },
-  banner: {
-    borderRadius: Radius.xxl - 4,
-    justifyContent: 'flex-end',
-    minHeight: 96,
-    padding: Space.lg,
   },
   heroBlock: {
     gap: Space.sm + 2,
