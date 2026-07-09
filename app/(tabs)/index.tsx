@@ -26,7 +26,7 @@ import { subscribeToAuthState } from '@/lib/auth';
 import {
   getLocations,
   getProfilesByIds,
-  getUpcomingSessions,
+  getUpcomingSessionsForClasses,
   getUserProfile,
   joinSession,
   type StudySession,
@@ -242,6 +242,11 @@ export default function HomeScreen() {
     loadUserProfile();
   }, [currentUser]);
 
+  const profileClasses = useMemo(
+    () => (profile?.classes ?? []).map((classCode) => classCode.trim().toUpperCase()),
+    [profile]
+  );
+
   const loadSessions = useCallback(async () => {
     if (!currentUser || !currentUser.emailVerified) {
       return;
@@ -249,8 +254,15 @@ export default function HomeScreen() {
 
     try {
       setSessionsError('');
+      // Query the user's classes directly (plus joined sessions) rather than
+      // scanning the global upcoming list — at scale the first page of that
+      // list may hold none of this user's classes.
       const [loadedSessions, locations] = await Promise.all([
-        getUpcomingSessions({ includeInProgress: true }),
+        getUpcomingSessionsForClasses({
+          classIds: profileClasses,
+          participantId: currentUser.uid,
+          includeInProgress: true,
+        }),
         getLocations(),
       ]);
       const locationsById = new Map(
@@ -268,17 +280,13 @@ export default function HomeScreen() {
         error instanceof Error ? error.message : 'Unable to load sessions right now.';
       setSessionsError(message);
     }
-  }, [currentUser]);
+  }, [currentUser, profileClasses]);
 
   useEffect(() => {
     loadSessions();
   }, [loadSessions]);
 
   const savedName = splitDisplayName(profile?.displayName);
-  const profileClasses = useMemo(
-    () => (profile?.classes ?? []).map((classCode) => classCode.trim().toUpperCase()),
-    [profile]
-  );
 
   // Hero + rows: the board feed is personal — sessions for my classes plus
   // anything I've already joined.

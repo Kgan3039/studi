@@ -14,6 +14,7 @@ import {
   serverTimestamp,
   setDoc,
   Timestamp,
+  type QueryConstraint,
   updateDoc,
   where,
   writeBatch,
@@ -502,6 +503,14 @@ export async function getUpcomingSessions(options?: {
           limit(SESSIONS_PAGE_SIZE),
         ];
 
+  const sessions = await fetchSessionDocs(constraints);
+
+  return filterActiveSessions(sessions, now.toMillis(), options?.includeInProgress);
+}
+
+async function fetchSessionDocs(
+  constraints: QueryConstraint[]
+): Promise<StudySession[]> {
   const snapshot = await getDocs(query(collection(db, COLLECTIONS.sessions), ...constraints));
   const sessions: StudySession[] = [];
 
@@ -514,13 +523,19 @@ export async function getUpcomingSessions(options?: {
     }
   });
 
-  const cutoffMs = now.toMillis();
+  return sessions;
+}
 
+function filterActiveSessions(
+  sessions: StudySession[],
+  cutoffMs: number,
+  includeInProgress?: boolean
+): StudySession[] {
   return sessions.filter((s) => {
     if (s.status === "cancelled") {
       return false;
     }
-    if (!options?.includeInProgress) {
+    if (!includeInProgress) {
       return true;
     }
     // With the widened window, drop sessions that already ended; keep future
@@ -529,6 +544,65 @@ export async function getUpcomingSessions(options?: {
     const stillRunning = !!s.endTime && s.endTime.toMillis() > cutoffMs;
     return startsInFuture || stillRunning;
   });
+}
+
+// Firestore `in` disjunctions cap at 10 values, so class lists are chunked
+// into parallel queries and the pages merged client-side.
+const CLASS_ID_CHUNK_SIZE = 10;
+
+/**
+ * Today feed data path: fetch sessions for the user's enrolled classes
+ * directly (chunked `classId in` queries) plus anything the user already
+ * joined, instead of scanning the global list and filtering client-side.
+ */
+export async function getUpcomingSessionsForClasses(options: {
+  classIds: string[];
+  /** Also include sessions this user already joined, whatever the class. */
+  participantId?: string;
+  includeInProgress?: boolean;
+}): Promise<StudySession[]> {
+  const now = Timestamp.now();
+  const windowStart = options.includeInProgress
+    ? Timestamp.fromMillis(now.toMillis() - IN_PROGRESS_LOOKBACK_MS)
+    : now;
+  const timeConstraints = [
+    where("startTime", ">=", windowStart),
+    orderBy("startTime", "asc"),
+    limit(SESSIONS_PAGE_SIZE),
+  ];
+
+  const classIds = [...new Set(options.classIds)];
+  const chunks: string[][] = [];
+  for (let i = 0; i < classIds.length; i += CLASS_ID_CHUNK_SIZE) {
+    chunks.push(classIds.slice(i, i + CLASS_ID_CHUNK_SIZE));
+  }
+
+  const reads = chunks.map((chunk) =>
+    fetchSessionDocs([where("classId", "in", chunk), ...timeConstraints])
+  );
+  if (options.participantId) {
+    reads.push(
+      fetchSessionDocs([
+        where("participantIds", "array-contains", options.participantId),
+        ...timeConstraints,
+      ])
+    );
+  }
+
+  const pages = await Promise.all(reads);
+
+  // Merge by sessionId: a session can appear in both its class chunk and the
+  // joined-sessions page.
+  const byId = new Map<string, StudySession>();
+  for (const page of pages) {
+    for (const session of page) {
+      byId.set(session.sessionId, session);
+    }
+  }
+
+  return filterActiveSessions([...byId.values()], now.toMillis(), options.includeInProgress)
+    .sort((a, b) => a.startTime.toMillis() - b.startTime.toMillis())
+    .slice(0, SESSIONS_PAGE_SIZE);
 }
 
 export async function getSessionById(sessionId: string) {
