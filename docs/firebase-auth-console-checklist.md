@@ -1,16 +1,14 @@
 # Firebase Auth console checklist (pre-launch)
 
 These settings live in the Firebase console for project `studi-b02c3` and cannot
-be set from code. The code half of this work (continue URL + iOS bundle ID on
-auth emails) is in `lib/auth.ts` (`ACTION_CODE_SETTINGS`).
+be set from code.
 
-## Required before the continue-URL change ships
-
-- [ ] **Add authorized domains** — Authentication → Settings → Authorized
-      domains → add `www.joinstudi.com` and `joinstudi.com`.
-      Without this, every `sendPasswordResetEmail` / `sendEmailVerification`
-      call fails with `auth/unauthorized-continue-uri` — the reset and
-      verification flows break entirely, not just the redirect.
+> **Note:** Continue-URL action settings (`ACTION_CODE_SETTINGS` in
+> `lib/auth.ts`) are **deferred to post-beta**. The change was reverted because
+> the Firebase hosted flow showed "The operation is not valid." after
+> completing a password reset with the continue URL set. For beta we keep the
+> default Firebase action flow (emails dead-end on the hosted action page).
+> See the "Deferred" section below for what needs to happen before retrying.
 
 ## Required before public launch
 
@@ -29,13 +27,18 @@ auth emails) is in `lib/auth.ts` (`ACTION_CODE_SETTINGS`).
 ## Verify after the console changes
 
 - [ ] Send a password reset to a real `@wisc.edu` inbox (our whole user base is
-      on university Microsoft 365 mail): confirm it arrives, isn't junked, shows
-      "Studi" as sender and app name, and the action page shows a **Continue**
-      button that lands on `https://www.joinstudi.com/sign-in`.
+      on university Microsoft 365 mail): confirm it arrives, isn't junked, and
+      shows "Studi" as sender and app name.
 - [ ] Repeat for the verification email from a fresh sign-up.
 
 ## Deferred (post-beta, tracked in the audit)
 
+- **Continue URL + iOS bundle ID on auth emails** (`ACTION_CODE_SETTINGS`) —
+  reverted for beta; the hosted flow errored with "The operation is not valid."
+  after completing a reset. Before retrying: add `www.joinstudi.com` and
+  `joinstudi.com` under Authentication → Settings → Authorized domains
+  (missing domains fail sends with `auth/unauthorized-continue-uri`), then
+  debug why the hosted action page rejects the continue URL.
 - Custom sender domain (`noreply@joinstudi.com`) with SPF/DKIM — Authentication
   → Templates → customize domain (DNS status currently `NOT_STARTED`).
 - Fully branded email bodies (Admin SDK `generatePasswordResetLink` + email

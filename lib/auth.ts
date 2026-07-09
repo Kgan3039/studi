@@ -18,16 +18,6 @@ import { createOrUpdateUserProfile } from "./firestore";
 
 const UW_EMAIL_DOMAIN = "@wisc.edu";
 
-// Where auth emails send users after they finish on the Firebase action page.
-// The URL's domain must be listed under Auth → Settings → Authorized domains,
-// or send calls fail with auth/unauthorized-continue-uri (see
-// docs/firebase-auth-console-checklist.md). iOS bundle ID lets the
-// hosting-domain mobile link reopen the installed app.
-const ACTION_CODE_SETTINGS = {
-  url: "https://www.joinstudi.com/sign-in",
-  iOS: { bundleId: "com.joinstudi.app" },
-};
-
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
@@ -128,7 +118,7 @@ export async function signUp(
     // Name lives on the Auth profile until the email is verified; the Firestore
     // profile is written post-verification (rules require a verified token).
     await updateProfile(credential.user, { displayName });
-    await sendEmailVerification(credential.user, ACTION_CODE_SETTINGS);
+    await sendEmailVerification(credential.user);
     track("sign_up_completed");
 
     return credential.user;
@@ -156,7 +146,7 @@ export async function resendVerificationEmail() {
     throw new Error("Sign in first to resend the verification email.");
   }
 
-  await sendEmailVerification(user, ACTION_CODE_SETTINGS);
+  await sendEmailVerification(user);
 }
 
 /**
@@ -195,7 +185,7 @@ export async function requestPasswordReset(email: string) {
   }
 
   try {
-    await sendPasswordResetEmail(auth, normalizedEmail, ACTION_CODE_SETTINGS);
+    await sendPasswordResetEmail(auth, normalizedEmail);
   } catch (error: unknown) {
     const authError = error as AuthError;
 
