@@ -24,14 +24,21 @@ import type { StudySession } from '@/lib/firestore';
  */
 export type SessionCardSession = Pick<
   StudySession,
-  'sessionId' | 'classId' | 'title' | 'startTime' | 'endTime' | 'status' | 'participantIds'
+  | 'sessionId'
+  | 'classId'
+  | 'title'
+  | 'startTime'
+  | 'endTime'
+  | 'status'
+  | 'participantIds'
+  | 'capacity'
 >;
 
 export type SessionCardProps = {
   session: SessionCardSession;
   /** Resolved display name of the location; falls back to nothing shown. */
   locationName?: string;
-  /** Not in the data model yet — pips render without hollow seats when omitted. */
+  /** Overrides session.capacity when provided; pre-capacity sessions have neither. */
   capacity?: number;
   /** Location rating aggregate, when the caller has loaded it. */
   locationRating?: number;
@@ -137,7 +144,7 @@ function formatAttendees(names: string[]) {
 export function SessionCard({
   session,
   locationName,
-  capacity,
+  capacity: capacityProp,
   locationRating,
   isOnline = false,
   hostName,
@@ -154,6 +161,7 @@ export function SessionCard({
   const palette = Colors[colorScheme];
   const isDark = colorScheme === 'dark';
 
+  const capacity = capacityProp ?? session.capacity;
   const going = session.participantIds.length;
   const isFull =
     session.status === 'full' || (capacity !== undefined && going >= capacity);
@@ -180,6 +188,10 @@ export function SessionCard({
 
   const dept = deptColorFor(session.classId) ?? palette.text;
   const hostFirstName = hostName?.trim().split(' ')[0];
+  const spotsLeft = capacity !== undefined ? Math.max(capacity - going, 0) : undefined;
+  // "3 of 8 going" with capacity, "Full" when no seats remain, plain count otherwise.
+  const goingLabel =
+    spotsLeft === 0 ? 'Full' : capacity !== undefined ? `${going} of ${capacity} going` : `${going} going`;
 
   const dimmed = isFull || isCancelled;
 
@@ -234,7 +246,7 @@ export function SessionCard({
             {metaLine}
           </Text>
         </View>
-        <Text style={[TypeScale.meta, { color: palette.icon }]}>{going} going</Text>
+        <Text style={[TypeScale.meta, { color: palette.icon }]}>{goingLabel}</Text>
       </Pressable>
     );
   }
@@ -322,7 +334,7 @@ export function SessionCard({
               <SeatPips going={going} capacity={capacity} />
             )}
             {joinAction ?? (
-              <Text style={[TypeScale.meta, { color: palette.icon }]}>{going} going</Text>
+              <Text style={[TypeScale.meta, { color: palette.icon }]}>{goingLabel}</Text>
             )}
           </View>
         </View>

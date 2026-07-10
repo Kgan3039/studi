@@ -11,12 +11,15 @@ import {
   initializeTestEnvironment,
 } from '@firebase/rules-unit-testing';
 import {
+  arrayUnion,
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
@@ -417,6 +420,155 @@ describe('sessions', () => {
     }));
     await assertFails(deleteDoc(doc(ctx(BOB), 'sessions', 's1')));
     await assertSucceeds(deleteDoc(doc(ctx(ALICE), 'sessions', 's1')));
+  });
+});
+
+// --------------------------------------------------------- session capacity
+describe('session capacity', () => {
+  const seededSession = (host, overrides = {}) =>
+    validSession(host, {
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      ...overrides,
+    });
+
+  it('create accepts capacity at and inside the 2–20 bounds', async () => {
+    await assertSucceeds(createSessionWithRateLimit(ctx(ALICE), ALICE, 'c2',
+      validSession(ALICE, { capacity: 2 })));
+    await env.clearFirestore();
+    await assertSucceeds(createSessionWithRateLimit(ctx(ALICE), ALICE, 'c8',
+      validSession(ALICE, { capacity: 8 })));
+    await env.clearFirestore();
+    await assertSucceeds(createSessionWithRateLimit(ctx(ALICE), ALICE, 'c20',
+      validSession(ALICE, { capacity: 20 })));
+  });
+
+  it('create without capacity stays valid (legacy unlimited shape)', async () => {
+    await assertSucceeds(createSessionWithRateLimit(ctx(ALICE), ALICE, 's1',
+      validSession(ALICE)));
+  });
+
+  it('create rejects out-of-range and non-int capacity', async () => {
+    await assertFails(createSessionWithRateLimit(ctx(ALICE), ALICE, 'bad1',
+      validSession(ALICE, { capacity: 1 })));
+    await assertFails(createSessionWithRateLimit(ctx(ALICE), ALICE, 'bad2',
+      validSession(ALICE, { capacity: 21 })));
+    await assertFails(createSessionWithRateLimit(ctx(ALICE), ALICE, 'bad3',
+      validSession(ALICE, { capacity: 2.5 })));
+    await assertFails(createSessionWithRateLimit(ctx(ALICE), ALICE, 'bad4',
+      validSession(ALICE, { capacity: 'eight' })));
+    await assertFails(createSessionWithRateLimit(ctx(ALICE), ALICE, 'bad5',
+      validSession(ALICE, { capacity: null })));
+  });
+
+  it('join succeeds below capacity, is denied at capacity', async () => {
+    await seed('sessions/s1', seededSession(ALICE, { capacity: 3 }));
+    await assertSucceeds(updateDoc(doc(ctx(BOB), 'sessions', 's1'), {
+      participantIds: [ALICE, BOB], updatedAt: serverTimestamp(),
+    }));
+    // Bob took seat 2 of 3; Mallory takes the last one:
+    await assertSucceeds(updateDoc(doc(ctx(MALLORY), 'sessions', 's1'), {
+      participantIds: [ALICE, BOB, MALLORY], updatedAt: serverTimestamp(),
+    }));
+    // 3 of 3 seated — a fourth join must be rejected by rules alone:
+    await assertFails(updateDoc(doc(ctx('daveUid'), 'sessions', 's1'), {
+      participantIds: [ALICE, BOB, MALLORY, 'daveUid'], updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('legacy session without capacity keeps unlimited joins', async () => {
+    await seed('sessions/s1', seededSession(ALICE, {
+      participantIds: [ALICE, BOB, MALLORY],
+    }));
+    await assertSucceeds(updateDoc(doc(ctx('daveUid'), 'sessions', 's1'), {
+      participantIds: [ALICE, BOB, MALLORY, 'daveUid'], updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('host can raise capacity or match the current count, never go below it', async () => {
+    await seed('sessions/s1', seededSession(ALICE, {
+      capacity: 4, participantIds: [ALICE, BOB, MALLORY],
+    }));
+    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      capacity: 10, updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      capacity: 3, updatedAt: serverTimestamp(), // == current participant count
+    }));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      capacity: 2, updatedAt: serverTimestamp(), // below the 3 already seated
+    }));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      capacity: 21, updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      capacity: 1, updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('host kick + reduce in one update is judged on the post-state count', async () => {
+    await seed('sessions/s1', seededSession(ALICE, {
+      capacity: 4, participantIds: [ALICE, BOB, MALLORY],
+    }));
+    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      participantIds: [ALICE, BOB], capacity: 2, updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('host may drop the capacity field entirely (back to unlimited)', async () => {
+    await seed('sessions/s1', seededSession(ALICE, { capacity: 2 }));
+    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      capacity: deleteField(), updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('non-host cannot touch capacity', async () => {
+    await seed('sessions/s1', seededSession(ALICE, {
+      capacity: 4, participantIds: [ALICE, BOB],
+    }));
+    await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 's1'), {
+      capacity: 20, updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('two users competing for the final seat: exactly one transaction wins', async () => {
+    await seed('sessions/s1', seededSession(ALICE, { capacity: 2 }));
+
+    // Mirrors lib/firestore.ts joinSession: read, check the seat count,
+    // claim atomically. The loser's retry re-reads a full session and aborts.
+    const joinTx = (db, uid) =>
+      runTransaction(db, async (tx) => {
+        const snap = await tx.get(doc(db, 'sessions', 's1'));
+        const data = snap.data();
+        if (
+          typeof data.capacity === 'number' &&
+          data.participantIds.length >= data.capacity
+        ) {
+          throw new Error('session-full');
+        }
+        tx.update(doc(db, 'sessions', 's1'), {
+          participantIds: arrayUnion(uid),
+          updatedAt: serverTimestamp(),
+        });
+        return 'joined';
+      });
+
+    const [bobResult, malloryResult] = await Promise.allSettled([
+      joinTx(ctx(BOB), BOB),
+      joinTx(ctx(MALLORY), MALLORY),
+    ]);
+
+    const outcomes = [bobResult, malloryResult];
+    const winners = outcomes.filter((r) => r.status === 'fulfilled');
+    const losers = outcomes.filter((r) => r.status === 'rejected');
+    assert.equal(winners.length, 1, 'exactly one join should win the last seat');
+    assert.equal(losers.length, 1, 'the other join must be rejected');
+
+    // The stored doc holds exactly capacity participants — never over-filled.
+    await env.withSecurityRulesDisabled(async (c) => {
+      const snap = await getDoc(doc(c.firestore(), 'sessions', 's1'));
+      assert.equal(snap.data().participantIds.length, 2);
+    });
   });
 });
 

@@ -30,7 +30,8 @@ export function SeatPips({ going, capacity, showLabel = true, style }: SeatPipsP
   const spotsLeft = capacity !== undefined ? Math.max(capacity - going, 0) : undefined;
   const showPips = total > 0 && total <= MAX_PIPS;
 
-  const countLabel = `${going} going`;
+  // With a capacity: "3 of 8 going · 5 spots left" / "8 of 8 going · Full".
+  const countLabel = capacity !== undefined ? `${going} of ${capacity} going` : `${going} going`;
   const suffix =
     spotsLeft === undefined
       ? ''
