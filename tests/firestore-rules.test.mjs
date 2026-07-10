@@ -214,6 +214,77 @@ describe('users', () => {
     );
   });
 
+  it('owner saves expanded profile fields (year/major/pronouns/bio)', async () => {
+    await assertSucceeds(
+      setDoc(doc(ctx(ALICE), 'users', ALICE), {
+        displayName: 'Alice A',
+        classes: ['MATH 221'],
+        year: 'Junior',
+        major: 'Computer Science',
+        pronouns: 'she/her',
+        bio: 'CS junior — usually at College Library before midterms.',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  it('rejects a year outside the enum', async () => {
+    await assertFails(
+      setDoc(doc(ctx(ALICE), 'users', ALICE), {
+        displayName: 'Alice',
+        classes: [],
+        year: 'Super Senior',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  it('rejects overlong or empty expanded fields', async () => {
+    const base = {
+      displayName: 'Alice',
+      classes: [],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+    await assertFails(
+      setDoc(doc(ctx(ALICE), 'users', ALICE), { ...base, major: 'M'.repeat(61) })
+    );
+    await assertFails(
+      setDoc(doc(ctx(ALICE), 'users', ALICE), { ...base, pronouns: 'p'.repeat(21) })
+    );
+    await assertFails(
+      setDoc(doc(ctx(ALICE), 'users', ALICE), { ...base, bio: 'b'.repeat(141) })
+    );
+    // Cleared fields must be deleted, never stored as ''.
+    await assertFails(
+      setDoc(doc(ctx(ALICE), 'users', ALICE), { ...base, major: '' })
+    );
+  });
+
+  it('owner clears expanded fields by deleting the keys', async () => {
+    await seed(`users/${ALICE}`, {
+      displayName: 'Alice',
+      classes: [],
+      year: 'Junior',
+      major: 'Computer Science',
+      pronouns: 'she/her',
+      bio: 'Old bio',
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    await assertSucceeds(
+      updateDoc(doc(ctx(ALICE), 'users', ALICE), {
+        year: deleteField(),
+        major: deleteField(),
+        pronouns: deleteField(),
+        bio: deleteField(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
   it('non-owner cannot write someone else’s profile', async () => {
     await assertFails(
       setDoc(doc(ctx(MALLORY), 'users', ALICE), {

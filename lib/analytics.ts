@@ -60,6 +60,7 @@ export type AnalyticsEvent =
   | "classes_saved"
   | "onboarding_complete"
   | "profile_completed"
+  | "profile_updated"
   | "session_create_started"
   | "session_created"
   | "session_joined"
