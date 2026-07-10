@@ -442,6 +442,74 @@ export async function updateUserProfileDetails(userId: string, details: UserProf
   });
 }
 
+// ---------------------------------------------------------------------------
+// Settings — users/{uid}/private/settings (PR: settings + notification prefs).
+// Owner-only. The doc only exists once the user flips a switch; a missing doc
+// or missing key means the preference is enabled. The notify() pipeline
+// (later PR) consults these before sending anything.
+// ---------------------------------------------------------------------------
+
+export const NOTIFICATION_PREF_KEYS = [
+  "sessionReminders",
+  "sessionActivity",
+  "dmMessages",
+  "groupMessages",
+  "friendRequests",
+] as const;
+
+export type NotificationPrefKey = (typeof NOTIFICATION_PREF_KEYS)[number];
+
+export type NotificationPrefs = Record<NotificationPrefKey, boolean>;
+
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
+  sessionReminders: true,
+  sessionActivity: true,
+  dmMessages: true,
+  groupMessages: true,
+  friendRequests: true,
+};
+
+function settingsDoc(userId: string) {
+  return doc(db, COLLECTIONS.users, userId, "private", "settings");
+}
+
+/** Missing doc, missing keys, and non-boolean junk all fall back to enabled. */
+export async function getNotificationPrefs(userId: string): Promise<NotificationPrefs> {
+  const snapshot = await getDoc(settingsDoc(userId));
+  const stored = snapshot.data()?.notificationPrefs as Record<string, unknown> | undefined;
+  const prefs = { ...DEFAULT_NOTIFICATION_PREFS };
+
+  if (stored && typeof stored === "object") {
+    for (const key of NOTIFICATION_PREF_KEYS) {
+      if (typeof stored[key] === "boolean") {
+        prefs[key] = stored[key];
+      }
+    }
+  }
+
+  return prefs;
+}
+
+/**
+ * Persists one preference. Merge keeps the write minimal (only the toggled
+ * key travels), creates the doc on first toggle, and can't clobber a
+ * concurrent toggle of a different preference.
+ */
+export async function saveNotificationPref(
+  userId: string,
+  key: NotificationPrefKey,
+  enabled: boolean
+) {
+  await setDoc(
+    settingsDoc(userId),
+    {
+      notificationPrefs: { [key]: enabled },
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
 export async function getLocations() {
   try {
     const locationsQuery = query(

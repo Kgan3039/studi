@@ -2,7 +2,6 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Alert,
-    Modal,
     Pressable,
     RefreshControl,
     ScrollView,
@@ -13,21 +12,14 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ExternalLink } from '@/components/external-link';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import { SectionHeader } from '@/components/ui/SectionHeader';
-import {
-    STUDI_CONTACT_EMAIL,
-    STUDI_PRIVACY_POLICY_URL,
-    STUDI_SUPPORT_URL,
-} from '@/constants/app-info';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { identifyUser, track } from '@/lib/analytics';
-import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
+import { subscribeToAuthState } from '@/lib/auth';
 import { UW_COURSE_CATALOG, UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
 import {
     getLocationRatingAggregates,
@@ -47,7 +39,7 @@ import {
     type StudySession,
     type UserYear,
 } from '@/lib/firestore';
-import { type Href } from 'expo-router';
+import { useRouter } from 'expo-router';
 import type { User } from 'firebase/auth';
 
 // How many saved-location rows the board renders (ProfileScreen ~1815).
@@ -89,24 +81,16 @@ function splitDisplayName(displayName: string | undefined) {
   };
 }
 
-function buildMailtoHref(email: string, subject: string) {
-  return `mailto:${email}?subject=${encodeURIComponent(subject)}` as Href & string;
-}
-
 export default function ProfileScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
-  const [isReauthenticatingDelete, setIsReauthenticatingDelete] = useState(false);
-  const [showDeleteReauthModal, setShowDeleteReauthModal] = useState(false);
-  const [deleteReauthPassword, setDeleteReauthPassword] = useState('');
-  const [isDeletePasswordVisible, setIsDeletePasswordVisible] = useState(false);
-  const [deleteReauthEmail, setDeleteReauthEmail] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [major, setMajor] = useState('');
@@ -323,80 +307,6 @@ export default function ProfileScreen() {
     }
   }
 
-  async function handleSignOut() {
-    try {
-      setIsSaving(true);
-      await logOut();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to sign out right now.';
-      Alert.alert('Sign Out Error', message);
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  function confirmDeleteAccount() {
-    Alert.alert(
-      'Delete Account',
-      'This will permanently delete your Studi profile and account data. This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete Account',
-          style: 'destructive',
-          onPress: handleDeleteAccount,
-        },
-      ]
-    );
-  }
-
-  async function handleDeleteAccount() {
-    setDeleteReauthPassword('');
-    setDeleteReauthEmail(currentUser?.email ?? '');
-    setIsDeletePasswordVisible(false);
-    setShowDeleteReauthModal(true);
-  }
-
-  function closeDeleteReauthModal() {
-    if (isReauthenticatingDelete) {
-      return;
-    }
-
-    setShowDeleteReauthModal(false);
-    setDeleteReauthPassword('');
-    setIsDeletePasswordVisible(false);
-  }
-
-  async function handleDeleteWithReauthPassword() {
-    if (!deleteReauthPassword.trim()) {
-      Alert.alert('Password Required', 'Enter your password to continue deleting your account.');
-      return;
-    }
-
-    try {
-      setIsReauthenticatingDelete(true);
-      const result = await deleteCurrentUserAccount({ password: deleteReauthPassword });
-
-      if (result.status === 'requires-recent-login') {
-        Alert.alert(
-          'Re-authentication Needed',
-          'Your session is still not recent enough. Please sign out, sign back in, then try again.'
-        );
-        return;
-      }
-
-      setShowDeleteReauthModal(false);
-      setDeleteReauthPassword('');
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to verify your password right now.';
-      Alert.alert('Delete Account Error', message);
-    } finally {
-      setIsReauthenticatingDelete(false);
-    }
-  }
-
-  const isBusy = isSaving || isReauthenticatingDelete;
   const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
   // "Junior · Computer Science · she/her" — only the fields the user filled in.
   const academicLine = [year, major.trim(), pronouns.trim()]
@@ -787,107 +697,27 @@ export default function ProfileScreen() {
         )}
       </View>
 
-      {/* Account — board defers these behind its top-right Settings entry; with
-          no settings screen they live here so nothing becomes unreachable. */}
-      <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <Text style={[TypeScale.heading, { color: palette.text }]}>Privacy and support</Text>
-        <View style={styles.linkList}>
-          <ExternalLink href={STUDI_PRIVACY_POLICY_URL as Href & string} asChild>
-            <Pressable style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.6 : 1 }]}>
-              <Text style={[TypeScale.label, { color: palette.text }]}>Privacy Policy</Text>
-              <Text style={[TypeScale.caption, { color: palette.icon }]}>›</Text>
-            </Pressable>
-          </ExternalLink>
-          <View style={[styles.linkDivider, { backgroundColor: palette.border }]} />
-          <ExternalLink href={STUDI_SUPPORT_URL as Href & string} asChild>
-            <Pressable style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.6 : 1 }]}>
-              <Text style={[TypeScale.label, { color: palette.text }]}>Support</Text>
-              <Text style={[TypeScale.caption, { color: palette.icon }]}>›</Text>
-            </Pressable>
-          </ExternalLink>
-          <View style={[styles.linkDivider, { backgroundColor: palette.border }]} />
-          <ExternalLink href={buildMailtoHref(STUDI_CONTACT_EMAIL, 'Studi Contact')} asChild>
-            <Pressable style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.6 : 1 }]}>
-              <Text style={[TypeScale.label, { color: palette.text }]}>Contact</Text>
-              <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-                {STUDI_CONTACT_EMAIL}
-              </Text>
-            </Pressable>
-          </ExternalLink>
+      {/* Settings entry (design spec §3.12 footer Settings link). Privacy,
+          support, sign out, and delete account live there now. */}
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => router.push('/settings')}
+        style={({ pressed }) => [
+          styles.settingsRow,
+          {
+            backgroundColor: palette.surface,
+            borderColor: palette.border,
+            opacity: pressed ? 0.7 : 1,
+          },
+        ]}>
+        <View style={styles.settingsRowBody}>
+          <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Settings</Text>
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>
+            Notifications, privacy, and account
+          </Text>
         </View>
-      </View>
-
-      <View style={styles.accountActions}>
-        <Button
-          label="Sign out"
-          variant="secondary"
-          fullWidth
-          loading={isBusy}
-          onPress={handleSignOut}
-        />
-        <Pressable
-          disabled={isBusy}
-          onPress={confirmDeleteAccount}
-          style={({ pressed }) => [
-            styles.deleteLink,
-            { opacity: isBusy || pressed ? 0.6 : 1 },
-          ]}>
-          <Text style={[TypeScale.label, { color: palette.tint }]}>Delete account</Text>
-        </Pressable>
-      </View>
-
-      <Modal
-        animationType="fade"
-        onRequestClose={closeDeleteReauthModal}
-        transparent
-        visible={showDeleteReauthModal}>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalCard, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <Text style={[TypeScale.heading, { color: palette.text }]}>Confirm with password</Text>
-            <Text style={[TypeScale.body, { color: palette.icon }]}>
-              For security, please re-enter your password for {deleteReauthEmail || 'your account'}.
-            </Text>
-            <View>
-              <TextInput
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!isReauthenticatingDelete}
-                onChangeText={setDeleteReauthPassword}
-                placeholder="Password"
-                placeholderTextColor={placeholderColor}
-                secureTextEntry={!isDeletePasswordVisible}
-                style={[styles.input, styles.secureInput, inputColors]}
-                value={deleteReauthPassword}
-              />
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={isDeletePasswordVisible ? 'Hide password' : 'Show password'}
-                hitSlop={8}
-                onPress={() => setIsDeletePasswordVisible((visible) => !visible)}
-                style={styles.secureToggle}>
-                <IconSymbol
-                  name={isDeletePasswordVisible ? 'eye.slash' : 'eye'}
-                  size={20}
-                  color={palette.icon}
-                />
-              </Pressable>
-            </View>
-            <View style={styles.modalActions}>
-              <Button
-                label="Cancel"
-                variant="secondary"
-                disabled={isReauthenticatingDelete}
-                onPress={closeDeleteReauthModal}
-              />
-              <Button
-                label="Delete account"
-                loading={isReauthenticatingDelete}
-                onPress={handleDeleteWithReauthPassword}
-              />
-            </View>
-          </View>
-        </View>
-      </Modal>
+        <Text style={[TypeScale.heading, { color: palette.icon }]}>›</Text>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -1074,18 +904,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.lg,
     paddingVertical: Space.md,
   },
-  secureInput: {
-    paddingRight: Space.lg + 28,
-  },
-  secureToggle: {
-    alignItems: 'center',
-    bottom: 0,
-    justifyContent: 'center',
-    position: 'absolute',
-    right: Space.md,
-    top: 0,
-    width: 28,
-  },
   searchResults: {
     gap: Space.sm + 2,
   },
@@ -1095,45 +913,19 @@ const styles = StyleSheet.create({
     gap: Space.xs,
     padding: Space.md + 2,
   },
-  linkList: {
-    gap: 0,
-  },
-  linkRow: {
+  settingsRow: {
     alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
-    minHeight: 48,
+    minHeight: 56,
+    paddingHorizontal: Space.md + 2,
+    paddingVertical: Space.sm,
   },
-  linkDivider: {
-    height: StyleSheet.hairlineWidth,
-  },
-  accountActions: {
-    gap: Space.md,
-  },
-  deleteLink: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 40,
-  },
-  modalBackdrop: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    flex: 1,
-    justifyContent: 'center',
-    padding: Space.lg + 4,
-  },
-  modalCard: {
-    borderRadius: Radius.card,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    gap: Space.md,
-    maxWidth: 420,
-    padding: Space.lg + 4,
-    width: '100%',
-  },
-  modalActions: {
-    flexDirection: 'row',
-    gap: Space.sm + 2,
-    justifyContent: 'flex-end',
+  settingsRowBody: {
+    flexShrink: 1,
+    gap: 2,
   },
 });
