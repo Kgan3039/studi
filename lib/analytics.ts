@@ -63,6 +63,7 @@ export type AnalyticsEvent =
   | "session_create_started"
   | "session_created"
   | "session_joined"
+  | "session_join_blocked_full"
   | "session_viewed"
   | "session_left"
   | "session_cancelled"

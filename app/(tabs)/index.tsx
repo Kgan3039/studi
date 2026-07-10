@@ -28,7 +28,9 @@ import {
   getProfilesByIds,
   getUpcomingSessionsForClasses,
   getUserProfile,
+  isSessionAtCapacity,
   joinSession,
+  SessionFullError,
   type StudySession,
   type UserProfile,
 } from '@/lib/firestore';
@@ -95,7 +97,10 @@ function HeroCard({
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const going = session.participantIds.length;
-  const isFull = session.status === 'full';
+  const isFull = session.status === 'full' || isSessionAtCapacity(session);
+  // "3 of 8 going" once capacity exists; pre-capacity sessions keep the count.
+  const goingLabel =
+    typeof session.capacity === 'number' ? `${going} of ${session.capacity} going` : `${going} going`;
 
   const eyebrow =
     kind === 'live' ? 'Happening now' : kind === 'joined' ? 'Your next session' : 'Up next';
@@ -135,7 +140,7 @@ function HeroCard({
           </Text>
         </View>
         <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
-          {going} going
+          {goingLabel}
         </Text>
       </View>
       <CourseChip code={session.classId} size="lg" />
@@ -156,12 +161,21 @@ function HeroCard({
 /**
  * Board upcoming row (index.tsx ~247-269): standalone card, course chip +
  * title + "location · time" left, big accent count + tiny uppercase label
- * right. Board's number is seats-left; without capacity data it is the
- * going count.
+ * right. The board's number is seats-left — now real via capacity;
+ * pre-capacity sessions fall back to the going count.
  */
 function UpcomingRow({ session, onPress }: { session: TodaySession; onPress: () => void }) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
+  const isFull = session.status === 'full' || isSessionAtCapacity(session);
+  const spotsLeft =
+    typeof session.capacity === 'number'
+      ? Math.max(session.capacity - session.participantIds.length, 0)
+      : undefined;
+  const count =
+    spotsLeft !== undefined
+      ? { number: String(spotsLeft), label: 'left' }
+      : { number: String(session.participantIds.length), label: 'going' };
 
   return (
     <Pressable
@@ -172,7 +186,7 @@ function UpcomingRow({ session, onPress }: { session: TodaySession; onPress: () 
         {
           backgroundColor: palette.surface,
           borderColor: palette.border,
-          opacity: pressed ? 0.85 : session.status === 'full' ? 0.6 : 1,
+          opacity: pressed ? 0.85 : isFull ? 0.6 : 1,
         },
       ]}>
       <View style={styles.upcomingBody}>
@@ -186,12 +200,14 @@ function UpcomingRow({ session, onPress }: { session: TodaySession; onPress: () 
           {session.locationName} · {formatSessionStart(session.startTime)}
         </Text>
       </View>
-      <View style={styles.upcomingCount}>
-        <Text style={[styles.upcomingNumber, { color: palette.tint }]}>
-          {session.participantIds.length}
-        </Text>
-        <Text style={[styles.upcomingNumberLabel, { color: palette.icon }]}>going</Text>
-      </View>
+      {isFull ? (
+        <BadgeChip label="Full" tone="neutral" />
+      ) : (
+        <View style={styles.upcomingCount}>
+          <Text style={[styles.upcomingNumber, { color: palette.tint }]}>{count.number}</Text>
+          <Text style={[styles.upcomingNumberLabel, { color: palette.icon }]}>{count.label}</Text>
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -376,6 +392,13 @@ export default function HomeScreen() {
         showToast('You’re in.', hero.title || 'See you at the table.');
       }
     } catch (error) {
+      // Lost the last-seat race — refresh so the hero flips to Full.
+      if (error instanceof SessionFullError) {
+        track('session_join_blocked_full', { classId: hero.classId });
+        await loadSessions();
+        Alert.alert('Session Full', error.message);
+        return;
+      }
       const message =
         error instanceof Error ? error.message : 'Unable to join this session right now.';
       Alert.alert('Join Session Error', message);

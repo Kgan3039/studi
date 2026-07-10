@@ -30,6 +30,7 @@ import {
   getLocationRatingAggregates,
   getLocations,
   getUserProfile,
+  SESSION_CAPACITY_DEFAULT,
   type LocationRatingAggregate,
   type StudyLocation,
 } from '@/lib/firestore';
@@ -110,6 +111,13 @@ const DURATION_PRESETS = [
   { label: '3 hr', minutes: 180 },
 ] as const;
 
+/**
+ * Board CreateCapacityScreen seat grid — preset tiles in a 4-column grid.
+ * The board shows 2–12; 16 and 20 extend the row to cover the full allowed
+ * range (2–20) without a slider.
+ */
+const CAPACITY_PRESETS = [2, 4, 6, 8, 10, 12, 16, 20];
+
 /** "HH:MM" + minutes, or null when it would cross midnight (end must be same-day). */
 function addMinutesToTime(time: string, minutes: number): string | null {
   const [hours, mins] = time.split(':').map(Number);
@@ -141,6 +149,7 @@ export default function CreateSessionScreen() {
   const [selectedCalendarMonth, setSelectedCalendarMonth] = useState(() => startOfMonth(new Date()));
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
+  const [capacity, setCapacity] = useState(SESSION_CAPACITY_DEFAULT);
   const [focusText, setFocusText] = useState('');
   const { toast, show: showToast } = useSuccessToast();
   const [status, setStatus] = useState('Sign in to create a study session.');
@@ -325,11 +334,13 @@ export default function CreateSessionScreen() {
         title: sessionTitle,
         startTime: new Date(validatedSchedule.startTimeIso),
         endTime: new Date(validatedSchedule.endTimeIso),
+        capacity,
       });
 
       track('session_created', {
         classId: selectedClass,
         locationId: selectedLocationId,
+        capacity,
         hoursUntilStart: Math.round(
           (new Date(validatedSchedule.startTimeIso).getTime() - Date.now()) / 3_600_000
         ),
@@ -339,6 +350,7 @@ export default function CreateSessionScreen() {
       setSessionDate('');
       setStartTime('');
       setEndTime('');
+      setCapacity(SESSION_CAPACITY_DEFAULT);
       setFocusText('');
       showToast('Session posted', sessionTitle);
     } catch (error) {
@@ -372,8 +384,9 @@ export default function CreateSessionScreen() {
       endTime: Timestamp.fromDate(end),
       status: 'open' as const,
       participantIds: currentUser ? [currentUser.uid] : [],
+      capacity,
     };
-  }, [currentUser, endTime, focusText, selectedClass, sessionDate, startTime]);
+  }, [capacity, currentUser, endTime, focusText, selectedClass, sessionDate, startTime]);
 
   const selectedLocation = locations.find(
     (location) => location.locationId === selectedLocationId
@@ -685,6 +698,48 @@ export default function CreateSessionScreen() {
           </Text>
         </View>
 
+        {/* Board CreateCapacityScreen: "How many seats?" — eyebrow row with an
+            "Including you" hint, then a 4-column grid of square seat tiles;
+            the selected tile is solid accent with white text. */}
+        <View style={styles.section}>
+          <Text style={[styles.question, { color: palette.text }]}>How many seats?</Text>
+          <View style={styles.capacityLabelRow}>
+            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Capacity</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>Including you</Text>
+          </View>
+          <View style={styles.capacityGrid}>
+            {CAPACITY_PRESETS.map((seatCount) => {
+              const isSelected = capacity === seatCount;
+
+              return (
+                <Pressable
+                  key={seatCount}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${seatCount} seats`}
+                  accessibilityState={{ selected: isSelected }}
+                  onPress={() => setCapacity(seatCount)}
+                  style={[
+                    styles.capacityTile,
+                    isSelected
+                      ? { backgroundColor: palette.tint, borderColor: palette.tint }
+                      : { backgroundColor: palette.surface, borderColor: palette.border },
+                  ]}>
+                  <Text
+                    style={[
+                      styles.capacityTileNumber,
+                      { color: isSelected ? '#FFFFFF' : palette.text },
+                    ]}>
+                    {seatCount}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>
+            {`Join closes at ${capacity} — you hold the first seat.`}
+          </Text>
+        </View>
+
         <View style={styles.section}>
           <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Focus (optional)</Text>
           <TextInput
@@ -838,6 +893,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Space.sm,
+  },
+  capacityLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: Space.sm,
+  },
+  capacityGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm + 2,
+  },
+  capacityTile: {
+    alignItems: 'center',
+    aspectRatio: 1,
+    borderRadius: Radius.xl,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flexBasis: '21%',
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  capacityTileNumber: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 18,
+    lineHeight: 22,
   },
   durationPill: {
     alignItems: 'center',

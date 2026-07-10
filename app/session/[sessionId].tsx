@@ -35,8 +35,10 @@ import {
     getBlockedUserIds,
     getOrCreateDirectConversation,
     getSessionById,
+    isSessionAtCapacity,
     joinSession,
     leaveSession,
+    SessionFullError,
     type StudySessionListItem,
 } from '@/lib/firestore';
 import { getStudyLocationDisplayName } from '@/lib/catalog';
@@ -153,6 +155,17 @@ export default function SessionDetailScreen() {
         showToast('You’re in.', session?.title ?? 'See you at the table.');
       }
     } catch (error) {
+      // Lost the race for the last seat: reload so the Full state renders,
+      // and report it as a fact rather than a failure.
+      if (error instanceof SessionFullError) {
+        if (session) {
+          track('session_join_blocked_full', { classId: session.classId });
+        }
+        await loadSession();
+        setStatus(error.message);
+        Alert.alert('Session Full', error.message);
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Unable to join this session.';
       setStatus(message);
       Alert.alert('Join Session Error', message);
@@ -265,20 +278,29 @@ export default function SessionDetailScreen() {
   const visibleAttendees = session
     ? session.attendeeProfiles.filter((attendee) => !blockedUserIds.includes(attendee.uid))
     : [];
-  const isFull = session?.status === 'full';
+  // Full is derived from capacity (host included); the legacy manual
+  // status === 'full' still counts for pre-capacity sessions.
+  const isFull =
+    session?.status === 'full' || (!!session && isSessionAtCapacity(session));
   const isCancelled = session?.status === 'cancelled';
   const hostName = formatDisplayName(session?.hostProfile?.displayName);
-  // Capacity is not in the data model (no seat count). The board's
-  // "Going (3 of 5)" / "2 left" collapses to the real going count plus the
-  // open/full/cancelled status — same substitution used on Today.
-  const goingCount = visibleAttendees.length || session?.participantIds.length || 0;
+  // Seat math uses the true participant count — blocked users still occupy
+  // seats even though they're hidden from the attendee list below.
+  const goingCount = session?.participantIds.length ?? 0;
+  const capacity = session?.capacity;
+  const spotsLeft =
+    typeof capacity === 'number' ? Math.max(capacity - goingCount, 0) : undefined;
+  const goingHeading =
+    typeof capacity === 'number' ? `Going (${goingCount} of ${capacity})` : `Going (${goingCount})`;
   const joinStatusLabel = isParticipant
     ? 'You’re going'
     : isCancelled
       ? 'Session cancelled'
       : isFull
-        ? 'Session is full'
-        : 'A seat is open';
+        ? 'Full'
+        : spotsLeft !== undefined
+          ? `${spotsLeft} ${spotsLeft === 1 ? 'spot' : 'spots'} left`
+          : 'A seat is open';
 
   const startDate = session?.startTime.toDate();
   const endDate = session?.endTime.toDate();
@@ -402,7 +424,7 @@ export default function SessionDetailScreen() {
               ]}>
               <View style={styles.attendanceHeader}>
                 <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
-                  Going ({goingCount})
+                  {goingHeading}
                 </Text>
                 <BadgeChip
                   label={joinStatusLabel}
@@ -476,7 +498,11 @@ export default function SessionDetailScreen() {
               {[
                 { label: dateTileLabel, value: timeTileValue },
                 { label: 'Duration', value: durationLabel },
-                { label: 'Going', value: `${goingCount}` },
+                {
+                  label: 'Going',
+                  value:
+                    typeof capacity === 'number' ? `${goingCount} of ${capacity}` : `${goingCount}`,
+                },
               ].map((tile) => (
                 <View
                   key={tile.label}

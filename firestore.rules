@@ -116,12 +116,22 @@ service cloud.firestore {
     // Times are Firestore Timestamps (PR 5 client migration).
     // ------------------------------------------------------------------
 
+    // Capacity counts the host (PR: session capacity). Optional so sessions
+    // created before the field existed stay valid — absent means unlimited.
+    function hasValidCapacity(data) {
+      return !('capacity' in data)
+        || (data.capacity is int
+            && data.capacity >= 2
+            && data.capacity <= 20);
+    }
+
     function isValidNewSession() {
       return incoming().keys().hasOnly([
           'classId', 'hostId', 'locationId', 'title',
           'startTime', 'endTime', 'participantIds', 'status',
-          'createdAt', 'updatedAt'
+          'capacity', 'createdAt', 'updatedAt'
         ])
+        && hasValidCapacity(incoming())
         && incoming().hostId == request.auth.uid
         && incoming().participantIds == [request.auth.uid]
         && incoming().status == 'open'
@@ -151,7 +161,12 @@ service cloud.firestore {
       return request.auth.uid == resource.data.hostId
         && sessionIdentityPinned()
         && affectedKeys().hasOnly(['title', 'locationId', 'startTime', 'endTime',
-                                   'status', 'participantIds', 'updatedAt'])
+                                   'status', 'participantIds', 'capacity', 'updatedAt'])
+        && hasValidCapacity(incoming())
+        // Host may loosen but never shrink below the people already seated
+        // (post-state count, so a simultaneous kick + reduce is judged fairly):
+        && (!('capacity' in incoming())
+            || incoming().capacity >= incoming().participantIds.size())
         && incoming().status in ['open', 'full', 'cancelled']
         && incoming().title is string && incoming().title.size() >= 1
         && incoming().title.size() <= 80
@@ -183,6 +198,11 @@ service cloud.firestore {
         && incoming().participantIds.toSet().intersection(
              resource.data.participantIds.toSet()
            ) == resource.data.participantIds.toSet()
+        // Capacity is the seat ceiling (host included). Legacy sessions
+        // without the field stay unlimited. This is the final enforcement
+        // layer behind the client's transactional join.
+        && (!('capacity' in resource.data)
+            || incoming().participantIds.size() <= resource.data.capacity)
         && !isBlockedEitherWay(request.auth.uid, resource.data.hostId);
     }
 

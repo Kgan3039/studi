@@ -26,7 +26,9 @@ import {
     getProfilesByIds,
     getUpcomingSessions,
     getUserProfile,
+    isSessionAtCapacity,
     joinSession,
+    SessionFullError,
     type StudySession,
 } from '@/lib/firestore';
 import { getStudyLocationDisplayName } from '@/lib/catalog';
@@ -197,6 +199,18 @@ export default function SessionsScreen() {
         showToast('You’re in.', joinedSession?.title ?? 'See you at the table.');
       }
     } catch (error) {
+      // Final seat went to someone else moments earlier — refresh so the
+      // card flips to Full, and tell the user what happened.
+      if (error instanceof SessionFullError) {
+        const fullSession = sessions.find((session) => session.sessionId === sessionId);
+        if (fullSession) {
+          track('session_join_blocked_full', { classId: fullSession.classId });
+        }
+        await loadSessions();
+        setStatus(error.message);
+        Alert.alert('Session Full', error.message);
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Unable to join this session right now.';
       setStatus(message);
       Alert.alert('Join Session Error', message);
@@ -332,7 +346,7 @@ export default function SessionsScreen() {
             const isParticipant = currentUser
               ? session.participantIds.includes(currentUser.uid)
               : false;
-            const isFull = session.status === 'full';
+            const isFull = session.status === 'full' || isSessionAtCapacity(session);
 
             return (
               <SessionCard

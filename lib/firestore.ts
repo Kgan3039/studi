@@ -11,6 +11,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
@@ -69,6 +70,8 @@ export type StudySessionStatus = "cancelled" | "full" | "open";
 
 // Session times are Firestore Timestamps (D4).
 export type StudySession = {
+  /** Seat ceiling including the host (2–20). Absent on pre-capacity sessions = unlimited. */
+  capacity?: number;
   classId: string;
   endTime: Timestamp;
   hostId: string;
@@ -79,6 +82,30 @@ export type StudySession = {
   status: StudySessionStatus;
   title: string;
 };
+
+export const SESSION_CAPACITY_MIN = 2;
+export const SESSION_CAPACITY_MAX = 20;
+export const SESSION_CAPACITY_DEFAULT = 8;
+
+/** A session is full when a capacity exists and every seat (host included) is taken. */
+export function isSessionAtCapacity(session: Pick<StudySession, "capacity" | "participantIds">) {
+  return (
+    typeof session.capacity === "number" &&
+    session.participantIds.length >= session.capacity
+  );
+}
+
+/**
+ * Thrown when a join loses the race for the last seat — the transaction
+ * re-read the session and found it full. Callers show a friendly message and
+ * refresh instead of treating it as an unexpected failure.
+ */
+export class SessionFullError extends Error {
+  constructor() {
+    super("This session just filled up — someone grabbed the last seat.");
+    this.name = "SessionFullError";
+  }
+}
 
 export type StudyLocation = {
   building: string;
@@ -481,6 +508,10 @@ function normalizeSessionDoc(
       ? data.participantIds.filter((id): id is string => typeof id === "string")
       : [],
     status: (data.status as StudySessionStatus) ?? "open",
+    // Pre-capacity docs have no field — leave undefined (unlimited).
+    ...(typeof data.capacity === "number" && Number.isInteger(data.capacity)
+      ? { capacity: data.capacity }
+      : {}),
   };
 }
 
@@ -662,41 +693,54 @@ export async function getSessionById(sessionId: string) {
   } satisfies StudySessionListItem;
 }
 
+/**
+ * Joins inside a transaction so the read (seat count) and the write (seat
+ * claim) are atomic: when two users race for the last seat the loser's
+ * transaction re-reads the now-full session and throws SessionFullError
+ * instead of over-filling. Rules re-enforce the same ceiling server-side.
+ */
 export async function joinSession(
   sessionId: string,
   userId: string
 ): Promise<"joined" | "already-joined"> {
   const sessionRef = doc(db, COLLECTIONS.sessions, sessionId);
-  const snapshot = await getDoc(sessionRef);
 
-  if (!snapshot.exists()) {
-    throw new Error("This session no longer exists.");
-  }
+  return runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(sessionRef);
 
-  const data = snapshot.data();
-  const participantIds: string[] = Array.isArray(data.participantIds)
-    ? data.participantIds
-    : [];
+    if (!snapshot.exists()) {
+      throw new Error("This session no longer exists.");
+    }
 
-  if (participantIds.includes(userId)) {
-    return "already-joined"; // already in — silent no-op instead of a scary error
-  }
+    const data = snapshot.data();
+    const participantIds: string[] = Array.isArray(data.participantIds)
+      ? data.participantIds
+      : [];
 
-  if (data.status !== "open") {
-    throw new Error("This session is no longer open.");
-  }
+    if (participantIds.includes(userId)) {
+      return "already-joined"; // already in — silent no-op instead of a scary error
+    }
 
-  const startTime = normalizeSessionTimestamp(data.startTime);
-  if (startTime && startTime.toMillis() < Date.now()) {
-    throw new Error("This session has already started.");
-  }
+    if (data.status !== "open") {
+      throw new Error("This session is no longer open.");
+    }
 
-  await updateDoc(sessionRef, {
-    participantIds: arrayUnion(userId),
-    updatedAt: serverTimestamp(),
+    const startTime = normalizeSessionTimestamp(data.startTime);
+    if (startTime && startTime.toMillis() < Date.now()) {
+      throw new Error("This session has already started.");
+    }
+
+    if (isSessionAtCapacity({ capacity: data.capacity, participantIds })) {
+      throw new SessionFullError();
+    }
+
+    transaction.update(sessionRef, {
+      participantIds: arrayUnion(userId),
+      updatedAt: serverTimestamp(),
+    });
+
+    return "joined";
   });
-
-  return "joined";
 }
 
 export async function leaveSession(sessionId: string, userId: string) {
@@ -725,7 +769,19 @@ export async function createSession(input: {
   title: string;
   startTime: Date;
   endTime: Date;
+  /** Seats including the host, 2–20. */
+  capacity: number;
 }): Promise<string> {
+  if (
+    !Number.isInteger(input.capacity) ||
+    input.capacity < SESSION_CAPACITY_MIN ||
+    input.capacity > SESSION_CAPACITY_MAX
+  ) {
+    throw new Error(
+      `Choose a capacity between ${SESSION_CAPACITY_MIN} and ${SESSION_CAPACITY_MAX} seats.`
+    );
+  }
+
   const sessionRef = doc(collection(db, COLLECTIONS.sessions));
   const batch = writeBatch(db);
 
@@ -738,6 +794,7 @@ export async function createSession(input: {
     endTime: Timestamp.fromDate(input.endTime),
     participantIds: [input.hostId],
     status: "open",
+    capacity: input.capacity,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
