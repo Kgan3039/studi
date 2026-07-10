@@ -49,7 +49,7 @@ export default function Home() {
           </div>
           <div className="spotlight-location">
             <p className="card-kicker">Nearby spot: College Library</p>
-            <p>Quiet floor · 4 min walk</p>
+            <p>Quiet floor</p>
           </div>
           <span className="open-label">Open late</span>
         </div>
