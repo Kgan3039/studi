@@ -11,7 +11,7 @@ const sections = [
     title: "Information We Collect",
     items: [
       "Account information, including email address, display name, and sign-in provider details.",
-      "Profile information you choose to add, including your display name and classes.",
+      "Profile information you choose to add, including your display name, classes, and optional profile details such as your major, year, pronouns, and a short bio. Optional profile details are visible to other verified students in the app.",
       "Study activity you create in the app, including sessions, session participation, messages, reports, blocks, and study location ratings.",
       "Analytics and usage information, such as app opens, screen interactions, feature usage, engagement metrics, and diagnostic or crash-related data.",
       "Technical data needed to operate the app, such as authentication state, timestamps, Firebase service logs, and device push identifiers or push notification tokens if you enable notifications.",
@@ -50,7 +50,7 @@ const sections = [
   {
     title: "Your Choices",
     items: [
-      "You can edit your display name and classes from Profile.",
+      "You can edit or remove your display name, classes, and optional profile details (major, year, pronouns, bio) from Profile at any time.",
       "You can delete your account from Profile > Account actions > Delete Account.",
       "You can control notifications through your device settings.",
       "You can contact us to request access, correction, deletion, or consent withdrawal help.",
@@ -75,7 +75,7 @@ export default function PrivacyPage() {
         <h1>
           Privacy <em>Policy</em>
         </h1>
-        <p className="lead">Last updated July 8, 2026</p>
+        <p className="lead">Last updated July 10, 2026</p>
       </div>
 
       <div className="section-stack">

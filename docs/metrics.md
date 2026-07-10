@@ -12,6 +12,7 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 | `email_verified` | `refreshVerificationState()` returns verified=true (first time) | — |
 | `sign_in_completed` | `signIn()` succeeds | — |
 | `classes_saved` | Profile classes save succeeds | `count` |
+| `profile_updated` | Profile edit save succeeds (name/year/major/pronouns/bio) | `fieldsChanged` (count, never values) |
 | `session_create_started` | Create-session screen opened | `fromClassId?`, `fromLocationId?` |
 | `session_created` | `createSession()` succeeds | `classId`, `hoursUntilStart`, `capacity` |
 | `session_joined` | `joinSession()` performs a real join | `classId`, `participantCountAfter` |

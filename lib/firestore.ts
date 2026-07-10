@@ -3,6 +3,7 @@ import {
   arrayUnion,
   collection,
   deleteDoc,
+  deleteField,
   doc,
   documentId,
   getDoc,
@@ -59,12 +60,43 @@ function stageRateLimit(
 /**
  * PUBLIC profile — readable by any verified UW user (rules, PR 4).
  * Contains nothing sensitive: no email, no socials, no availability.
+ * Academic fields (PR: expanded profiles) are optional — absent on docs
+ * created before the fields existed and whenever the user clears them.
  */
 export type UserProfile = {
   uid: string;
   displayName: string;
   classes: string[];
+  year?: UserYear;
+  major?: string;
+  pronouns?: string;
+  bio?: string;
 };
+
+export const USER_YEARS = ["Freshman", "Sophomore", "Junior", "Senior", "Grad"] as const;
+export type UserYear = (typeof USER_YEARS)[number];
+
+export const PROFILE_MAJOR_MAX_LENGTH = 60;
+export const PROFILE_PRONOUNS_MAX_LENGTH = 20;
+export const PROFILE_BIO_MAX_LENGTH = 140;
+
+function isUserYear(value: unknown): value is UserYear {
+  return typeof value === "string" && (USER_YEARS as readonly string[]).includes(value);
+}
+
+function parseUserProfile(uid: string, data: Record<string, unknown>): UserProfile {
+  return {
+    uid,
+    displayName: typeof data.displayName === "string" ? data.displayName : "",
+    classes: Array.isArray(data.classes)
+      ? data.classes.filter((c) => typeof c === "string")
+      : [],
+    ...(isUserYear(data.year) ? { year: data.year } : {}),
+    ...(typeof data.major === "string" && data.major ? { major: data.major } : {}),
+    ...(typeof data.pronouns === "string" && data.pronouns ? { pronouns: data.pronouns } : {}),
+    ...(typeof data.bio === "string" && data.bio ? { bio: data.bio } : {}),
+  };
+}
 
 export type StudySessionStatus = "cancelled" | "full" | "open";
 
@@ -270,13 +302,7 @@ export async function getUserProfile(userId: string): Promise<UserProfile | null
     return null;
   }
 
-  const data = snapshot.data();
-
-  return {
-    uid: userId,
-    displayName: typeof data.displayName === "string" ? data.displayName : "",
-    classes: Array.isArray(data.classes) ? data.classes.filter((c) => typeof c === "string") : [],
-  };
+  return parseUserProfile(userId, snapshot.data());
 }
 
 // ---------------------------------------------------------------------------
@@ -322,14 +348,7 @@ export async function getProfilesByIds(
 
     const found = new Set<string>();
     snapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      const profile: UserProfile = {
-        uid: docSnap.id,
-        displayName: typeof data.displayName === "string" ? data.displayName : "",
-        classes: Array.isArray(data.classes)
-          ? data.classes.filter((c) => typeof c === "string")
-          : [],
-      };
+      const profile = parseUserProfile(docSnap.id, docSnap.data());
       profileCache.set(docSnap.id, { profile, fetchedAt: now });
       result.set(docSnap.id, profile);
       found.add(docSnap.id);
@@ -385,6 +404,42 @@ export async function updateUserDisplayName(userId: string, displayName: string)
   if (currentUser && currentUser.uid === userId) {
     await updateProfile(currentUser, { displayName: trimmed });
   }
+}
+
+export type UserProfileDetails = {
+  year: UserYear | null;
+  major: string;
+  pronouns: string;
+  bio: string;
+};
+
+/**
+ * Saves the optional academic fields. Blank values remove the field from the
+ * doc (rules require present values to be non-empty), so cleared fields read
+ * back as absent instead of ''.
+ */
+export async function updateUserProfileDetails(userId: string, details: UserProfileDetails) {
+  const major = details.major.trim();
+  const pronouns = details.pronouns.trim();
+  const bio = details.bio.trim();
+
+  if (major.length > PROFILE_MAJOR_MAX_LENGTH) {
+    throw new Error(`Major must be ${PROFILE_MAJOR_MAX_LENGTH} characters or fewer.`);
+  }
+  if (pronouns.length > PROFILE_PRONOUNS_MAX_LENGTH) {
+    throw new Error(`Pronouns must be ${PROFILE_PRONOUNS_MAX_LENGTH} characters or fewer.`);
+  }
+  if (bio.length > PROFILE_BIO_MAX_LENGTH) {
+    throw new Error(`Bio must be ${PROFILE_BIO_MAX_LENGTH} characters or fewer.`);
+  }
+
+  await updateDoc(doc(db, COLLECTIONS.users, userId), {
+    year: details.year ?? deleteField(),
+    major: major || deleteField(),
+    pronouns: pronouns || deleteField(),
+    bio: bio || deleteField(),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function getLocations() {

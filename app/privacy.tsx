@@ -14,7 +14,7 @@ import {
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-const LAST_UPDATED = 'July 8, 2026';
+const LAST_UPDATED = 'July 10, 2026';
 
 function buildMailtoHref(subject: string) {
   return `mailto:${STUDI_CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}` as Href & string;
@@ -51,7 +51,7 @@ export default function PrivacyPolicyScreen() {
 
       <PolicySection title="Information We Collect">
         <Bullet text="Account information, including email address, display name, and sign-in provider details." />
-        <Bullet text="Profile information you choose to add, including your display name and classes." />
+        <Bullet text="Profile information you choose to add, including your display name, classes, and optional profile details such as your major, year, pronouns, and a short bio. Optional profile details are visible to other verified students in the app." />
         <Bullet text="Study activity you create in the app, including sessions, session participation, messages, reports, blocks, and study location ratings." />
         <Bullet text="Analytics and usage information, such as app opens, screen interactions, feature usage, engagement metrics, and diagnostic or crash-related data." />
         <Bullet text="Technical data needed to operate the app, such as authentication state, timestamps, Firebase service logs, and device push identifiers or push notification tokens if you enable notifications." />
@@ -86,7 +86,7 @@ export default function PrivacyPolicyScreen() {
       </PolicySection>
 
       <PolicySection title="Your Choices">
-        <Bullet text="You can edit your display name and classes from Profile." />
+        <Bullet text="You can edit or remove your display name, classes, and optional profile details (major, year, pronouns, bio) from Profile at any time." />
         <Bullet text="You can delete your account from Profile > Account actions > Delete Account." />
         <Bullet text="You can control notifications through your device settings." />
         <Bullet text="You can contact us to request access, correction, deletion, or consent withdrawal help." />

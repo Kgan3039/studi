@@ -70,17 +70,38 @@ service cloud.firestore {
     }
 
     // ------------------------------------------------------------------
-    // Users — public profile: displayName + classes only. No PII.
+    // Users — public profile: displayName + classes + optional academic
+    // fields (year/major/pronouns/bio). Still no PII: no email, no phone,
+    // no socials, no photos.
     // ------------------------------------------------------------------
 
     function isValidPublicProfile() {
-      return incoming().keys().hasOnly(['displayName', 'classes', 'createdAt', 'updatedAt'])
+      return incoming().keys().hasOnly([
+          'displayName', 'classes', 'year', 'major', 'pronouns', 'bio',
+          'createdAt', 'updatedAt'
+        ])
         && (!('displayName' in incoming()) ||
               (incoming().displayName is string
                && incoming().displayName.size() <= 60))
         && (!('classes' in incoming()) ||
               (incoming().classes is list
-               && incoming().classes.size() <= 12));
+               && incoming().classes.size() <= 12))
+        // Optional fields are absent rather than empty — clients delete the
+        // key instead of writing '' or null, so every present value is real.
+        && (!('year' in incoming()) ||
+              incoming().year in ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Grad'])
+        && (!('major' in incoming()) ||
+              (incoming().major is string
+               && incoming().major.size() >= 1
+               && incoming().major.size() <= 60))
+        && (!('pronouns' in incoming()) ||
+              (incoming().pronouns is string
+               && incoming().pronouns.size() >= 1
+               && incoming().pronouns.size() <= 20))
+        && (!('bio' in incoming()) ||
+              (incoming().bio is string
+               && incoming().bio.size() >= 1
+               && incoming().bio.size() <= 140));
     }
 
     match /users/{userId} {

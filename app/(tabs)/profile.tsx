@@ -35,11 +35,17 @@ import {
     getUpcomingSessions,
     getUserProfile,
     invalidateProfileCache,
+    PROFILE_BIO_MAX_LENGTH,
+    PROFILE_MAJOR_MAX_LENGTH,
+    PROFILE_PRONOUNS_MAX_LENGTH,
     updateUserClasses,
     updateUserDisplayName,
+    updateUserProfileDetails,
+    USER_YEARS,
     type LocationRatingAggregate,
     type StudyLocation,
     type StudySession,
+    type UserYear,
 } from '@/lib/firestore';
 import { type Href } from 'expo-router';
 import type { User } from 'firebase/auth';
@@ -50,6 +56,24 @@ const SAVED_LOCATIONS_SHOWN = 3;
 type ProfileStat = { value: string; label: string };
 
 type SavedLocation = { name: string; rating: number | null };
+
+// Last-saved values, kept to compute the profile_updated fieldsChanged count
+// (a number, never the values — docs/metrics.md).
+type SavedProfileFields = {
+  displayName: string;
+  year: UserYear | null;
+  major: string;
+  pronouns: string;
+  bio: string;
+};
+
+const EMPTY_SAVED_FIELDS: SavedProfileFields = {
+  displayName: '',
+  year: null,
+  major: '',
+  pronouns: '',
+  bio: '',
+};
 
 function splitDisplayName(displayName: string | undefined) {
   const normalized = displayName?.trim() ?? '';
@@ -85,6 +109,11 @@ export default function ProfileScreen() {
   const [deleteReauthEmail, setDeleteReauthEmail] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [major, setMajor] = useState('');
+  const [year, setYear] = useState<UserYear | null>(null);
+  const [pronouns, setPronouns] = useState('');
+  const [bio, setBio] = useState('');
+  const [savedFields, setSavedFields] = useState<SavedProfileFields>(EMPTY_SAVED_FIELDS);
   const [courseQuery, setCourseQuery] = useState('');
   const [classes, setClasses] = useState<string[]>([]);
   const [sessions, setSessions] = useState<StudySession[]>([]);
@@ -132,6 +161,17 @@ export default function ProfileScreen() {
         const savedClasses = profile?.classes ?? [];
         setFirstName(savedName.firstName);
         setLastName(savedName.lastName);
+        setMajor(profile?.major ?? '');
+        setYear(profile?.year ?? null);
+        setPronouns(profile?.pronouns ?? '');
+        setBio(profile?.bio ?? '');
+        setSavedFields({
+          displayName: profile?.displayName ?? '',
+          year: profile?.year ?? null,
+          major: profile?.major ?? '',
+          pronouns: profile?.pronouns ?? '',
+          bio: profile?.bio ?? '',
+        });
         setClasses(savedClasses);
         setNameStatus(
           profile?.displayName
@@ -200,7 +240,7 @@ export default function ProfileScreen() {
     setCourseQuery('');
   }
 
-  async function handleSaveName() {
+  async function handleSaveProfile() {
     if (!currentUser) {
       return;
     }
@@ -209,19 +249,51 @@ export default function ProfileScreen() {
 
     if (!firstName.trim() || !lastName.trim()) {
       setNameStatus('Enter both your first and last name.');
-      Alert.alert('Name Error', 'Please enter both your first and last name.');
+      Alert.alert('Profile Error', 'Please enter both your first and last name.');
       return;
     }
 
+    const details = {
+      year,
+      major: major.trim(),
+      pronouns: pronouns.trim(),
+      bio: bio.trim(),
+    };
+    const nameChanged = displayName !== savedFields.displayName;
+    const detailsChanged =
+      details.year !== savedFields.year ||
+      details.major !== savedFields.major ||
+      details.pronouns !== savedFields.pronouns ||
+      details.bio !== savedFields.bio;
+    const fieldsChanged =
+      Number(nameChanged) +
+      Number(details.year !== savedFields.year) +
+      Number(details.major !== savedFields.major) +
+      Number(details.pronouns !== savedFields.pronouns) +
+      Number(details.bio !== savedFields.bio);
+
     try {
       setIsSaving(true);
-      await updateUserDisplayName(currentUser.uid, displayName);
-      invalidateProfileCache(currentUser.uid);
+      if (nameChanged) {
+        await updateUserDisplayName(currentUser.uid, displayName);
+      }
+      if (detailsChanged) {
+        await updateUserProfileDetails(currentUser.uid, details);
+      }
+      if (fieldsChanged > 0) {
+        invalidateProfileCache(currentUser.uid);
+        track('profile_updated', { fieldsChanged });
+      }
+      setSavedFields({ displayName, ...details });
+      setMajor(details.major);
+      setPronouns(details.pronouns);
+      setBio(details.bio);
       setNameStatus(`Saved as ${displayName}.`);
+      setIsEditingName(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to save your name right now.';
+      const message = error instanceof Error ? error.message : 'Unable to save your profile right now.';
       setNameStatus(message);
-      Alert.alert('Name Error', message);
+      Alert.alert('Profile Error', message);
     } finally {
       setIsSaving(false);
     }
@@ -326,6 +398,10 @@ export default function ProfileScreen() {
 
   const isBusy = isSaving || isReauthenticatingDelete;
   const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
+  // "Junior · Computer Science · she/her" — only the fields the user filled in.
+  const academicLine = [year, major.trim(), pronouns.trim()]
+    .filter(Boolean)
+    .join(' · ');
   const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
   const inputColors = {
     backgroundColor: palette.surfaceMuted,
@@ -414,8 +490,17 @@ export default function ProfileScreen() {
             <Text style={styles.verifiedCheckMark}>✓</Text>
           </View>
         </View>
-        {/* Board's "Junior · Computer Science · Class of '27" academic line is
-            not in the data model; the verified UW identity is shown instead. */}
+        {/* Board's "Junior · Computer Science" academic line (design spec §3.12). */}
+        {academicLine ? (
+          <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
+            {academicLine}
+          </Text>
+        ) : null}
+        {bio.trim() ? (
+          <Text style={[TypeScale.body, styles.bioText, { color: palette.text }]}>
+            {bio.trim()}
+          </Text>
+        ) : null}
         <Text style={[TypeScale.eyebrow, styles.classYear, { color: palette.icon }]}>
           Verified @wisc.edu
         </Text>
@@ -452,7 +537,7 @@ export default function ProfileScreen() {
           ]}
         >
           <Text style={[TypeScale.heading, { color: palette.text }]}>
-            Your name
+            Your profile
           </Text>
 
           <Text style={[TypeScale.caption, { color: palette.icon }]}>
@@ -481,12 +566,81 @@ export default function ProfileScreen() {
             />
           </View>
 
+          <TextInput
+            autoCapitalize="words"
+            editable={!isSaving}
+            maxLength={PROFILE_MAJOR_MAX_LENGTH}
+            onChangeText={setMajor}
+            placeholder="Major (e.g. Computer Science)"
+            placeholderTextColor={placeholderColor}
+            style={[styles.input, inputColors]}
+            value={major}
+          />
+
+          {/* Year — tap to select, tap again to clear (the field is optional). */}
+          <View style={styles.yearRow}>
+            {USER_YEARS.map((yearOption) => {
+              const selected = year === yearOption;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  disabled={isSaving}
+                  key={yearOption}
+                  onPress={() => setYear(selected ? null : yearOption)}
+                  style={({ pressed }) => [
+                    styles.yearChip,
+                    {
+                      backgroundColor: selected ? palette.tint : palette.surfaceMuted,
+                      borderColor: selected ? palette.tint : palette.border,
+                      opacity: isSaving || pressed ? 0.7 : 1,
+                    },
+                  ]}>
+                  <Text
+                    style={[
+                      TypeScale.label,
+                      { color: selected ? '#FFFFFF' : palette.text },
+                    ]}>
+                    {yearOption}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <TextInput
+            autoCapitalize="none"
+            editable={!isSaving}
+            maxLength={PROFILE_PRONOUNS_MAX_LENGTH}
+            onChangeText={setPronouns}
+            placeholder="Pronouns (e.g. she/her)"
+            placeholderTextColor={placeholderColor}
+            style={[styles.input, inputColors]}
+            value={pronouns}
+          />
+
+          <View>
+            <TextInput
+              editable={!isSaving}
+              maxLength={PROFILE_BIO_MAX_LENGTH}
+              multiline
+              onChangeText={setBio}
+              placeholder="Short bio — what are you studying toward?"
+              placeholderTextColor={placeholderColor}
+              style={[styles.input, styles.bioInput, inputColors]}
+              value={bio}
+            />
+            <Text style={[TypeScale.caption, styles.bioCounter, { color: palette.icon }]}>
+              {bio.length}/{PROFILE_BIO_MAX_LENGTH}
+            </Text>
+          </View>
+
           <Button
-            label="Save name"
+            label="Save profile"
             variant="secondary"
             fullWidth
             loading={isSaving}
-            onPress={handleSaveName}
+            onPress={handleSaveProfile}
           />
         </View>
       ) : null}
@@ -785,6 +939,33 @@ const styles = StyleSheet.create({
   },
   classYear: {
     marginTop: Space.xs,
+  },
+  bioText: {
+    maxWidth: 320,
+    textAlign: 'center',
+  },
+  yearRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  yearChip: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    justifyContent: 'center',
+    minHeight: 40,
+    paddingHorizontal: Space.md + 2,
+    paddingVertical: Space.sm,
+  },
+  bioInput: {
+    minHeight: 88,
+    paddingTop: Space.md,
+    textAlignVertical: 'top',
+  },
+  bioCounter: {
+    marginTop: Space.xs,
+    textAlign: 'right',
   },
   statsGrid: {
     flexDirection: 'row',
