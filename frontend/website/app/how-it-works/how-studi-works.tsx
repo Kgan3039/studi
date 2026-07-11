@@ -255,6 +255,10 @@ export default function HowStudiWorks() {
                 ))}
               </p>
             </div>
+            <div className="how-mobile-scroll-hint" aria-hidden="true">
+              <span>Keep scrolling</span>
+              <i />
+            </div>
           </div>
         </div>
 

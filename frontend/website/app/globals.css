@@ -2166,6 +2166,10 @@ h1 {
   display: none;
 }
 
+.how-mobile-scroll-hint {
+  display: none;
+}
+
 .how-steps {
   padding: 18svh 0;
   position: relative;
@@ -2741,6 +2745,14 @@ body:has(.how-page) .footer {
     max-width: 214px;
   }
 
+  .sim-phone-screen {
+    border-radius: 59px;
+    height: 128.205%;
+    transform: scale(0.78);
+    transform-origin: top left;
+    width: 128.205%;
+  }
+
   .sim-phone[data-active="0"] {
     transform: perspective(900px) rotateY(-4deg) rotateZ(-1.3deg) translate3d(-4px, 2px, 0);
   }
@@ -2846,6 +2858,28 @@ body:has(.how-page) .footer {
     margin: 0;
   }
 
+  .how-mobile-scroll-hint {
+    align-items: center;
+    animation: mobile-scroll-hint 1.8s ease-in-out infinite;
+    color: rgba(255, 253, 249, 0.62);
+    display: flex;
+    font-size: 0.56rem;
+    font-weight: 800;
+    gap: 7px;
+    justify-content: center;
+    letter-spacing: 0.1em;
+    margin-top: 16px;
+    text-transform: uppercase;
+  }
+
+  .how-mobile-scroll-hint i {
+    border-bottom: 1px solid currentColor;
+    border-right: 1px solid currentColor;
+    height: 6px;
+    transform: rotate(45deg) translateY(-2px);
+    width: 6px;
+  }
+
   .how-steps {
     display: block;
     grid-column: 1;
@@ -2889,6 +2923,18 @@ body:has(.how-page) .footer {
   }
   to {
     opacity: 1;
+  }
+}
+
+@keyframes mobile-scroll-hint {
+  0%,
+  100% {
+    opacity: 0.52;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(3px);
   }
 }
 
