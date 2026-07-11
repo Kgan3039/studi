@@ -2162,10 +2162,6 @@ h1 {
   width: 1px;
 }
 
-.how-mobile-step {
-  display: none;
-}
-
 .how-steps {
   padding: 18svh 0;
   position: relative;
@@ -2652,7 +2648,8 @@ body:has(.how-page) .footer {
   }
 
   .how-story {
-    display: block;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     min-height: auto;
     padding: 0 16px;
   }
@@ -2662,11 +2659,16 @@ body:has(.how-page) .footer {
       radial-gradient(circle at 18% 18%, rgba(197, 5, 12, 0.24), transparent 15rem),
       radial-gradient(circle at 82% 78%, rgba(216, 160, 43, 0.14), transparent 15rem),
       rgba(7, 12, 10, 0.18);
-    height: auto;
+    align-self: start;
+    grid-column: 1;
+    grid-row: 1;
+    height: 64svh;
     margin: 0 -16px;
-    min-height: 0;
-    padding: 30px 20px 36px;
-    position: relative;
+    min-height: 500px;
+    padding: 20px;
+    position: sticky;
+    top: 0;
+    z-index: 2;
   }
 
   .how-phone-column::after {
@@ -2674,12 +2676,12 @@ body:has(.how-page) .footer {
   }
 
   .how-phone-wrap {
-    max-width: 320px;
+    max-width: 268px;
     padding: 0;
   }
 
   .sim-phone {
-    max-width: 258px;
+    max-width: 214px;
   }
 
   .sim-phone[data-active="0"] {
@@ -2717,104 +2719,73 @@ body:has(.how-page) .footer {
   }
 
   .sim-progress {
-    background: rgba(255, 253, 249, 0.1);
-    border: 1px solid rgba(255, 253, 249, 0.16);
-    border-radius: 16px;
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
-    gap: 2px;
-    margin: 22px auto 0;
-    max-width: 320px;
-    padding: 4px;
-    width: 100%;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    gap: 4px;
+    margin: 12px auto 0;
+    max-width: none;
+    padding: 0;
+    width: auto;
   }
 
   .sim-progress button {
     align-items: center;
-    border-radius: 11px;
+    border-radius: 999px;
     color: rgba(255, 253, 249, 0.66);
     display: flex;
-    flex: 1;
+    flex: 0 0 34px;
     font: inherit;
+    height: 42px;
     justify-content: center;
-    min-width: 0;
-    padding: 8px 2px;
+    min-width: 34px;
+    padding: 0;
     transition:
       background 250ms ease,
       color 250ms ease;
   }
 
   .sim-progress button.is-active {
-    background: #fffdf9;
-    color: #17211d;
+    background: transparent;
+    color: #fffdf9;
   }
 
   .sim-progress-dot {
-    display: none;
-  }
-
-  .sim-progress-label {
-    clip: auto;
-    clip-path: none;
-    font-size: 0.53rem;
-    font-weight: 800;
-    height: auto;
-    overflow: visible;
-    position: static;
-    white-space: nowrap;
-    width: auto;
-  }
-
-  .how-mobile-step {
-    animation: mobile-step-in 320ms ease both;
     display: block;
-    margin: 28px auto 0;
-    max-width: 320px;
-    padding: 28px 8px 4px;
-    position: relative;
-    text-align: center;
-  }
-
-  .how-mobile-step::before {
-    background: rgba(255, 253, 249, 0.16);
-    content: "";
-    height: 1px;
-    left: 8px;
-    position: absolute;
-    right: 8px;
-    top: 0;
-  }
-
-  .how-mobile-step-index {
-    color: #e1b068;
-    display: block;
-    font-size: 0.65rem;
-    font-weight: 800;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
-  }
-
-  .how-mobile-step h2 {
-    font-size: clamp(2.5rem, 12.2vw, 3.4rem);
-    letter-spacing: -0.075em;
-    line-height: 0.87;
-    margin: 14px 0 0;
-    text-wrap: balance;
-  }
-
-  .how-mobile-step h2 span,
-  .how-mobile-step p span {
-    display: block;
-  }
-
-  .how-mobile-step p {
-    color: rgba(255, 253, 249, 0.72);
-    font-size: 0.98rem;
-    line-height: 1.55;
-    margin: 19px 0 0;
   }
 
   .how-steps {
-    display: none;
+    display: block;
+    grid-column: 1;
+    grid-row: 1;
+    padding: 0;
+    position: relative;
+    z-index: 3;
+  }
+
+  .how-step {
+    align-content: start;
+    border-top: 0;
+    min-height: 88svh;
+    padding: 64svh 20px 48px;
+    pointer-events: none;
+    transform: translateX(14px);
+  }
+
+  .how-step h2 {
+    font-size: clamp(2.65rem, 12.2vw, 3.45rem);
+    line-height: 0.84;
+    margin: 0;
+  }
+
+  .how-step-rule {
+    margin: 22px 0 18px;
+    width: 118px;
+  }
+
+  .how-step-copy {
+    font-size: 1rem;
+    line-height: 1.58;
   }
 
   .how-closing {
@@ -2823,15 +2794,6 @@ body:has(.how-page) .footer {
 
   .how-closing-card {
     padding: 0;
-  }
-}
-
-@keyframes mobile-step-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
   }
 }
 
