@@ -2526,17 +2526,34 @@ body:has(.how-page) .footer {
 
 @media (max-width: 760px) {
   .site-header {
-    padding: 18px 20px 8px;
+    padding: 12px 14px 8px;
+  }
+
+  .nav {
+    gap: 14px;
+  }
+
+  .brand {
+    flex: 0 0 auto;
+    font-size: 1.08rem;
+    gap: 8px;
   }
 
   .brand-logo {
-    height: 44px;
-    width: 41px;
+    height: 34px;
+    width: 32px;
   }
 
   .nav-links {
-    font-size: 0.77rem;
-    gap: 11px;
+    flex: 1;
+    gap: 12px;
+    justify-content: flex-end;
+    white-space: nowrap;
+  }
+
+  .nav-links a {
+    font-size: 0.67rem;
+    letter-spacing: -0.03em;
   }
 
   .hero {
@@ -2626,7 +2643,43 @@ body:has(.how-page) .footer {
   }
 
   .footer {
-    padding: 20px 20px 26px;
+    padding: 18px 14px 28px;
+  }
+
+  body:has(.how-page) .footer {
+    margin-top: -44px;
+    padding: 16px 14px 28px;
+  }
+
+  .footer-links {
+    display: grid;
+    gap: 0;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    max-width: 360px;
+    width: 100%;
+  }
+
+  .footer-links > span {
+    display: none;
+  }
+
+  .footer-links a {
+    font-size: 0.66rem;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .footer-contact-label {
+    font-size: 0;
+  }
+
+  .footer-contact-label::after {
+    content: "Email";
+    font-size: 0.66rem;
+  }
+
+  .footer-contact-address {
+    display: none;
   }
 
   .how-hero {
@@ -2841,12 +2894,15 @@ body:has(.how-page) .footer {
 
 @media (max-width: 440px) {
   .brand {
-    font-size: 1.24rem;
+    font-size: 1.08rem;
   }
 
   .nav-links {
-    font-size: 0.7rem;
-    gap: 8px;
+    gap: 10px;
+  }
+
+  .nav-links a {
+    font-size: 0.64rem;
   }
 
   h1 {

@@ -55,7 +55,10 @@ export default function RootLayout({
             <span aria-hidden="true">•</span>
             <Link href="/support">Support</Link>
             <span aria-hidden="true">•</span>
-            <a href={`mailto:${contactEmail}`}>Contact: {contactEmail}</a>
+            <a className="footer-contact" href={`mailto:${contactEmail}`}>
+              <span className="footer-contact-label">Contact:</span>{" "}
+              <span className="footer-contact-address">{contactEmail}</span>
+            </a>
           </div>
         </footer>
       </body>
