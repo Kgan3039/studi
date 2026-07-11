@@ -2748,9 +2748,24 @@ body:has(.how-page) .footer {
   .sim-phone-screen {
     border-radius: 59px;
     height: 128.205%;
+    isolation: isolate;
     transform: scale(0.78);
     transform-origin: top left;
     width: 128.205%;
+  }
+
+  .sim-screen {
+    transition: none;
+  }
+
+  .sim-screen[aria-hidden="true"] {
+    display: none;
+  }
+
+  .sim-screen[aria-hidden="false"] {
+    display: block;
+    opacity: 1;
+    transform: none;
   }
 
   .sim-phone[data-active="0"] {
