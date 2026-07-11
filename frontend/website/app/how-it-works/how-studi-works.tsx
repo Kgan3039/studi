@@ -244,6 +244,19 @@ export default function HowStudiWorks() {
                 </button>
               ))}
             </div>
+            <div className="how-mobile-step" key={steps[activeStep].label} aria-live="polite">
+              <span className="how-mobile-step-index">0{activeStep + 1} / 05 · {steps[activeStep].label}</span>
+              <h2>
+                {steps[activeStep].title.map((line) => (
+                  <span key={line}>{line}</span>
+                ))}
+              </h2>
+              <p>
+                {steps[activeStep].copy.map((line) => (
+                  <span key={line}>{line}</span>
+                ))}
+              </p>
+            </div>
           </div>
         </div>
 

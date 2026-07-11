@@ -2162,6 +2162,10 @@ h1 {
   width: 1px;
 }
 
+.how-mobile-step {
+  display: none;
+}
+
 .how-steps {
   padding: 18svh 0;
   position: relative;
@@ -2661,27 +2665,21 @@ body:has(.how-page) .footer {
     height: auto;
     margin: 0 -16px;
     min-height: 0;
-    padding: 22px 16px 8px;
+    padding: 30px 20px 36px;
     position: relative;
   }
 
   .how-phone-column::after {
-    background: rgba(255, 253, 249, 0.12);
-    bottom: 0;
-    content: "";
-    height: 1px;
-    left: 16px;
-    position: absolute;
-    right: 16px;
+    display: none;
   }
 
   .how-phone-wrap {
-    max-width: 292px;
-    padding: 18px 0 8px;
+    max-width: 320px;
+    padding: 0;
   }
 
   .sim-phone {
-    max-width: 252px;
+    max-width: 258px;
   }
 
   .sim-phone[data-active="0"] {
@@ -2724,8 +2722,8 @@ body:has(.how-page) .footer {
     border-radius: 16px;
     box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
     gap: 2px;
-    margin: 18px auto 0;
-    max-width: 292px;
+    margin: 22px auto 0;
+    max-width: 320px;
     padding: 4px;
     width: 100%;
   }
@@ -2766,34 +2764,57 @@ body:has(.how-page) .footer {
     width: auto;
   }
 
+  .how-mobile-step {
+    animation: mobile-step-in 320ms ease both;
+    display: block;
+    margin: 28px auto 0;
+    max-width: 320px;
+    padding: 28px 8px 4px;
+    position: relative;
+    text-align: center;
+  }
+
+  .how-mobile-step::before {
+    background: rgba(255, 253, 249, 0.16);
+    content: "";
+    height: 1px;
+    left: 8px;
+    position: absolute;
+    right: 8px;
+    top: 0;
+  }
+
+  .how-mobile-step-index {
+    color: #e1b068;
+    display: block;
+    font-size: 0.65rem;
+    font-weight: 800;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+  }
+
+  .how-mobile-step h2 {
+    font-size: clamp(2.5rem, 12.2vw, 3.4rem);
+    letter-spacing: -0.075em;
+    line-height: 0.87;
+    margin: 14px 0 0;
+    text-wrap: balance;
+  }
+
+  .how-mobile-step h2 span,
+  .how-mobile-step p span {
+    display: block;
+  }
+
+  .how-mobile-step p {
+    color: rgba(255, 253, 249, 0.72);
+    font-size: 0.98rem;
+    line-height: 1.55;
+    margin: 19px 0 0;
+  }
+
   .how-steps {
-    padding: 0 4px 54px;
-  }
-
-  .how-step {
-    border-top: 1px solid rgba(255, 253, 249, 0.12);
-    min-height: 0;
-    padding: 66px 4px;
-  }
-
-  .how-step:first-child {
-    border-top: 0;
-  }
-
-  .how-step h2 {
-    font-size: clamp(2.9rem, 13vw, 4rem);
-    line-height: 0.82;
-    margin: 0;
-  }
-
-  .how-step-rule {
-    margin: 24px 0 18px;
-    width: 104px;
-  }
-
-  .how-step-copy {
-    font-size: 1rem;
-    line-height: 1.62;
+    display: none;
   }
 
   .how-closing {
@@ -2802,6 +2823,15 @@ body:has(.how-page) .footer {
 
   .how-closing-card {
     padding: 0;
+  }
+}
+
+@keyframes mobile-step-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
