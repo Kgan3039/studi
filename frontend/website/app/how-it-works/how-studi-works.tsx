@@ -135,7 +135,7 @@ function SimulatorScreen({ activeStep }: { activeStep: number }) {
           <div className="sim-profile-head">
             <span>SS <i>✓</i></span>
             <strong>Studi Student <b>●</b></strong>
-            <small>Verified @studi.edu</small>
+            <small>Verified @wisc.edu</small>
             <em>Done</em>
           </div>
           <div className="sim-profile-stats">
@@ -223,7 +223,7 @@ export default function HowStudiWorks() {
       </section>
 
       <section className="how-story" aria-label="How Studi works across five app tabs">
-        <div className="how-phone-column">
+        <div className="how-phone-column" id="app-preview">
           <div className="how-phone-wrap">
             <div className="sim-glow sim-glow--one" aria-hidden="true" />
             <div className="sim-glow sim-glow--two" aria-hidden="true" />
