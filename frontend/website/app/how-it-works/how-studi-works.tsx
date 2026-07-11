@@ -230,7 +230,9 @@ export default function HowStudiWorks() {
               <strong>0{activeStep + 1} / 05</strong>
               <i />
             </div>
-            <SimulatorScreen activeStep={activeStep} />
+            <div className="sim-phone-stage">
+              <SimulatorScreen activeStep={activeStep} />
+            </div>
             <div className="sim-progress" aria-label="Choose an app preview" role="tablist">
               {steps.map((step, index) => (
                 <button
