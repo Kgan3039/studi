@@ -198,7 +198,9 @@ export default function HowStudiWorks() {
 
   const selectStep = (index: number) => {
     setActiveStep(index);
-    stepRefs.current[index]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (window.matchMedia("(min-width: 761px)").matches) {
+      stepRefs.current[index]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   };
 
   return (

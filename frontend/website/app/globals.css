@@ -2665,6 +2665,16 @@ body:has(.how-page) .footer {
     position: relative;
   }
 
+  .how-phone-column::after {
+    background: rgba(255, 253, 249, 0.12);
+    bottom: 0;
+    content: "";
+    height: 1px;
+    left: 16px;
+    position: absolute;
+    right: 16px;
+  }
+
   .how-phone-wrap {
     max-width: 292px;
     padding: 18px 0 8px;
@@ -2761,8 +2771,13 @@ body:has(.how-page) .footer {
   }
 
   .how-step {
+    border-top: 1px solid rgba(255, 253, 249, 0.12);
     min-height: 0;
     padding: 66px 4px;
+  }
+
+  .how-step:first-child {
+    border-top: 0;
   }
 
   .how-step h2 {
