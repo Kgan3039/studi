@@ -226,7 +226,7 @@ export default function HowStudiWorks() {
             <div className="sim-glow sim-glow--one" aria-hidden="true" />
             <div className="sim-glow sim-glow--two" aria-hidden="true" />
             <div className="how-mobile-scroll-hint" aria-hidden="true">
-              <span>Scroll to explore</span>
+              <span>Scroll to change screens</span>
               <strong>0{activeStep + 1} / 05</strong>
               <i />
             </div>

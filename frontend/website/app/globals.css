@@ -2880,9 +2880,9 @@ body:has(.how-page) .footer {
 
   .how-mobile-scroll-hint {
     align-items: center;
-    background: rgba(255, 253, 249, 0.08);
-    border: 1px solid rgba(255, 253, 249, 0.15);
-    border-radius: 999px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
     color: rgba(255, 253, 249, 0.72);
     display: grid;
     font-size: 0.55rem;
@@ -2890,8 +2890,8 @@ body:has(.how-page) .footer {
     gap: 8px;
     grid-template-columns: 1fr auto 8px;
     letter-spacing: 0.1em;
-    margin: 0 auto 14px;
-    padding: 8px 11px;
+    margin: 0 auto 12px;
+    padding: 0 2px;
     text-transform: uppercase;
     width: 100%;
   }
