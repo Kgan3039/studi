@@ -178,10 +178,6 @@ export default function HowStudiWorks() {
   const stepRefs = useRef<(HTMLElement | null)[]>([]);
 
   useEffect(() => {
-    if (!window.matchMedia("(min-width: 761px)").matches) {
-      return;
-    }
-
     const observer = new IntersectionObserver(
       (entries) => {
         const visible = entries
@@ -202,9 +198,7 @@ export default function HowStudiWorks() {
 
   const selectStep = (index: number) => {
     setActiveStep(index);
-    if (window.matchMedia("(min-width: 761px)").matches) {
-      stepRefs.current[index]?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+    stepRefs.current[index]?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
   return (
