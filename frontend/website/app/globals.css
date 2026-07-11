@@ -2737,7 +2737,7 @@ body:has(.how-page) .footer {
   }
 
   .how-phone-wrap {
-    max-width: 300px;
+    max-width: 360px;
     padding: 0;
   }
 
@@ -2828,14 +2828,11 @@ body:has(.how-page) .footer {
   }
 
   .how-mobile-step--3 {
-    max-width: 340px;
-  }
-
-  .how-mobile-step--3 h2 {
-    font-size: clamp(1.9rem, 8vw, 2.1rem);
+    max-width: 350px;
   }
 
   .how-mobile-step--3 h2 span {
+    letter-spacing: -0.085em;
     white-space: nowrap;
   }
 
