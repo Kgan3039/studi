@@ -2737,21 +2737,16 @@ body:has(.how-page) .footer {
   }
 
   .how-phone-wrap {
-    max-width: 268px;
+    max-width: 300px;
     padding: 0;
   }
 
   .sim-phone {
-    max-width: 214px;
-  }
-
-  .sim-phone-screen {
-    border-radius: 59px;
-    height: 128.205%;
-    isolation: isolate;
-    transform: scale(0.78);
-    transform-origin: top left;
-    width: 128.205%;
+    margin-bottom: -198px;
+    max-width: none;
+    transform: scale(0.68);
+    transform-origin: top center;
+    width: 300px;
   }
 
   .sim-screen {
@@ -2769,23 +2764,23 @@ body:has(.how-page) .footer {
   }
 
   .sim-phone[data-active="0"] {
-    transform: perspective(900px) rotateY(-4deg) rotateZ(-1.3deg) translate3d(-4px, 2px, 0);
+    transform: scale(0.68);
   }
 
   .sim-phone[data-active="1"] {
-    transform: perspective(900px) rotateY(-2deg) rotateZ(-0.7deg) translate3d(-2px, 0, 0);
+    transform: scale(0.68);
   }
 
   .sim-phone[data-active="2"] {
-    transform: perspective(900px) rotateY(0) rotateZ(0) translate3d(0, 0, 0);
+    transform: scale(0.68);
   }
 
   .sim-phone[data-active="3"] {
-    transform: perspective(900px) rotateY(2deg) rotateZ(0.7deg) translate3d(2px, 0, 0);
+    transform: scale(0.68);
   }
 
   .sim-phone[data-active="4"] {
-    transform: perspective(900px) rotateY(4deg) rotateZ(1.3deg) translate3d(4px, 2px, 0);
+    transform: scale(0.68);
   }
 
   .sim-glow--one {
