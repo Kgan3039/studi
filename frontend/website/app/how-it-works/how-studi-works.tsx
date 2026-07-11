@@ -4,22 +4,27 @@ import { useEffect, useRef, useState } from "react";
 
 const steps = [
   {
+    label: "Today",
     title: ["Start with", "your classes."],
     copy: ["Add your courses once.", "See matches that fit your day."],
   },
   {
+    label: "Sessions",
     title: ["Find the right", "study session."],
     copy: ["Search by class, place, or person.", "Join when it works for you."],
   },
   {
+    label: "Map",
     title: ["Pick the right", "study spot."],
     copy: ["Browse campus spots.", "Find a place that works now."],
   },
   {
+    label: "Messages",
     title: ["Keep the", "conversation going."],
     copy: ["Message your study group.", "Stay in sync."],
   },
   {
+    label: "You",
     title: ["Everything", "in one place."],
     copy: ["Classes, spots, and sessions.", "Ready when you are."],
   },
@@ -191,6 +196,11 @@ export default function HowStudiWorks() {
     return () => observer.disconnect();
   }, []);
 
+  const selectStep = (index: number) => {
+    setActiveStep(index);
+    stepRefs.current[index]?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
   return (
     <article className="how-page">
       <section className="how-hero">
@@ -210,15 +220,26 @@ export default function HowStudiWorks() {
         </div>
       </section>
 
-      <section className="how-story" aria-label="Three steps to studying with Studi">
+      <section className="how-story" aria-label="How Studi works across five app tabs">
         <div className="how-phone-column">
           <div className="how-phone-wrap">
             <div className="sim-glow sim-glow--one" aria-hidden="true" />
             <div className="sim-glow sim-glow--two" aria-hidden="true" />
             <SimulatorScreen activeStep={activeStep} />
-            <div className="sim-progress" aria-hidden="true">
-              {steps.map((_, index) => (
-                <span className={index === activeStep ? "is-active" : ""} key={index} />
+            <div className="sim-progress" aria-label="Choose an app preview" role="tablist">
+              {steps.map((step, index) => (
+                <button
+                  aria-controls={`how-step-${index}`}
+                  aria-label={`Show the ${step.label} preview`}
+                  aria-selected={index === activeStep}
+                  className={index === activeStep ? "is-active" : ""}
+                  key={step.label}
+                  onClick={() => selectStep(index)}
+                  role="tab"
+                  type="button">
+                  <span aria-hidden="true" className="sim-progress-dot" />
+                  <span className="sim-progress-label">{step.label}</span>
+                </button>
               ))}
             </div>
           </div>
@@ -229,6 +250,7 @@ export default function HowStudiWorks() {
             <section
               className={index === activeStep ? "how-step is-active" : "how-step"}
               data-step-index={index}
+              id={`how-step-${index}`}
               key={step.title.join(" ")}
               ref={(element) => {
                 stepRefs.current[index] = element;

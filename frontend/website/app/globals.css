@@ -2126,9 +2126,18 @@ h1 {
   z-index: 1;
 }
 
-.sim-progress span {
+.sim-progress button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 10px 0;
+}
+
+.sim-progress-dot {
   background: rgba(255, 253, 249, 0.3);
   border-radius: 999px;
+  display: block;
   height: 5px;
   transition:
     background 350ms ease,
@@ -2137,10 +2146,20 @@ h1 {
   width: 5px;
 }
 
-.sim-progress .is-active {
+.sim-progress button.is-active .sim-progress-dot {
   background: #fffdf9;
   transform: scaleY(1.15);
   width: 28px;
+}
+
+.sim-progress-label {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
 }
 
 .how-steps {
@@ -2249,21 +2268,6 @@ h1 {
   place-items: center;
   position: relative;
   text-align: center;
-}
-
-.how-closing::before {
-  background: radial-gradient(ellipse at center, rgba(197, 5, 12, 0.075), transparent 66%);
-  border: 1px solid rgba(47, 111, 94, 0.16);
-  border-radius: 50%;
-  content: "";
-  height: min(50vw, 620px);
-  left: 50%;
-  pointer-events: none;
-  position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: min(50vw, 620px);
-  z-index: -1;
 }
 
 body:has(.how-page) .footer {
@@ -2646,27 +2650,135 @@ body:has(.how-page) .footer {
   .how-story {
     display: block;
     min-height: auto;
-    padding: 0 20px;
+    padding: 0 16px;
   }
 
   .how-phone-column {
+    background:
+      radial-gradient(circle at 18% 18%, rgba(197, 5, 12, 0.24), transparent 15rem),
+      radial-gradient(circle at 82% 78%, rgba(216, 160, 43, 0.14), transparent 15rem),
+      rgba(7, 12, 10, 0.18);
     height: auto;
+    margin: 0 -16px;
     min-height: 0;
+    padding: 22px 16px 8px;
     position: relative;
   }
 
   .how-phone-wrap {
-    max-width: 350px;
-    padding-block: 72px 44px;
+    max-width: 292px;
+    padding: 18px 0 8px;
+  }
+
+  .sim-phone {
+    max-width: 252px;
+  }
+
+  .sim-phone[data-active="0"] {
+    transform: perspective(900px) rotateY(-4deg) rotateZ(-1.3deg) translate3d(-4px, 2px, 0);
+  }
+
+  .sim-phone[data-active="1"] {
+    transform: perspective(900px) rotateY(-2deg) rotateZ(-0.7deg) translate3d(-2px, 0, 0);
+  }
+
+  .sim-phone[data-active="2"] {
+    transform: perspective(900px) rotateY(0) rotateZ(0) translate3d(0, 0, 0);
+  }
+
+  .sim-phone[data-active="3"] {
+    transform: perspective(900px) rotateY(2deg) rotateZ(0.7deg) translate3d(2px, 0, 0);
+  }
+
+  .sim-phone[data-active="4"] {
+    transform: perspective(900px) rotateY(4deg) rotateZ(1.3deg) translate3d(4px, 2px, 0);
+  }
+
+  .sim-glow--one {
+    height: 128px;
+    left: -8px;
+    top: 31%;
+    width: 128px;
+  }
+
+  .sim-glow--two {
+    bottom: 16%;
+    height: 112px;
+    right: -12px;
+    width: 112px;
+  }
+
+  .sim-progress {
+    background: rgba(255, 253, 249, 0.1);
+    border: 1px solid rgba(255, 253, 249, 0.16);
+    border-radius: 16px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
+    gap: 2px;
+    margin: 18px auto 0;
+    max-width: 292px;
+    padding: 4px;
+    width: 100%;
+  }
+
+  .sim-progress button {
+    align-items: center;
+    border-radius: 11px;
+    color: rgba(255, 253, 249, 0.66);
+    display: flex;
+    flex: 1;
+    font: inherit;
+    justify-content: center;
+    min-width: 0;
+    padding: 8px 2px;
+    transition:
+      background 250ms ease,
+      color 250ms ease;
+  }
+
+  .sim-progress button.is-active {
+    background: #fffdf9;
+    color: #17211d;
+  }
+
+  .sim-progress-dot {
+    display: none;
+  }
+
+  .sim-progress-label {
+    clip: auto;
+    clip-path: none;
+    font-size: 0.53rem;
+    font-weight: 800;
+    height: auto;
+    overflow: visible;
+    position: static;
+    white-space: nowrap;
+    width: auto;
   }
 
   .how-steps {
-    padding: 18px 0 54px;
+    padding: 0 4px 54px;
   }
 
   .how-step {
-    min-height: 68svh;
-    padding: 50px 6px;
+    min-height: 0;
+    padding: 66px 4px;
+  }
+
+  .how-step h2 {
+    font-size: clamp(2.9rem, 13vw, 4rem);
+    line-height: 0.82;
+    margin: 0;
+  }
+
+  .how-step-rule {
+    margin: 24px 0 18px;
+    width: 104px;
+  }
+
+  .how-step-copy {
+    font-size: 1rem;
+    line-height: 1.62;
   }
 
   .how-closing {
