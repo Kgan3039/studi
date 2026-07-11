@@ -225,13 +225,13 @@ export default function HowStudiWorks() {
           <div className="how-phone-wrap">
             <div className="sim-glow sim-glow--one" aria-hidden="true" />
             <div className="sim-glow sim-glow--two" aria-hidden="true" />
-            <div className="sim-phone-stage">
-              <SimulatorScreen activeStep={activeStep} />
-            </div>
             <div className="how-mobile-scroll-hint" aria-hidden="true">
               <strong>Scroll</strong>
               <span>to change screens</span>
               <i />
+            </div>
+            <div className="sim-phone-stage">
+              <SimulatorScreen activeStep={activeStep} />
             </div>
             <div className="sim-progress" aria-label="Choose an app preview" role="tablist">
               {steps.map((step, index) => (
