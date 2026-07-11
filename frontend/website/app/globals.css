@@ -2644,7 +2644,7 @@ body:has(.how-page) .footer {
   }
 
   .how-hero-note {
-    bottom: 26px;
+    display: none;
   }
 
   .how-story {
@@ -2880,9 +2880,6 @@ body:has(.how-page) .footer {
     font-size: 1rem;
   }
 
-  .how-hero-note span {
-    display: none;
-  }
 
   .how-step h2 {
     font-size: clamp(2.6rem, 12.4vw, 3.6rem);
