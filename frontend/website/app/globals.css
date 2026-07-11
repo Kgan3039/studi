@@ -2742,10 +2742,10 @@ body:has(.how-page) .footer {
   }
 
   .sim-phone-stage {
-    height: 360px;
+    height: 342px;
     margin: 0 auto;
     position: relative;
-    width: 174px;
+    width: 165px;
   }
 
   .sim-phone {
@@ -2755,7 +2755,7 @@ body:has(.how-page) .footer {
     overflow: hidden;
     position: absolute;
     top: 0;
-    transform: scale(0.58);
+    transform: scale(0.55);
     transform-origin: top left;
     width: 300px;
   }
@@ -2775,23 +2775,23 @@ body:has(.how-page) .footer {
   }
 
   .sim-phone[data-active="0"] {
-    transform: scale(0.58);
+    transform: scale(0.55);
   }
 
   .sim-phone[data-active="1"] {
-    transform: scale(0.58);
+    transform: scale(0.55);
   }
 
   .sim-phone[data-active="2"] {
-    transform: scale(0.58);
+    transform: scale(0.55);
   }
 
   .sim-phone[data-active="3"] {
-    transform: scale(0.58);
+    transform: scale(0.55);
   }
 
   .sim-phone[data-active="4"] {
-    transform: scale(0.58);
+    transform: scale(0.55);
   }
 
   .sim-glow--one {
@@ -2814,14 +2814,14 @@ body:has(.how-page) .footer {
 
   .how-mobile-step {
     display: block;
-    margin: 18px auto 0;
+    margin: 44px auto 0;
     max-width: 280px;
     padding: 0 8px;
     text-align: center;
   }
 
   .how-mobile-step h2 {
-    font-size: clamp(2.45rem, 11.2vw, 3.1rem);
+    font-size: clamp(2.2rem, 10vw, 2.7rem);
     letter-spacing: -0.075em;
     line-height: 0.86;
     margin: 0;
