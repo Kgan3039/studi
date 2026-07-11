@@ -249,7 +249,7 @@ export default function HowStudiWorks() {
                 </button>
               ))}
             </div>
-            <div className="how-mobile-step" key={steps[activeStep].label} aria-live="polite">
+            <div className={`how-mobile-step how-mobile-step--${activeStep}`} key={steps[activeStep].label} aria-live="polite">
               <h2>
                 {steps[activeStep].title.map((line) => (
                   <span key={line}>{line}</span>
