@@ -178,6 +178,10 @@ export default function HowStudiWorks() {
   const stepRefs = useRef<(HTMLElement | null)[]>([]);
 
   useEffect(() => {
+    if (!window.matchMedia("(min-width: 761px)").matches) {
+      return;
+    }
+
     const observer = new IntersectionObserver(
       (entries) => {
         const visible = entries
