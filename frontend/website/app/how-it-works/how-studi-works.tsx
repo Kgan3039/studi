@@ -225,6 +225,11 @@ export default function HowStudiWorks() {
           <div className="how-phone-wrap">
             <div className="sim-glow sim-glow--one" aria-hidden="true" />
             <div className="sim-glow sim-glow--two" aria-hidden="true" />
+            <div className="how-mobile-scroll-hint" aria-hidden="true">
+              <span>Scroll to explore</span>
+              <strong>0{activeStep + 1} / 05</strong>
+              <i />
+            </div>
             <SimulatorScreen activeStep={activeStep} />
             <div className="sim-progress" aria-label="Choose an app preview" role="tablist">
               {steps.map((step, index) => (
@@ -254,10 +259,6 @@ export default function HowStudiWorks() {
                   <span key={line}>{line}</span>
                 ))}
               </p>
-            </div>
-            <div className="how-mobile-scroll-hint" aria-hidden="true">
-              <span>Keep scrolling</span>
-              <i />
             </div>
           </div>
         </div>

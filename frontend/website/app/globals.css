@@ -2839,7 +2839,6 @@ body:has(.how-page) .footer {
   }
 
   .how-mobile-step {
-    animation: mobile-step-fade 300ms ease both;
     display: block;
     margin: 18px auto 0;
     max-width: 280px;
@@ -2875,23 +2874,34 @@ body:has(.how-page) .footer {
 
   .how-mobile-scroll-hint {
     align-items: center;
-    animation: mobile-scroll-hint 1.8s ease-in-out infinite;
-    color: rgba(255, 253, 249, 0.62);
-    display: flex;
-    font-size: 0.56rem;
+    background: rgba(255, 253, 249, 0.08);
+    border: 1px solid rgba(255, 253, 249, 0.15);
+    border-radius: 999px;
+    color: rgba(255, 253, 249, 0.72);
+    display: grid;
+    font-size: 0.55rem;
     font-weight: 800;
-    gap: 7px;
-    justify-content: center;
+    gap: 8px;
+    grid-template-columns: 1fr auto 8px;
     letter-spacing: 0.1em;
-    margin-top: 16px;
+    margin: 0 auto 14px;
+    padding: 8px 11px;
     text-transform: uppercase;
+    width: 100%;
+  }
+
+  .how-mobile-scroll-hint strong {
+    color: #e1b068;
+    font-size: 0.54rem;
+    letter-spacing: 0.08em;
   }
 
   .how-mobile-scroll-hint i {
+    animation: mobile-scroll-hint 1.8s ease-in-out infinite;
     border-bottom: 1px solid currentColor;
     border-right: 1px solid currentColor;
     height: 6px;
-    transform: rotate(45deg) translateY(-2px);
+    transform: rotate(45deg);
     width: 6px;
   }
 
@@ -2932,24 +2942,15 @@ body:has(.how-page) .footer {
   }
 }
 
-@keyframes mobile-step-fade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 @keyframes mobile-scroll-hint {
   0%,
   100% {
-    opacity: 0.52;
-    transform: translateY(0);
+    opacity: 0.55;
+    translate: 0 -1px;
   }
   50% {
     opacity: 1;
-    transform: translateY(3px);
+    translate: 0 2px;
   }
 }
 
