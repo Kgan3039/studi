@@ -2162,6 +2162,10 @@ h1 {
   width: 1px;
 }
 
+.how-mobile-step {
+  display: none;
+}
+
 .how-steps {
   padding: 18svh 0;
   position: relative;
@@ -2662,9 +2666,9 @@ body:has(.how-page) .footer {
     align-self: start;
     grid-column: 1;
     grid-row: 1;
-    height: 64svh;
+    height: 100svh;
     margin: 0 -16px;
-    min-height: 500px;
+    min-height: 640px;
     padding: 20px;
     position: sticky;
     top: 0;
@@ -2754,38 +2758,67 @@ body:has(.how-page) .footer {
     display: block;
   }
 
+  .how-mobile-step {
+    animation: mobile-step-fade 300ms ease both;
+    display: block;
+    margin: 18px auto 0;
+    max-width: 280px;
+    padding: 0 8px;
+    text-align: center;
+  }
+
+  .how-mobile-step h2 {
+    font-size: clamp(2.45rem, 11.2vw, 3.1rem);
+    letter-spacing: -0.075em;
+    line-height: 0.86;
+    margin: 0;
+  }
+
+  .how-mobile-step h2 span,
+  .how-mobile-step p span {
+    display: block;
+  }
+
+  .how-mobile-step .how-step-rule {
+    margin: 20px auto 16px;
+    opacity: 1;
+    transform: scaleX(1);
+    width: 118px;
+  }
+
+  .how-mobile-step p {
+    color: rgba(255, 253, 249, 0.72);
+    font-size: 0.98rem;
+    line-height: 1.55;
+    margin: 0;
+  }
+
   .how-steps {
     display: block;
     grid-column: 1;
     grid-row: 1;
     padding: 0;
     position: relative;
-    z-index: 3;
+    z-index: 1;
   }
 
   .how-step {
-    align-content: start;
+    align-content: stretch;
     border-top: 0;
-    min-height: 88svh;
-    padding: 64svh 20px 48px;
+    min-height: 100svh;
+    opacity: 0;
+    padding: 0;
     pointer-events: none;
-    transform: translateX(14px);
+    transform: none;
   }
 
-  .how-step h2 {
-    font-size: clamp(2.65rem, 12.2vw, 3.45rem);
-    line-height: 0.84;
-    margin: 0;
+  .how-step.is-active {
+    opacity: 0;
+    transform: none;
   }
 
-  .how-step-rule {
-    margin: 22px 0 18px;
-    width: 118px;
-  }
-
-  .how-step-copy {
-    font-size: 1rem;
-    line-height: 1.58;
+  .how-step > * {
+    visibility: hidden;
   }
 
   .how-closing {
@@ -2794,6 +2827,15 @@ body:has(.how-page) .footer {
 
   .how-closing-card {
     padding: 0;
+  }
+}
+
+@keyframes mobile-step-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
