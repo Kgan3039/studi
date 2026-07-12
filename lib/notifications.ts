@@ -18,6 +18,15 @@ let configuredPresentation = false;
 let didAttemptRegistration = false;
 const NOTIFICATION_URL_PATTERN = /^\/(?:conversation|session)\/[^/?#]+$/;
 
+/**
+ * Allowlist for navigation triggered by notification payloads — push taps and
+ * Notifications Center rows both validate through here. Only in-app routes
+ * that exist today pass: /conversation/{id}, /session/{id}, /notifications.
+ */
+export function isAllowedNotificationUrl(url: unknown): url is string {
+  return typeof url === 'string' && (NOTIFICATION_URL_PATTERN.test(url) || url === '/notifications');
+}
+
 function getExpoProjectId() {
   return (
     Constants.easConfig?.projectId ??
@@ -136,24 +145,31 @@ export async function unregisterPushToken(expoPushToken: string) {
   }
 }
 
-export function getNotificationUrl(response: unknown) {
+export type NotificationTapTarget = {
+  url: string;
+  /** Notification type from the push payload (analytics); absent on old pushes. */
+  type?: string;
+};
+
+export function getNotificationTapTarget(response: unknown): NotificationTapTarget | null {
   const data = (response as {
     notification?: { request?: { content?: { data?: Record<string, unknown> } } };
   })?.notification?.request?.content?.data;
   const url = data?.url;
 
-  if (typeof url !== 'string') {
+  if (!isAllowedNotificationUrl(url)) {
     return null;
   }
 
-  if (NOTIFICATION_URL_PATTERN.test(url)) {
-    return url;
-  }
-
-  return null;
+  return {
+    url,
+    ...(typeof data?.type === 'string' ? { type: data.type } : {}),
+  };
 }
 
-export async function addNotificationResponseListener(onUrl: (url: string) => void) {
+export async function addNotificationResponseListener(
+  onTap: (target: NotificationTapTarget) => void
+) {
   const Notifications = await getNotificationsModule();
 
   if (!Notifications) {
@@ -161,16 +177,16 @@ export async function addNotificationResponseListener(onUrl: (url: string) => vo
   }
 
   const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-    const url = getNotificationUrl(response);
-    if (url) {
-      onUrl(url);
+    const target = getNotificationTapTarget(response);
+    if (target) {
+      onTap(target);
     }
   });
 
   const lastResponse = await Notifications.getLastNotificationResponseAsync();
-  const lastUrl = getNotificationUrl(lastResponse);
-  if (lastUrl) {
-    onUrl(lastUrl);
+  const lastTarget = getNotificationTapTarget(lastResponse);
+  if (lastTarget) {
+    onTap(lastTarget);
   }
 
   return () => subscription.remove();

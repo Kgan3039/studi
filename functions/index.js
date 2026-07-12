@@ -7,6 +7,7 @@ const {
   onDocumentUpdated,
   onDocumentWritten,
 } = require("firebase-functions/v2/firestore");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
@@ -138,6 +139,101 @@ async function sendPushToUsers(userIds, payload) {
       offset += chunk.length;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Notification pipeline (PR: notifications center). Every product event that
+// reaches a user flows through notifyUser(): it writes the persistent in-app
+// record first (the activity history — never suppressed by preferences), then
+// sends a push only when the recipient's preference for that category is on.
+// Records use deterministic IDs derived from the source event, so trigger
+// retries and overlapping scheduler runs create each record — and send each
+// push — exactly once.
+// ---------------------------------------------------------------------------
+
+const NOTIFICATION_RETENTION_DAYS = 60;
+
+// group_message / friend_request / friend_accepted are reserved for future
+// PRs — mapped here so the pipeline needs no changes when they land.
+const PREF_KEY_BY_NOTIFICATION_TYPE = {
+  dm_message: "dmMessages",
+  session_joined: "sessionActivity",
+  session_updated: "sessionActivity",
+  session_cancelled: "sessionActivity",
+  session_reminder: "sessionReminders",
+  group_message: "groupMessages",
+  friend_request: "friendRequests",
+  friend_accepted: "friendRequests",
+};
+
+// Missing settings doc, missing key, or an unreadable value all mean enabled —
+// only an explicit `false` suppresses push (matches the client default).
+async function isPushEnabled(uid, notificationType) {
+  const prefKey = PREF_KEY_BY_NOTIFICATION_TYPE[notificationType];
+
+  try {
+    const snap = await db
+      .collection("users")
+      .doc(uid)
+      .collection("private")
+      .doc("settings")
+      .get();
+    return snap.data()?.notificationPrefs?.[prefKey] !== false;
+  } catch (error) {
+    console.warn("Notification pref read failed; defaulting to enabled", error);
+    return true;
+  }
+}
+
+/**
+ * Write the in-app notification record and (preference permitting) push it.
+ *
+ * `id` must be deterministic per logical event (e.g. `dm_{messageId}`) — the
+ * record is written with create(), so a retry that finds the record already
+ * present skips both the write and the push. Never throws: a failure here
+ * must not roll back the app action that triggered it.
+ */
+async function notifyUser(uid, { id, type, title, body, url, actorId, sessionId, conversationId }) {
+  if (!uid || uid === actorId) {
+    return;
+  }
+
+  const ref = db.collection("users").doc(uid).collection("notifications").doc(id);
+
+  try {
+    await ref.create({
+      type,
+      title,
+      body,
+      url,
+      ...(actorId ? { actorId } : {}),
+      ...(sessionId ? { sessionId } : {}),
+      ...(conversationId ? { conversationId } : {}),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      readAt: null,
+      expiresAt: admin.firestore.Timestamp.fromMillis(
+        Date.now() + NOTIFICATION_RETENTION_DAYS * 24 * 60 * 60 * 1000
+      ),
+    });
+  } catch (error) {
+    if (error?.code === 6 /* ALREADY_EXISTS */) {
+      return; // duplicate trigger delivery — record and push already handled
+    }
+    console.warn("Notification record write failed", error);
+    return; // no record means no dedupe guard, so skip the push too
+  }
+
+  try {
+    if (await isPushEnabled(uid, type)) {
+      await sendPushToUsers([uid], { title, body, data: { url, type } });
+    }
+  } catch (error) {
+    console.warn("Notification push failed", error);
+  }
+}
+
+function shortHash(value) {
+  return crypto.createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
 // ---------------------------------------------------------------------------
@@ -284,24 +380,40 @@ exports.onDirectMessageCreated = onDocumentCreated(
     }
 
     const senderName = await getDisplayName(senderId);
-    await sendPushToUsers(recipients, {
-      title: senderName || "New message",
-      body: text,
-      data: { url: `/conversation/${conversationId}` },
-    });
+    await Promise.all(
+      recipients.map((uid) =>
+        notifyUser(uid, {
+          id: `dm_${event.params.messageId}`,
+          type: "dm_message",
+          title: senderName || "New message",
+          body: text,
+          url: `/conversation/${conversationId}`,
+          actorId: senderId,
+          conversationId,
+        })
+      )
+    );
   }
 );
 
+// Historical export name (originally join-only); renaming a deployed function
+// forces a delete/create cycle, so the name stays while the trigger now covers
+// joins, cancellation, and material time/location edits.
 exports.onSessionParticipantsUpdated = onDocumentUpdated(
   "sessions/{sessionId}",
   async (event) => {
     const before = event.data.before.data();
     const after = event.data.after.data();
+    const sessionId = event.params.sessionId;
     const hostId = after?.hostId;
 
     if (!hostId) {
       return;
     }
+
+    const classId = typeof after?.classId === "string" ? after.classId : "your session";
+    const sessionUrl = `/session/${sessionId}`;
+    const title = typeof after?.title === "string" ? after.title : "Study session";
 
     const beforeParticipants = Array.isArray(before?.participantIds)
       ? before.participantIds.filter((id) => typeof id === "string")
@@ -309,23 +421,149 @@ exports.onSessionParticipantsUpdated = onDocumentUpdated(
     const afterParticipants = Array.isArray(after?.participantIds)
       ? after.participantIds.filter((id) => typeof id === "string")
       : [];
-    const newlyAdded = afterParticipants.filter((uid) => !beforeParticipants.includes(uid));
-    const joiners = newlyAdded.filter((uid) => uid !== hostId);
 
-    if (joiners.length === 0) {
+    // 1. Joins → host only. A leave-then-rejoin by the same user reuses the
+    //    same record ID on purpose: it caps join noise at one alert per person
+    //    per session.
+    const joiners = afterParticipants.filter(
+      (uid) => !beforeParticipants.includes(uid) && uid !== hostId
+    );
+
+    if (joiners.length > 0) {
+      const displayName = (await getDisplayName(joiners[0])) || "Someone";
+      await notifyUser(hostId, {
+        id: `join_${sessionId}_${joiners[0]}`,
+        type: "session_joined",
+        title: "New study partner",
+        body: `${displayName} joined ${classId}`,
+        url: sessionUrl,
+        actorId: joiners[0],
+        sessionId,
+      });
+    }
+
+    // Cancellation and edits fan out to everyone seated except the host —
+    // only the host can make these changes (rules isHostEdit), so the host
+    // is always the actor.
+    const audience = afterParticipants.filter((uid) => uid !== hostId);
+
+    // 2. Cancellation → participants. One record per session per user
+    //    (`cancel_{sessionId}`), so a cancel/reopen/re-cancel can't spam.
+    if (before?.status !== "cancelled" && after?.status === "cancelled") {
+      await Promise.all(
+        audience.map((uid) =>
+          notifyUser(uid, {
+            id: `cancel_${sessionId}`,
+            type: "session_cancelled",
+            title: "Session cancelled",
+            body: `${title} (${classId}) was cancelled by the host.`,
+            url: sessionUrl,
+            actorId: hostId,
+            sessionId,
+          })
+        )
+      );
+      return; // a cancel edit shouldn't also read as a reschedule
+    }
+
+    // 3. Material edits → participants. Only time and place count — joins,
+    //    leaves, capacity, title, and status flips don't wake anyone up. The
+    //    record ID hashes the new values, so retries of the same edit dedupe
+    //    while a second distinct edit notifies again.
+    if (after?.status === "cancelled") {
       return;
     }
 
-    const displayName = (await getDisplayName(joiners[0])) || "Someone";
-    const classId = typeof after?.classId === "string" ? after.classId : "your session";
+    const timeChanged =
+      before?.startTime?.toMillis?.() !== after?.startTime?.toMillis?.() ||
+      before?.endTime?.toMillis?.() !== after?.endTime?.toMillis?.();
+    const locationChanged = before?.locationId !== after?.locationId;
 
-    await sendPushToUsers([hostId], {
-      title: "New study partner",
-      body: `${displayName} joined ${classId}`,
-      data: { url: `/session/${event.params.sessionId}` },
-    });
+    if (!timeChanged && !locationChanged) {
+      return;
+    }
+
+    const changed =
+      timeChanged && locationChanged ? "time and location" : timeChanged ? "time" : "location";
+    const editHash = shortHash(
+      `${after?.startTime?.toMillis?.() ?? ""}|${after?.endTime?.toMillis?.() ?? ""}|${after?.locationId ?? ""}`
+    );
+
+    await Promise.all(
+      audience.map((uid) =>
+        notifyUser(uid, {
+          id: `update_${sessionId}_${editHash}`,
+          type: "session_updated",
+          title: "Session updated",
+          body: `The ${changed} changed for ${title} (${classId}).`,
+          url: sessionUrl,
+          actorId: hostId,
+          sessionId,
+        })
+      )
+    );
   }
 );
+
+// ---------------------------------------------------------------------------
+// Session reminders: one fixed reminder ~30 minutes before start, for the
+// host and every participant. Runs every 10 minutes and looks at sessions
+// starting within the next 30 — a session is seen by up to three consecutive
+// runs, but the deterministic `reminder_{sessionId}` record ID means only the
+// first run that sees it creates records and pushes. Cancelled sessions are
+// filtered by status; ended/started ones by startTime > now.
+//
+// Requires (deploy-time, documented in docs/push-notifications.md):
+//  - Blaze plan + Cloud Scheduler API (auto-provisioned by v2 onSchedule).
+//  - Composite index sessions(status ASC, startTime ASC) — in firestore.indexes.json.
+// ---------------------------------------------------------------------------
+
+const REMINDER_LEAD_MINUTES = 30;
+
+exports.sendSessionReminders = onSchedule("every 10 minutes", async () => {
+  const now = admin.firestore.Timestamp.now();
+  const windowEnd = admin.firestore.Timestamp.fromMillis(
+    now.toMillis() + REMINDER_LEAD_MINUTES * 60 * 1000
+  );
+
+  const snap = await db
+    .collection("sessions")
+    .where("status", "in", ["open", "full"])
+    .where("startTime", ">", now)
+    .where("startTime", "<=", windowEnd)
+    .get();
+
+  for (const docSnap of snap.docs) {
+    const session = docSnap.data();
+    const participantIds = Array.isArray(session.participantIds)
+      ? session.participantIds.filter((id) => typeof id === "string")
+      : [];
+
+    if (participantIds.length === 0) {
+      continue;
+    }
+
+    const minutesLeft = Math.max(
+      1,
+      Math.round((session.startTime.toMillis() - now.toMillis()) / 60000)
+    );
+    const title = typeof session.title === "string" ? session.title : "Study session";
+    const classId = typeof session.classId === "string" ? ` (${session.classId})` : "";
+
+    await Promise.all(
+      participantIds.map((uid) =>
+        notifyUser(uid, {
+          id: `reminder_${docSnap.id}`,
+          type: "session_reminder",
+          title: "Starting soon",
+          body: `${title}${classId} starts in about ${minutesLeft} min.`,
+          url: `/session/${docSnap.id}`,
+          sessionId: docSnap.id,
+        })
+      )
+    );
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Account deletion (D8): single authoritative path. Admin SDK bypasses rules,
@@ -420,7 +658,9 @@ exports.deleteUserAccount = onCall(async (request) => {
   // 5. Location ratings (the aggregate trigger above decrements counts).
   await deleteQueryBatch(db.collection("locationRatings").where("userId", "==", uid));
 
-  // 6. Profile (public doc + private subcollection), then the Auth user.
+  // 6. Profile (public doc + private and notifications subcollections — the
+  //    notification records double as reminder/dedupe state, so nothing else
+  //    to clean), then the Auth user.
   await db.recursiveDelete(db.collection("users").doc(uid));
   await admin.auth().deleteUser(uid);
 
