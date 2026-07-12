@@ -175,6 +175,19 @@ service cloud.firestore {
           && incoming().readAt == request.time;
         allow delete: if false;
       }
+
+      // Chat read markers (PR: group chat) — one tiny owner-only doc per
+      // thread recording when the owner last opened it; unread is derived as
+      // session.lastMessageAt > lastReadAt. threadId is a sessionId today;
+      // DM threads can adopt the same shape later. Pinned to the server clock
+      // so a forged future marker can't hide messages that haven't arrived.
+      match /reads/{threadId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && incoming().keys().hasOnly(['lastReadAt'])
+          && incoming().lastReadAt == request.time;
+        allow delete: if false; // account deletion recursive-deletes the user tree
+      }
     }
 
     // ------------------------------------------------------------------
@@ -297,6 +310,33 @@ service cloud.firestore {
       allow update: if isVerifiedUwUser()
         && (isHostEdit() || isSelfJoin() || isSelfJoinNoOp() || isSelfLeave());
       allow delete: if isVerifiedUwUser() && request.auth.uid == resource.data.hostId;
+
+      // Session group chat (PR: group chat) — participant-gated via the
+      // parent session doc, message shape identical to DM messages. The
+      // lastMessageAt/lastMessageSenderId unread metadata on the session doc
+      // is written only by the Cloud Function (Admin SDK bypasses rules);
+      // no client update branch exists for it. Leaving the session ends
+      // access; blocked pairs sharing a session are filtered client-side
+      // (same policy as the attendee list).
+      match /messages/{messageId} {
+        function parentSession() {
+          return get(/databases/$(database)/documents/sessions/$(sessionId)).data;
+        }
+
+        allow read: if isVerifiedUwUser()
+          && request.auth.uid in parentSession().participantIds;
+        allow create: if isVerifiedUwUser()
+          && request.auth.uid == incoming().senderId
+          && request.auth.uid in parentSession().participantIds
+          && incoming().keys().hasOnly(['senderId', 'text', 'createdAt'])
+          && incoming().text is string
+          && incoming().text.size() >= 1
+          && incoming().text.size() <= 2000
+          && incoming().createdAt == request.time
+          && hasFreshRateLimit(request.auth.uid, 'sendMessage');
+        allow update: if false;
+        allow delete: if isVerifiedUwUser() && request.auth.uid == resource.data.senderId;
+      }
     }
 
     // ------------------------------------------------------------------

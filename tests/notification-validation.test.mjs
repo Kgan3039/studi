@@ -12,6 +12,7 @@ const {
   BODY_MAX_LENGTH,
   TITLE_MAX_LENGTH,
   dmNotificationId,
+  groupMessageNotificationId,
   isAllowedNotificationUrl,
   normalizeNotificationPayload,
   reminderNotificationId,
@@ -33,10 +34,21 @@ function validPayload(overrides = {}) {
 }
 
 describe('notification URL allowlist', () => {
-  it('accepts the three internal route shapes', () => {
+  it('accepts the four internal route shapes', () => {
     assert.equal(isAllowedNotificationUrl('/notifications'), true);
     assert.equal(isAllowedNotificationUrl(`/conversation/${CONVO}`), true);
     assert.equal(isAllowedNotificationUrl('/session/AbC123_x-9'), true);
+    assert.equal(isAllowedNotificationUrl('/session-chat/AbC123_x-9'), true);
+  });
+
+  it('holds /session-chat to the same segment rules as the other routes', () => {
+    assert.equal(isAllowedNotificationUrl('/session-chat/..'), false);
+    assert.equal(isAllowedNotificationUrl('/session-chat/../admin'), false);
+    assert.equal(isAllowedNotificationUrl('/session-chat/a%2Fb'), false);
+    assert.equal(isAllowedNotificationUrl('/session-chat/'), false);
+    assert.equal(isAllowedNotificationUrl('/session-chat'), false);
+    assert.equal(isAllowedNotificationUrl('/session-chat/a/b'), false);
+    assert.equal(isAllowedNotificationUrl(`/session-chat/${'a'.repeat(201)}`), false);
   });
 
   it('rejects traversal and dot segments', () => {
@@ -183,6 +195,25 @@ describe('idempotent record IDs (CloudEvent-keyed)', () => {
       reminderNotificationId('s1', 'aliceUid', start),
       reminderNotificationId('s2', 'aliceUid', start)
     );
+  });
+
+  it('group messages: retries dedupe, new messages notify, sessions never collide', () => {
+    // Same CloudEvent delivered twice (retry) → identical ID.
+    assert.equal(
+      groupMessageNotificationId('s1', 'event-1'),
+      groupMessageNotificationId('s1', 'event-1')
+    );
+    // Every new message is a new event → distinct IDs.
+    assert.notEqual(
+      groupMessageNotificationId('s1', 'event-1'),
+      groupMessageNotificationId('s1', 'event-2')
+    );
+    // Same event ID string under another session can never collide.
+    assert.notEqual(
+      groupMessageNotificationId('s1', 'event-1'),
+      groupMessageNotificationId('s2', 'event-1')
+    );
+    assert.equal(/^[A-Za-z0-9_-]+$/.test(groupMessageNotificationId('a/b', 'e.v')), true);
   });
 
   it('sanitizes unexpected characters out of doc IDs', () => {

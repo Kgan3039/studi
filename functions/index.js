@@ -14,6 +14,7 @@ const crypto = require("crypto");
 const { Expo } = require("expo-server-sdk");
 const {
   dmNotificationId,
+  groupMessageNotificationId,
   normalizeNotificationPayload,
   reminderNotificationId,
   sessionEventNotificationId,
@@ -406,6 +407,74 @@ exports.onDirectMessageCreated = onDocumentCreated(
   }
 );
 
+exports.onSessionMessageCreated = onDocumentCreated(
+  "sessions/{sessionId}/messages/{messageId}",
+  async (event) => {
+    const message = event.data?.data();
+    const senderId = message?.senderId;
+    const text = normalizePreview(message?.text);
+    const sessionId = event.params.sessionId;
+
+    if (!senderId || !sessionId || !text) {
+      return;
+    }
+
+    const sessionSnap = await db.collection("sessions").doc(sessionId).get();
+    if (!sessionSnap.exists) {
+      return;
+    }
+    const session = sessionSnap.data();
+
+    // Unread metadata for the session-details indicator: arrival time and
+    // sender only, never content — the session doc is readable by every
+    // verified user, so a text preview here would leak participant-only
+    // messages. The write re-fires onSessionParticipantsUpdated, which
+    // no-ops (no participant/status/time/location delta).
+    try {
+      await sessionSnap.ref.update({
+        lastMessageAt:
+          message.createdAt ?? admin.firestore.FieldValue.serverTimestamp(),
+        lastMessageSenderId: senderId,
+      });
+    } catch (error) {
+      console.warn("Session chat metadata update failed", error);
+    }
+
+    const participantIds = Array.isArray(session?.participantIds)
+      ? session.participantIds.filter((id) => typeof id === "string")
+      : [];
+    const recipients = participantIds.filter((uid) => uid !== senderId);
+
+    if (recipients.length === 0) {
+      return;
+    }
+
+    // Display name comes from the sender's profile doc (server truth), never
+    // from anything client-supplied on the message.
+    const senderName = (await getDisplayName(senderId)) || "Someone";
+    const title =
+      typeof session?.title === "string" && session.title.trim()
+        ? session.title.trim()
+        : "Session chat";
+
+    await Promise.all(
+      recipients.map((uid) =>
+        notifyUser(uid, {
+          // CloudEvent ID: retries of one message event dedupe, every new
+          // message notifies again. Session-scoped like the DM equivalent.
+          id: groupMessageNotificationId(sessionId, event.id),
+          type: "group_message",
+          title,
+          body: `${senderName}: ${text}`,
+          url: `/session-chat/${sessionId}`,
+          actorId: senderId,
+          sessionId,
+        })
+      )
+    );
+  }
+);
+
 // Historical export name (originally join-only); renaming a deployed function
 // forces a delete/create cycle, so the name stays while the trigger now covers
 // joins, cancellation, and material time/location edits.
@@ -643,8 +712,12 @@ exports.deleteUserAccount = onCall(async (request) => {
 
   await enforceDeleteAccountRateLimit(uid);
 
-  // 1. Sessions hosted by the user: delete outright.
-  await deleteQueryBatch(db.collection("sessions").where("hostId", "==", uid));
+  // 1. Sessions hosted by the user: delete outright, including the group-chat
+  //    messages subcollection — a flat batch delete would orphan it.
+  const hosted = await db.collection("sessions").where("hostId", "==", uid).get();
+  for (const docSnap of hosted.docs) {
+    await db.recursiveDelete(docSnap.ref);
+  }
 
   // 2. Sessions joined: remove from participant arrays.
   const joined = await db
@@ -669,6 +742,12 @@ exports.deleteUserAccount = onCall(async (request) => {
     await db.recursiveDelete(convo.ref);
   }
 
+  // 3b. Group-chat messages the user sent in sessions they didn't host —
+  //     collection-group lookup on senderId (COLLECTION_GROUP index in
+  //     firestore.indexes.json fieldOverrides). Messages under the user's own
+  //     hosted sessions and DM conversations are already gone (steps 1 and 3).
+  await deleteQueryBatch(db.collectionGroup("messages").where("senderId", "==", uid));
+
   // 4. Blocks in either direction.
   await deleteQueryBatch(db.collection("userBlocks").where("blockerUserId", "==", uid));
   await deleteQueryBatch(db.collection("userBlocks").where("blockedUserId", "==", uid));
@@ -676,9 +755,9 @@ exports.deleteUserAccount = onCall(async (request) => {
   // 5. Location ratings (the aggregate trigger above decrements counts).
   await deleteQueryBatch(db.collection("locationRatings").where("userId", "==", uid));
 
-  // 6. Profile (public doc + private and notifications subcollections — the
-  //    notification records double as reminder/dedupe state, so nothing else
-  //    to clean), then the Auth user.
+  // 6. Profile (public doc + private, notifications, and reads subcollections
+  //    — the notification records double as reminder/dedupe state, so nothing
+  //    else to clean), then the Auth user.
   await db.recursiveDelete(db.collection("users").doc(uid));
   await admin.auth().deleteUser(uid);
 

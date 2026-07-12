@@ -28,6 +28,8 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 | `uw_map_opened` | UW layers tapped from the study map | — |
 | `conversation_started` | New conversation doc created | — |
 | `message_sent` | `sendDirectMessage()` succeeds | `length` (number, not content) |
+| `session_chat_opened` | Session chat screen gains focus (once per focus) | `classId`, `source` (`session_detail` \| `auto_join` \| `deeplink`) |
+| `group_message_sent` | `sendSessionMessage()` succeeds | `length` (number, not content) |
 | `report_submitted` | Report saved | `reason`, `context` |
 | `user_blocked` | Block saved | `context` |
 | `account_deleted` | Deletion callable succeeds | — |

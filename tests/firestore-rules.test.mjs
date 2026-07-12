@@ -123,6 +123,14 @@ function updateConversationWithRateLimit(db, uid, conversationId, data) {
   return batch.commit();
 }
 
+// Mirrors sendSessionMessage in lib/firestore.ts: session-chat message +
+// sendMessage rate-limit write in a single batch.
+function createSessionChatMessage(db, uid, sessionId, messageId, message) {
+  const batch = batchWithRateLimit(db, uid, 'sendMessage');
+  batch.set(doc(db, 'sessions', sessionId, 'messages', messageId), message);
+  return batch.commit();
+}
+
 // Mirrors sendDirectMessage in lib/firestore.ts: message + metadata bump +
 // sendMessage rate-limit write in a single batch.
 function clientSendFlow(db, uid, conversationId, messageId, text) {
@@ -1025,6 +1033,150 @@ describe('conversations + messages', () => {
     await assertFails(createMessageWithRateLimit(ctx(ALICE), ALICE, cid, 'm5', {
       senderId: ALICE, text: 'still here', createdAt: serverTimestamp(),
     }));
+  });
+});
+
+// ------------------------------------------- session group chat (PR: group chat)
+describe('session group chat (sessions/{sessionId}/messages)', () => {
+  // ALICE hosts, BOB joined, MALLORY is outside the session.
+  async function seedChatSession(sessionId = 's1') {
+    await seed(`sessions/${sessionId}`, validSession(ALICE, {
+      participantIds: [ALICE, BOB],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    }));
+  }
+
+  it('participants read and list messages; outsiders and unverified cannot', async () => {
+    await seedChatSession();
+    await seed('sessions/s1/messages/m1', {
+      senderId: ALICE, text: 'front table', createdAt: Timestamp.now(),
+    });
+
+    await assertSucceeds(getDoc(doc(ctx(ALICE), 'sessions', 's1', 'messages', 'm1')));
+    await assertSucceeds(getDocs(collection(ctx(BOB), 'sessions', 's1', 'messages')));
+    await assertFails(getDoc(doc(ctx(MALLORY), 'sessions', 's1', 'messages', 'm1')));
+    await assertFails(getDocs(collection(ctx(MALLORY), 'sessions', 's1', 'messages')));
+    await assertFails(
+      getDoc(doc(ctx(ALICE, { verified: false }), 'sessions', 's1', 'messages', 'm1'))
+    );
+  });
+
+  it('participant (non-host too) sends with the fresh rate-limit batch', async () => {
+    await seedChatSession();
+    await assertSucceeds(createSessionChatMessage(ctx(BOB), BOB, 's1', 'm1', {
+      senderId: BOB, text: 'running 5 late', createdAt: serverTimestamp(),
+    }));
+    await assertSucceeds(createSessionChatMessage(ctx(ALICE), ALICE, 's1', 'm2', {
+      senderId: ALICE, text: 'no rush', createdAt: serverTimestamp(),
+    }));
+  });
+
+  it('send without the rate-limit batch is denied; too-soon resend is denied', async () => {
+    await seedChatSession();
+    await assertFails(setDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1'), {
+      senderId: BOB, text: 'no rate limit', createdAt: serverTimestamp(),
+    }));
+    await seed(`rateLimits/${BOB}/actions/sendMessage`, { updatedAt: Timestamp.now() });
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'm2', {
+      senderId: BOB, text: 'too soon', createdAt: serverTimestamp(),
+    }));
+  });
+
+  it('non-participants cannot send; sender spoofing is denied', async () => {
+    await seedChatSession();
+    await assertFails(createSessionChatMessage(ctx(MALLORY), MALLORY, 's1', 'm1', {
+      senderId: MALLORY, text: 'intruder', createdAt: serverTimestamp(),
+    }));
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'm2', {
+      senderId: ALICE, text: 'spoofed', createdAt: serverTimestamp(),
+    }));
+  });
+
+  it('rejects extra keys, empty and oversized text, forged createdAt', async () => {
+    await seedChatSession();
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'm1', {
+      senderId: BOB, senderName: 'Professor X', text: 'hi', createdAt: serverTimestamp(),
+    }));
+    await seed(`rateLimits/${BOB}/actions/sendMessage`, {
+      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
+    });
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'm2', {
+      senderId: BOB, text: '', createdAt: serverTimestamp(),
+    }));
+    await seed(`rateLimits/${BOB}/actions/sendMessage`, {
+      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
+    });
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'm3', {
+      senderId: BOB, text: 'x'.repeat(2001), createdAt: serverTimestamp(),
+    }));
+    await seed(`rateLimits/${BOB}/actions/sendMessage`, {
+      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
+    });
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'm4', {
+      senderId: BOB, text: 'forged clock',
+      createdAt: Timestamp.fromMillis(Date.now() + 86_400_000),
+    }));
+  });
+
+  it('messages are immutable; only the sender may delete', async () => {
+    await seedChatSession();
+    await seed('sessions/s1/messages/m1', {
+      senderId: BOB, text: 'original', createdAt: Timestamp.now(),
+    });
+
+    await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1'), {
+      text: 'edited',
+    }));
+    await assertFails(deleteDoc(doc(ctx(ALICE), 'sessions', 's1', 'messages', 'm1')));
+    await assertSucceeds(deleteDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1')));
+  });
+
+  it('leaving the session ends read and send access', async () => {
+    // Same shape as seedChatSession but BOB is no longer seated.
+    await seed('sessions/s2', validSession(ALICE, {
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    }));
+    await seed('sessions/s2/messages/m1', {
+      senderId: ALICE, text: 'anyone here?', createdAt: Timestamp.now(),
+    });
+
+    await assertFails(getDoc(doc(ctx(BOB), 'sessions', 's2', 'messages', 'm1')));
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's2', 'm2', {
+      senderId: BOB, text: 'i left but…', createdAt: serverTimestamp(),
+    }));
+  });
+});
+
+describe('chat read markers (users/{uid}/reads)', () => {
+  const readRef = (db, uid, threadId = 's1') => doc(db, 'users', uid, 'reads', threadId);
+
+  it('owner writes lastReadAt at server time, and can re-mark later', async () => {
+    await assertSucceeds(setDoc(readRef(ctx(ALICE), ALICE), {
+      lastReadAt: serverTimestamp(),
+    }));
+    await assertSucceeds(setDoc(readRef(ctx(ALICE), ALICE), {
+      lastReadAt: serverTimestamp(),
+    }));
+    await assertSucceeds(getDoc(readRef(ctx(ALICE), ALICE)));
+  });
+
+  it('rejects forged timestamps and extra keys', async () => {
+    await assertFails(setDoc(readRef(ctx(ALICE), ALICE), {
+      lastReadAt: Timestamp.fromMillis(Date.now() + 86_400_000),
+    }));
+    await assertFails(setDoc(readRef(ctx(ALICE), ALICE), {
+      lastReadAt: serverTimestamp(), sneaky: true,
+    }));
+  });
+
+  it('only the owner reads or writes; delete is denied', async () => {
+    await seed(`users/${ALICE}/reads/s1`, { lastReadAt: Timestamp.now() });
+
+    await assertFails(getDoc(readRef(ctx(BOB), ALICE)));
+    await assertFails(setDoc(readRef(ctx(BOB), ALICE), { lastReadAt: serverTimestamp() }));
+    await assertFails(deleteDoc(readRef(ctx(ALICE), ALICE)));
   });
 });
 

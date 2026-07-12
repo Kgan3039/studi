@@ -16,12 +16,19 @@ The notifications-center PR extends that into a persistent pipeline:
   key means enabled.
 - Events wired now: `dm_message`, `session_joined`, `session_updated`
   (material time/location edits only), `session_cancelled`,
-  `session_reminder`. `group_message`, `friend_request`, and
-  `friend_accepted` are reserved in the schema but not produced.
+  `session_reminder`, and `group_message` (session group chat —
+  `onSessionMessageCreated` notifies every participant except the sender and
+  stamps `lastMessageAt`/`lastMessageSenderId` onto the session doc for the
+  unread indicator; never message content, since session docs are readable by
+  all verified users). `friend_request` and `friend_accepted` are reserved in
+  the schema but not produced.
 - `/notifications` screen (protected) with unread badge on the Profile tab.
 
-Not implemented: App Check, RNFirebase messaging, group/friend notifications,
-client dismiss (no delete rule; records expire via TTL).
+Not implemented: App Check, RNFirebase messaging, friend notifications,
+client dismiss (no delete rule; records expire via TTL). Group-chat pushes are
+not block-filtered: two users who blocked each other can share a session
+(blocks only gate joining against the host), and the client hides their
+bubbles the same way it hides them in the attendee list.
 
 ## Payload validation & deep-link safety
 
@@ -34,9 +41,9 @@ allowlist. Invalid payloads are dropped — no record, no push.
 
 URL rules (server and client — the client mirror is
 `isAllowedNotificationUrl()` in `lib/notifications.ts`; change both
-together): exactly `/notifications`, `/conversation/{id}`, or
-`/session/{id}`, where `{id}` matches the safe-ID pattern and decodes to
-itself. Traversal (`.`/`..`), percent-encoded separators (`%2F`, `%5C`),
+together): exactly `/notifications`, `/conversation/{id}`, `/session/{id}`,
+or `/session-chat/{id}`, where `{id}` matches the safe-ID pattern and decodes
+to itself. Traversal (`.`/`..`), percent-encoded separators (`%2F`, `%5C`),
 malformed escapes, extra segments, query/hash suffixes, and external schemes
 all fail. Push taps additionally dedupe on the delivered notification's
 request identifier (module-level set surviving listener re-mounts), so one
@@ -64,6 +71,7 @@ by `npm run test:notifications`.
 | Session cancelled | `cancel_{eventId}` | participants except host; each real open→cancelled transition notifies |
 | Session updated | `update_{eventId}` | participants except host; every distinct material edit notifies, retries dedupe |
 | Session reminder | `reminder_{sessionId}_{uid}_{startTimeMillis}` | host + participants; one per recipient per session **start occurrence** — a reschedule reminds again |
+| Group message | `gm_{sessionId}_{eventId}` | participants except sender; session-scoped like the DM equivalent |
 
 ## Scheduled reminders
 
@@ -142,5 +150,22 @@ Pipeline + center (this PR):
   clears every unread row and survives pull-to-refresh; pagination loads
   older pages; empty and error states render.
 - Profile tab badge shows the unread count and clears after reading.
-- Deleting an account removes the user's notification records (covered by
-  the existing `recursiveDelete` on `users/{uid}`).
+- Deleting an account removes the user's notification records and chat read
+  markers (covered by the existing `recursiveDelete` on `users/{uid}`), the
+  full hosted-session trees including their chat messages, and every group
+  message the user sent elsewhere (collection-group query on `senderId` —
+  needs the `messages.senderId` `COLLECTION_GROUP` field override in
+  `firestore.indexes.json`, deployed with `firebase deploy --only
+  firestore:indexes`).
+
+Group chat (this PR):
+- A message from A creates a `group_message` record for every other
+  participant (never A) and pushes unless `groupMessages` is toggled off;
+  tap opens `/session-chat/{id}`.
+- The Session Details chat card shows the unread dot only for someone else's
+  message arriving after your last visit to the chat, and clears when you
+  come back from the chat.
+- Joining a session lands you in its chat; sends appear instantly, a failed
+  send shows "Not sent · Tap to retry", and retrying never duplicates.
+- Scrolling up pages older messages 30 at a time; messages from blocked
+  users stay hidden.
