@@ -315,6 +315,94 @@ describe('users', () => {
   });
 });
 
+// --------------------------------------------------------- user settings
+describe('user settings (users/{uid}/private/settings)', () => {
+  const settingsRef = (db, uid) => doc(db, 'users', uid, 'private', 'settings');
+  const allPrefs = (overrides = {}) => ({
+    sessionReminders: true,
+    sessionActivity: true,
+    dmMessages: true,
+    groupMessages: true,
+    friendRequests: true,
+    ...overrides,
+  });
+
+  it('owner creates valid settings (full and partial pref maps)', async () => {
+    await assertSucceeds(setDoc(settingsRef(ctx(ALICE), ALICE), {
+      notificationPrefs: allPrefs(), updatedAt: serverTimestamp(),
+    }));
+    // Partial map is valid — a missing key means enabled.
+    await assertSucceeds(setDoc(settingsRef(ctx(ALICE), ALICE), {
+      notificationPrefs: { dmMessages: false }, updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('owner updates a single preference in place', async () => {
+    await seed(`users/${ALICE}/private/settings`, {
+      notificationPrefs: allPrefs(), updatedAt: Timestamp.now(),
+    });
+    await assertSucceeds(updateDoc(settingsRef(ctx(ALICE), ALICE), {
+      'notificationPrefs.dmMessages': false,
+      updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('another user cannot read or write settings', async () => {
+    await seed(`users/${ALICE}/private/settings`, {
+      notificationPrefs: allPrefs(), updatedAt: Timestamp.now(),
+    });
+    await assertFails(getDoc(settingsRef(ctx(BOB), ALICE)));
+    await assertFails(setDoc(settingsRef(ctx(BOB), ALICE), {
+      notificationPrefs: allPrefs({ dmMessages: false }),
+      updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('rejects unknown keys at both levels', async () => {
+    await assertFails(setDoc(settingsRef(ctx(ALICE), ALICE), {
+      notificationPrefs: allPrefs(),
+      marketingOptIn: true,
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(setDoc(settingsRef(ctx(ALICE), ALICE), {
+      notificationPrefs: allPrefs({ emailDigest: true }),
+      updatedAt: serverTimestamp(),
+    }));
+    // No public/private-profile data in the settings doc:
+    await assertFails(setDoc(settingsRef(ctx(ALICE), ALICE), {
+      email: `${ALICE}@wisc.edu`, updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('rejects non-boolean preference values', async () => {
+    await assertFails(setDoc(settingsRef(ctx(ALICE), ALICE), {
+      notificationPrefs: allPrefs({ dmMessages: 'yes' }),
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(setDoc(settingsRef(ctx(ALICE), ALICE), {
+      notificationPrefs: allPrefs({ sessionReminders: 1 }),
+      updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('rejects arbitrary updatedAt values', async () => {
+    await assertFails(setDoc(settingsRef(ctx(ALICE), ALICE), {
+      notificationPrefs: allPrefs(), updatedAt: Timestamp.fromMillis(0),
+    }));
+    // Updates must re-pin updatedAt to the server clock too:
+    await seed(`users/${ALICE}/private/settings`, {
+      notificationPrefs: allPrefs(), updatedAt: Timestamp.now(),
+    });
+    await assertFails(updateDoc(settingsRef(ctx(ALICE), ALICE), {
+      'notificationPrefs.dmMessages': false,
+    }));
+  });
+
+  it('owner can read a missing settings doc (client falls back to enabled defaults)', async () => {
+    await assertSucceeds(getDoc(settingsRef(ctx(ALICE), ALICE)));
+  });
+});
+
 // ---------------------------------------------------------------- sessions
 describe('sessions', () => {
   it('valid create succeeds', async () => {

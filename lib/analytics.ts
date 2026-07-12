@@ -61,6 +61,8 @@ export type AnalyticsEvent =
   | "onboarding_complete"
   | "profile_completed"
   | "profile_updated"
+  | "settings_viewed"
+  | "notification_pref_toggled"
   | "session_create_started"
   | "session_created"
   | "session_joined"

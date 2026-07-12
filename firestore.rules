@@ -104,6 +104,31 @@ service cloud.firestore {
                && incoming().bio.size() <= 140));
     }
 
+    // Notification preferences (users/{uid}/private/settings, PR: settings).
+    // A partial map is valid — a missing doc or missing key means the
+    // preference is enabled — but every present value must be a real boolean
+    // and updatedAt is pinned to the server clock. No public profile data
+    // belongs here.
+    function isValidUserSettings() {
+      return incoming().keys().hasOnly(['notificationPrefs', 'updatedAt'])
+        && incoming().updatedAt == request.time
+        && incoming().notificationPrefs is map
+        && incoming().notificationPrefs.keys().hasOnly([
+             'sessionReminders', 'sessionActivity', 'dmMessages',
+             'groupMessages', 'friendRequests'
+           ])
+        && (!('sessionReminders' in incoming().notificationPrefs)
+              || incoming().notificationPrefs.sessionReminders is bool)
+        && (!('sessionActivity' in incoming().notificationPrefs)
+              || incoming().notificationPrefs.sessionActivity is bool)
+        && (!('dmMessages' in incoming().notificationPrefs)
+              || incoming().notificationPrefs.dmMessages is bool)
+        && (!('groupMessages' in incoming().notificationPrefs)
+              || incoming().notificationPrefs.groupMessages is bool)
+        && (!('friendRequests' in incoming().notificationPrefs)
+              || incoming().notificationPrefs.friendRequests is bool);
+    }
+
     match /users/{userId} {
       allow read: if isVerifiedUwUser();
       allow create: if isOwner(userId)
@@ -114,14 +139,19 @@ service cloud.firestore {
         && incoming().createdAt == resource.data.createdAt;
       allow delete: if false; // deletion handled by the deleteUserAccount Cloud Function
 
-      // Private profile: owner-only. Email must match the auth token.
+      // Private subcollection: owner-only. Two client-writable docs:
+      //  - profile:  email mirror (must match the auth token)
+      //  - settings: notification preferences
       match /private/{docId} {
         allow read: if isOwner(userId);
         allow write: if isOwner(userId)
-          && docId == 'profile'
-          && incoming().keys().hasOnly(['email', 'updatedAt'])
-          && incoming().email is string
-          && incoming().email == request.auth.token.email;
+          && (
+            (docId == 'profile'
+              && incoming().keys().hasOnly(['email', 'updatedAt'])
+              && incoming().email is string
+              && incoming().email == request.auth.token.email)
+            || (docId == 'settings' && isValidUserSettings())
+          );
         allow delete: if false;
 
         match /tokens/{tokenId} {
