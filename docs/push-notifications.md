@@ -23,27 +23,60 @@ The notifications-center PR extends that into a persistent pipeline:
 Not implemented: App Check, RNFirebase messaging, group/friend notifications,
 client dismiss (no delete rule; records expire via TTL).
 
+## Payload validation & deep-link safety
+
+Every payload passes through `normalizeNotificationPayload()`
+(`functions/notification-validation.js`) before `notifyUser()` writes or
+pushes anything: type must be one of the 8 schema types, title/body are
+trimmed and bounded (120/300 chars), optional actor/session/conversation IDs
+must match `[A-Za-z0-9_-]{1,200}`, and the URL must pass the internal-route
+allowlist. Invalid payloads are dropped — no record, no push.
+
+URL rules (server and client — the client mirror is
+`isAllowedNotificationUrl()` in `lib/notifications.ts`; change both
+together): exactly `/notifications`, `/conversation/{id}`, or
+`/session/{id}`, where `{id}` matches the safe-ID pattern and decodes to
+itself. Traversal (`.`/`..`), percent-encoded separators (`%2F`, `%5C`),
+malformed escapes, extra segments, query/hash suffixes, and external schemes
+all fail. Push taps additionally dedupe on the delivered notification's
+request identifier (module-level set surviving listener re-mounts), so one
+physical tap routes — and fires `notification_opened` — exactly once even
+when the live listener and `getLastNotificationResponseAsync` both surface
+the same response.
+
+Unit tests for all of the above: `npm run test:notifications`.
+
 ## Idempotency
 
-Notification records use deterministic IDs derived from the source event and
-are written with `create()` — a trigger retry or overlapping scheduler run
-finds the record already present and skips both the write and the push:
+Trigger-driven records are keyed on the **CloudEvent ID** (`event.id`):
+Eventarc reuses it across retries of one delivery and mints a new one for
+every legitimate later event. Records are written with `create()`, so a retry
+finds the record already present (`ALREADY_EXISTS`) and skips both the write
+and the push — while leave/rejoin, cancel/reopen/re-cancel, and reverting a
+session to a prior time/location all notify again. No state hashing. ID
+builders live in `functions/notification-validation.js` and are unit-tested
+by `npm run test:notifications`.
 
 | Event | Record ID | Notes |
 |---|---|---|
-| Direct message | `dm_{messageId}` | recipient only |
-| Session join | `join_{sessionId}_{joinerUid}` | host only; a leave/rejoin by the same user intentionally reuses the ID (one alert per person per session) |
-| Session cancelled | `cancel_{sessionId}` | participants except host; cancel/reopen/re-cancel can't spam |
-| Session updated | `update_{sessionId}_{hash(startTime,endTime,locationId)}` | participants except host; a second *distinct* edit notifies again |
-| Session reminder | `reminder_{sessionId}` | host + participants, one per user per session |
+| Direct message | `dm_{conversationId}_{eventId}` | recipient only; conversation-scoped against cross-conversation collisions |
+| Session join | `join_{eventId}` | host only; a leave/rejoin is a new event and notifies again |
+| Session cancelled | `cancel_{eventId}` | participants except host; each real open→cancelled transition notifies |
+| Session updated | `update_{eventId}` | participants except host; every distinct material edit notifies, retries dedupe |
+| Session reminder | `reminder_{sessionId}_{uid}_{startTimeMillis}` | host + participants; one per recipient per session **start occurrence** — a reschedule reminds again |
 
 ## Scheduled reminders
 
 `sendSessionReminders` (v2 `onSchedule`, every 10 minutes) queries sessions
-with `status in [open, full]` and `startTime` in `(now, now + 30 min]`, then
-notifies every participant. With a 10-minute cadence the reminder lands 20–30
-minutes before start; the deterministic record ID keeps it to exactly one per
-user per session.
+with `status in [open, full]` and `startTime` in `(now + 20 min, now + 30 min]`.
+Consecutive runs tile the timeline without overlap, so each start time is
+examined by exactly one run and the reminder lands 20–30 minutes before
+start; the occurrence-keyed record ID additionally dedupes scheduler retries.
+
+**Beta trade-off (explicit):** a session created less than ~20 minutes before
+its own start never enters the query band and receives **no reminder**. A
+skipped/failed scheduler run likewise drops that run's 10-minute band rather
+than double-sending later.
 
 Deploy prerequisites (not yet deployed):
 

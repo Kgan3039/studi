@@ -163,14 +163,15 @@ service cloud.firestore {
 
       // Notification records (PR: notifications center) are created only by
       // Cloud Functions (Admin SDK bypasses rules). The owner may read them
-      // and pin readAt to the server clock — nothing else changes. No client
-      // dismiss in this PR, so no delete; expiry is the Firestore TTL policy
-      // on expiresAt.
+      // and flip readAt exactly once: null → the server clock. Nothing else
+      // changes, ever. No client dismiss in this PR, so no delete; expiry is
+      // the Firestore TTL policy on expiresAt.
       match /notifications/{notificationId} {
         allow read: if isOwner(userId);
         allow create: if false;
         allow update: if isOwner(userId)
           && affectedKeys().hasOnly(['readAt'])
+          && resource.data.readAt == null
           && incoming().readAt == request.time;
         allow delete: if false;
       }

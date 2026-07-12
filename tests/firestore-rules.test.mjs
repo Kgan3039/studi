@@ -443,6 +443,13 @@ describe('notifications (users/{uid}/notifications)', () => {
     }));
   });
 
+  it('readAt transitions only once — a second mark-read is denied', async () => {
+    await seed(`users/${ALICE}/notifications/n1`, validNotification({ readAt: Timestamp.now() }));
+    await assertFails(updateDoc(notifRef(ctx(ALICE), ALICE), {
+      readAt: serverTimestamp(),
+    }));
+  });
+
   it('rejects forged readAt values (arbitrary timestamp, un-read to null)', async () => {
     await seed(`users/${ALICE}/notifications/n1`, validNotification());
     await assertFails(updateDoc(notifRef(ctx(ALICE), ALICE), {

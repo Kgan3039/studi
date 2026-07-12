@@ -16,15 +16,45 @@ type NotificationModule = typeof import('expo-notifications');
 
 let configuredPresentation = false;
 let didAttemptRegistration = false;
-const NOTIFICATION_URL_PATTERN = /^\/(?:conversation|session)\/[^/?#]+$/;
+
+// Firestore auto-IDs, Firebase uids, and `${uidA}__${uidB}` conversation keys
+// all fit this; dots, slashes, backslashes, percent-escapes, and empty
+// segments do not. Mirrors functions/notification-validation.js — change
+// both together.
+const SAFE_ROUTE_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
 
 /**
- * Allowlist for navigation triggered by notification payloads — push taps and
- * Notifications Center rows both validate through here. Only in-app routes
- * that exist today pass: /conversation/{id}, /session/{id}, /notifications.
+ * Strict allowlist for navigation triggered by notification payloads — push
+ * taps and Notifications Center rows both validate through here. Valid forms:
+ * `/notifications`, `/conversation/{id}`, `/session/{id}` where {id} is a
+ * safe internal ID. The segment must also decode to itself, so traversal
+ * (`.`/`..`), percent-encoded separators (%2F, %5C), malformed escapes, and
+ * external schemes never pass.
  */
 export function isAllowedNotificationUrl(url: unknown): url is string {
-  return typeof url === 'string' && (NOTIFICATION_URL_PATTERN.test(url) || url === '/notifications');
+  if (typeof url !== 'string') {
+    return false;
+  }
+
+  if (url === '/notifications') {
+    return true;
+  }
+
+  const match = /^\/(conversation|session)\/([^/]+)$/.exec(url);
+  if (!match) {
+    return false;
+  }
+
+  const segment = match[2];
+  if (!SAFE_ROUTE_ID_PATTERN.test(segment)) {
+    return false;
+  }
+
+  try {
+    return decodeURIComponent(segment) === segment;
+  } catch {
+    return false; // malformed escape sequence
+  }
 }
 
 function getExpoProjectId() {
@@ -167,6 +197,51 @@ export function getNotificationTapTarget(response: unknown): NotificationTapTarg
   };
 }
 
+// One tap can surface twice: through the live response listener AND through
+// getLastNotificationResponseAsync (cold start, or the listener re-mounting
+// on auth changes). Dedupe on the delivered notification's identifier so each
+// physical tap routes — and fires notification_opened — exactly once. Module
+// level on purpose: it must outlive listener re-mounts.
+const handledTapKeys = new Set<string>();
+const HANDLED_TAP_KEYS_MAX = 100;
+
+function getTapDedupeKey(response: unknown): string | null {
+  const notification = (
+    response as { notification?: { request?: { identifier?: unknown }; date?: unknown } }
+  )?.notification;
+
+  const identifier = notification?.request?.identifier;
+  if (typeof identifier === 'string' && identifier) {
+    return identifier;
+  }
+
+  // Fallback: delivery timestamp still distinguishes distinct taps.
+  return typeof notification?.date === 'number' ? `delivered_${notification.date}` : null;
+}
+
+function handleTapResponse(response: unknown, onTap: (target: NotificationTapTarget) => void) {
+  const target = getNotificationTapTarget(response);
+  if (!target) {
+    return;
+  }
+
+  const key = getTapDedupeKey(response);
+  if (key) {
+    if (handledTapKeys.has(key)) {
+      return;
+    }
+    handledTapKeys.add(key);
+    if (handledTapKeys.size > HANDLED_TAP_KEYS_MAX) {
+      const oldest = handledTapKeys.values().next().value;
+      if (oldest !== undefined) {
+        handledTapKeys.delete(oldest);
+      }
+    }
+  }
+
+  onTap(target);
+}
+
 export async function addNotificationResponseListener(
   onTap: (target: NotificationTapTarget) => void
 ) {
@@ -177,16 +252,12 @@ export async function addNotificationResponseListener(
   }
 
   const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-    const target = getNotificationTapTarget(response);
-    if (target) {
-      onTap(target);
-    }
+    handleTapResponse(response, onTap);
   });
 
   const lastResponse = await Notifications.getLastNotificationResponseAsync();
-  const lastTarget = getNotificationTapTarget(lastResponse);
-  if (lastTarget) {
-    onTap(lastTarget);
+  if (lastResponse) {
+    handleTapResponse(lastResponse, onTap);
   }
 
   return () => subscription.remove();

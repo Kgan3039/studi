@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "web:export": "expo export --platform web",
     "lint": "expo lint",
-    "rules:test": "firebase emulators:exec --only firestore \"mocha tests/firestore-rules.test.mjs --timeout 10000\""
+    "rules:test": "firebase emulators:exec --only firestore \"mocha tests/firestore-rules.test.mjs --timeout 10000\"",
+    "test:notifications": "mocha tests/notification-validation.test.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/cormorant-garamond": "^0.4.1",

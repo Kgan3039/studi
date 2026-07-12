@@ -12,6 +12,12 @@ const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
 const { Expo } = require("expo-server-sdk");
+const {
+  dmNotificationId,
+  normalizeNotificationPayload,
+  reminderNotificationId,
+  sessionEventNotificationId,
+} = require("./notification-validation");
 
 admin.initializeApp();
 setGlobalOptions({ region: "us-central1", maxInstances: 5 });
@@ -146,9 +152,9 @@ async function sendPushToUsers(userIds, payload) {
 // reaches a user flows through notifyUser(): it writes the persistent in-app
 // record first (the activity history — never suppressed by preferences), then
 // sends a push only when the recipient's preference for that category is on.
-// Records use deterministic IDs derived from the source event, so trigger
-// retries and overlapping scheduler runs create each record — and send each
-// push — exactly once.
+// Record IDs come from the CloudEvent ID (see notification-validation.js), so
+// a retried trigger delivery creates the record — and sends the push —
+// exactly once, while every legitimate later event notifies again.
 // ---------------------------------------------------------------------------
 
 const NOTIFICATION_RETENTION_DAYS = 60;
@@ -188,13 +194,21 @@ async function isPushEnabled(uid, notificationType) {
 /**
  * Write the in-app notification record and (preference permitting) push it.
  *
- * `id` must be deterministic per logical event (e.g. `dm_{messageId}`) — the
- * record is written with create(), so a retry that finds the record already
- * present skips both the write and the push. Never throws: a failure here
- * must not roll back the app action that triggered it.
+ * `id` must be deterministic per logical event (built by the ID helpers in
+ * notification-validation.js) — the record is written with create(), so a
+ * retry that finds the record already present skips both the write and the
+ * push. The payload passes through normalizeNotificationPayload(); anything
+ * invalid is dropped entirely (no record, no push). Never throws: a failure
+ * here must not roll back the app action that triggered it.
  */
-async function notifyUser(uid, { id, type, title, body, url, actorId, sessionId, conversationId }) {
-  if (!uid || uid === actorId) {
+async function notifyUser(uid, { id, ...rawPayload }) {
+  if (!uid || uid === rawPayload.actorId || !id) {
+    return;
+  }
+
+  const payload = normalizeNotificationPayload(rawPayload);
+  if (!payload) {
+    console.warn("Dropped invalid notification payload", { type: rawPayload?.type });
     return;
   }
 
@@ -202,13 +216,7 @@ async function notifyUser(uid, { id, type, title, body, url, actorId, sessionId,
 
   try {
     await ref.create({
-      type,
-      title,
-      body,
-      url,
-      ...(actorId ? { actorId } : {}),
-      ...(sessionId ? { sessionId } : {}),
-      ...(conversationId ? { conversationId } : {}),
+      ...payload,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       readAt: null,
       expiresAt: admin.firestore.Timestamp.fromMillis(
@@ -224,16 +232,16 @@ async function notifyUser(uid, { id, type, title, body, url, actorId, sessionId,
   }
 
   try {
-    if (await isPushEnabled(uid, type)) {
-      await sendPushToUsers([uid], { title, body, data: { url, type } });
+    if (await isPushEnabled(uid, payload.type)) {
+      await sendPushToUsers([uid], {
+        title: payload.title,
+        body: payload.body,
+        data: { url: payload.url, type: payload.type },
+      });
     }
   } catch (error) {
     console.warn("Notification push failed", error);
   }
-}
-
-function shortHash(value) {
-  return crypto.createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +391,9 @@ exports.onDirectMessageCreated = onDocumentCreated(
     await Promise.all(
       recipients.map((uid) =>
         notifyUser(uid, {
-          id: `dm_${event.params.messageId}`,
+          // CloudEvent ID: stable across retries, unique per message event,
+          // conversation-scoped against any cross-conversation collision.
+          id: dmNotificationId(conversationId, event.id),
           type: "dm_message",
           title: senderName || "New message",
           body: text,
@@ -422,9 +432,9 @@ exports.onSessionParticipantsUpdated = onDocumentUpdated(
       ? after.participantIds.filter((id) => typeof id === "string")
       : [];
 
-    // 1. Joins → host only. A leave-then-rejoin by the same user reuses the
-    //    same record ID on purpose: it caps join noise at one alert per person
-    //    per session.
+    // 1. Joins → host only. Keyed on the event ID: a retried delivery
+    //    dedupes, while a genuine leave-then-rejoin is a new event and
+    //    notifies the host again.
     const joiners = afterParticipants.filter(
       (uid) => !beforeParticipants.includes(uid) && uid !== hostId
     );
@@ -432,7 +442,7 @@ exports.onSessionParticipantsUpdated = onDocumentUpdated(
     if (joiners.length > 0) {
       const displayName = (await getDisplayName(joiners[0])) || "Someone";
       await notifyUser(hostId, {
-        id: `join_${sessionId}_${joiners[0]}`,
+        id: sessionEventNotificationId("join", event.id),
         type: "session_joined",
         title: "New study partner",
         body: `${displayName} joined ${classId}`,
@@ -447,13 +457,14 @@ exports.onSessionParticipantsUpdated = onDocumentUpdated(
     // is always the actor.
     const audience = afterParticipants.filter((uid) => uid !== hostId);
 
-    // 2. Cancellation → participants. One record per session per user
-    //    (`cancel_{sessionId}`), so a cancel/reopen/re-cancel can't spam.
+    // 2. Cancellation → participants. Event-ID keyed: each real
+    //    open→cancelled transition (including a cancel after a reopen) is its
+    //    own event and notifies; retries of one transition dedupe.
     if (before?.status !== "cancelled" && after?.status === "cancelled") {
       await Promise.all(
         audience.map((uid) =>
           notifyUser(uid, {
-            id: `cancel_${sessionId}`,
+            id: sessionEventNotificationId("cancel", event.id),
             type: "session_cancelled",
             title: "Session cancelled",
             body: `${title} (${classId}) was cancelled by the host.`,
@@ -467,9 +478,9 @@ exports.onSessionParticipantsUpdated = onDocumentUpdated(
     }
 
     // 3. Material edits → participants. Only time and place count — joins,
-    //    leaves, capacity, title, and status flips don't wake anyone up. The
-    //    record ID hashes the new values, so retries of the same edit dedupe
-    //    while a second distinct edit notifies again.
+    //    leaves, capacity, title, and status flips don't wake anyone up.
+    //    Event-ID keyed: retries of one edit dedupe, and every distinct edit
+    //    notifies — including reverting to a previously-used time/location.
     if (after?.status === "cancelled") {
       return;
     }
@@ -485,14 +496,11 @@ exports.onSessionParticipantsUpdated = onDocumentUpdated(
 
     const changed =
       timeChanged && locationChanged ? "time and location" : timeChanged ? "time" : "location";
-    const editHash = shortHash(
-      `${after?.startTime?.toMillis?.() ?? ""}|${after?.endTime?.toMillis?.() ?? ""}|${after?.locationId ?? ""}`
-    );
 
     await Promise.all(
       audience.map((uid) =>
         notifyUser(uid, {
-          id: `update_${sessionId}_${editHash}`,
+          id: sessionEventNotificationId("update", event.id),
           type: "session_updated",
           title: "Session updated",
           body: `The ${changed} changed for ${title} (${classId}).`,
@@ -507,29 +515,39 @@ exports.onSessionParticipantsUpdated = onDocumentUpdated(
 
 // ---------------------------------------------------------------------------
 // Session reminders: one fixed reminder ~30 minutes before start, for the
-// host and every participant. Runs every 10 minutes and looks at sessions
-// starting within the next 30 — a session is seen by up to three consecutive
-// runs, but the deterministic `reminder_{sessionId}` record ID means only the
-// first run that sees it creates records and pushes. Cancelled sessions are
-// filtered by status; ended/started ones by startTime > now.
+// host and every participant. Runs every 10 minutes over the 20–30-minute
+// band ahead, so consecutive runs tile the timeline without overlap and each
+// start time is examined by exactly one run. Record IDs are keyed on
+// sessionId + uid + the exact startTime occurrence — a scheduler retry of the
+// same run dedupes, while a rescheduled session (new startTime) legitimately
+// reminds again. Cancelled sessions are filtered by status; started/ended
+// ones by the window itself.
+//
+// Beta trade-off (documented in docs/push-notifications.md): a session
+// created less than ~20 minutes before its own start never enters the band
+// and gets no reminder.
 //
 // Requires (deploy-time, documented in docs/push-notifications.md):
 //  - Blaze plan + Cloud Scheduler API (auto-provisioned by v2 onSchedule).
 //  - Composite index sessions(status ASC, startTime ASC) — in firestore.indexes.json.
 // ---------------------------------------------------------------------------
 
-const REMINDER_LEAD_MINUTES = 30;
+const REMINDER_WINDOW_START_MINUTES = 20;
+const REMINDER_WINDOW_END_MINUTES = 30;
 
 exports.sendSessionReminders = onSchedule("every 10 minutes", async () => {
   const now = admin.firestore.Timestamp.now();
+  const windowStart = admin.firestore.Timestamp.fromMillis(
+    now.toMillis() + REMINDER_WINDOW_START_MINUTES * 60 * 1000
+  );
   const windowEnd = admin.firestore.Timestamp.fromMillis(
-    now.toMillis() + REMINDER_LEAD_MINUTES * 60 * 1000
+    now.toMillis() + REMINDER_WINDOW_END_MINUTES * 60 * 1000
   );
 
   const snap = await db
     .collection("sessions")
     .where("status", "in", ["open", "full"])
-    .where("startTime", ">", now)
+    .where("startTime", ">", windowStart)
     .where("startTime", "<=", windowEnd)
     .get();
 
@@ -553,7 +571,7 @@ exports.sendSessionReminders = onSchedule("every 10 minutes", async () => {
     await Promise.all(
       participantIds.map((uid) =>
         notifyUser(uid, {
-          id: `reminder_${docSnap.id}`,
+          id: reminderNotificationId(docSnap.id, uid, session.startTime.toMillis()),
           type: "session_reminder",
           title: "Starting soon",
           body: `${title}${classId} starts in about ${minutesLeft} min.`,
