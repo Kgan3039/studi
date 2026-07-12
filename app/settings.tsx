@@ -1,4 +1,4 @@
-import { type Href, useRouter } from 'expo-router';
+import { type Href, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
@@ -97,9 +97,13 @@ export default function SettingsScreen() {
     return unsubscribe;
   }, []);
 
-  useEffect(() => {
-    track('settings_viewed');
-  }, []);
+  // Fires on every focus, not just mount — coming back from Edit profile
+  // counts as a fresh view.
+  useFocusEffect(
+    useCallback(() => {
+      track('settings_viewed');
+    }, [])
+  );
 
   // One fetch per screen visit — toggles mutate local state and write through,
   // so nothing refetches on render.
