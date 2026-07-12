@@ -403,6 +403,85 @@ describe('user settings (users/{uid}/private/settings)', () => {
   });
 });
 
+// ------------------------------------------- notifications (users/{uid}/notifications)
+describe('notifications (users/{uid}/notifications)', () => {
+  const notifRef = (db, uid, id = 'n1') => doc(db, 'users', uid, 'notifications', id);
+  const validNotification = (overrides = {}) => ({
+    type: 'dm_message',
+    title: 'New message',
+    body: 'see you at Helen C. White!',
+    url: `/conversation/${convoId(ALICE, BOB)}`,
+    actorId: BOB,
+    conversationId: convoId(ALICE, BOB),
+    createdAt: Timestamp.now(),
+    readAt: null,
+    expiresAt: futureTs(60 * 24),
+    ...overrides,
+  });
+
+  it('owner can read own notifications (get and list)', async () => {
+    await seed(`users/${ALICE}/notifications/n1`, validNotification());
+    await assertSucceeds(getDoc(notifRef(ctx(ALICE), ALICE)));
+    await assertSucceeds(getDocs(collection(ctx(ALICE), 'users', ALICE, 'notifications')));
+  });
+
+  it('non-owner cannot read or list notifications', async () => {
+    await seed(`users/${ALICE}/notifications/n1`, validNotification());
+    await assertFails(getDoc(notifRef(ctx(BOB), ALICE)));
+    await assertFails(getDocs(collection(ctx(BOB), 'users', ALICE, 'notifications')));
+  });
+
+  it('clients cannot create notifications, even for themselves', async () => {
+    await assertFails(setDoc(notifRef(ctx(ALICE), ALICE), validNotification()));
+    await assertFails(setDoc(notifRef(ctx(MALLORY), ALICE), validNotification()));
+  });
+
+  it('owner can mark a notification read (readAt pinned to server time)', async () => {
+    await seed(`users/${ALICE}/notifications/n1`, validNotification());
+    await assertSucceeds(updateDoc(notifRef(ctx(ALICE), ALICE), {
+      readAt: serverTimestamp(),
+    }));
+  });
+
+  it('readAt transitions only once — a second mark-read is denied', async () => {
+    await seed(`users/${ALICE}/notifications/n1`, validNotification({ readAt: Timestamp.now() }));
+    await assertFails(updateDoc(notifRef(ctx(ALICE), ALICE), {
+      readAt: serverTimestamp(),
+    }));
+  });
+
+  it('rejects forged readAt values (arbitrary timestamp, un-read to null)', async () => {
+    await seed(`users/${ALICE}/notifications/n1`, validNotification());
+    await assertFails(updateDoc(notifRef(ctx(ALICE), ALICE), {
+      readAt: Timestamp.fromMillis(0),
+    }));
+    await seed(`users/${ALICE}/notifications/n2`, validNotification({ readAt: Timestamp.now() }));
+    await assertFails(updateDoc(notifRef(ctx(ALICE), ALICE, 'n2'), { readAt: null }));
+  });
+
+  it('no other field can be modified, alone or alongside readAt', async () => {
+    await seed(`users/${ALICE}/notifications/n1`, validNotification());
+    await assertFails(updateDoc(notifRef(ctx(ALICE), ALICE), {
+      title: 'edited', readAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(notifRef(ctx(ALICE), ALICE), {
+      url: '/session/other',
+    }));
+    await assertFails(updateDoc(notifRef(ctx(ALICE), ALICE), {
+      expiresAt: futureTs(24 * 365), readAt: serverTimestamp(),
+    }));
+  });
+
+  it('owner cannot delete notifications (no client dismiss; TTL expires them)', async () => {
+    await seed(`users/${ALICE}/notifications/n1`, validNotification());
+    await assertFails(deleteDoc(notifRef(ctx(ALICE), ALICE)));
+  });
+
+  it('owner can read a missing notification doc safely', async () => {
+    await assertSucceeds(getDoc(notifRef(ctx(ALICE), ALICE, 'missing')));
+  });
+});
+
 // ---------------------------------------------------------------- sessions
 describe('sessions', () => {
   it('valid create succeeds', async () => {

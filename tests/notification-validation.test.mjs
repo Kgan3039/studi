@@ -1,0 +1,192 @@
+// tests/notification-validation.test.mjs
+// Run: npm run test:notifications  (plain mocha — no emulator needed)
+// Unit tests for the notification pipeline's pure helpers: payload
+// validation/normalization, internal-route URL rules, and idempotent
+// record-ID builders. The client mirrors the URL rules in
+// lib/notifications.ts — these tests are the executable spec for both.
+
+import { strict as assert } from 'node:assert';
+import validation from '../functions/notification-validation.js';
+
+const {
+  BODY_MAX_LENGTH,
+  TITLE_MAX_LENGTH,
+  dmNotificationId,
+  isAllowedNotificationUrl,
+  normalizeNotificationPayload,
+  reminderNotificationId,
+  sessionEventNotificationId,
+} = validation;
+
+const CONVO = 'aliceUid__bobUid';
+
+function validPayload(overrides = {}) {
+  return {
+    type: 'dm_message',
+    title: 'New message',
+    body: 'see you at Helen C. White!',
+    url: `/conversation/${CONVO}`,
+    actorId: 'bobUid',
+    conversationId: CONVO,
+    ...overrides,
+  };
+}
+
+describe('notification URL allowlist', () => {
+  it('accepts the three internal route shapes', () => {
+    assert.equal(isAllowedNotificationUrl('/notifications'), true);
+    assert.equal(isAllowedNotificationUrl(`/conversation/${CONVO}`), true);
+    assert.equal(isAllowedNotificationUrl('/session/AbC123_x-9'), true);
+  });
+
+  it('rejects traversal and dot segments', () => {
+    assert.equal(isAllowedNotificationUrl('/session/..'), false);
+    assert.equal(isAllowedNotificationUrl('/session/.'), false);
+    assert.equal(isAllowedNotificationUrl('/session/../admin'), false);
+    assert.equal(isAllowedNotificationUrl('/conversation/../../session/x'), false);
+  });
+
+  it('rejects percent-encoded separators and malformed escapes', () => {
+    assert.equal(isAllowedNotificationUrl('/session/a%2Fb'), false);
+    assert.equal(isAllowedNotificationUrl('/session/a%2fb'), false);
+    assert.equal(isAllowedNotificationUrl('/session/a%5Cb'), false);
+    assert.equal(isAllowedNotificationUrl('/session/a%2E%2E'), false);
+    assert.equal(isAllowedNotificationUrl('/session/%'), false);
+    assert.equal(isAllowedNotificationUrl('/session/%E0%A4%A'), false);
+  });
+
+  it('rejects external schemes and protocol-relative forms', () => {
+    assert.equal(isAllowedNotificationUrl('https://evil.example/session/x'), false);
+    assert.equal(isAllowedNotificationUrl('studi://session/x'), false);
+    assert.equal(isAllowedNotificationUrl('javascript:alert(1)'), false);
+    assert.equal(isAllowedNotificationUrl('//evil.example'), false);
+  });
+
+  it('rejects malformed, empty, or overlong IDs and extra segments', () => {
+    assert.equal(isAllowedNotificationUrl('/session/'), false);
+    assert.equal(isAllowedNotificationUrl('/session'), false);
+    assert.equal(isAllowedNotificationUrl('/session/a/b'), false);
+    assert.equal(isAllowedNotificationUrl('/session/a b'), false);
+    assert.equal(isAllowedNotificationUrl('/session/a?x=1'), false);
+    assert.equal(isAllowedNotificationUrl('/session/a#f'), false);
+    assert.equal(isAllowedNotificationUrl(`/session/${'a'.repeat(201)}`), false);
+    assert.equal(isAllowedNotificationUrl('/profile/abc'), false);
+    assert.equal(isAllowedNotificationUrl(''), false);
+    assert.equal(isAllowedNotificationUrl(null), false);
+    assert.equal(isAllowedNotificationUrl(42), false);
+  });
+});
+
+describe('notification payload validation', () => {
+  it('accepts a valid payload and trims/bounds text', () => {
+    const normalized = normalizeNotificationPayload(
+      validPayload({ title: `  padded title  `, body: 'x'.repeat(BODY_MAX_LENGTH + 50) })
+    );
+    assert.ok(normalized);
+    assert.equal(normalized.title, 'padded title');
+    assert.equal(normalized.body.length, BODY_MAX_LENGTH);
+    assert.ok(normalized.title.length <= TITLE_MAX_LENGTH);
+    assert.equal(normalized.url, `/conversation/${CONVO}`);
+    assert.equal(normalized.conversationId, CONVO);
+  });
+
+  it('rejects unknown types and non-object input', () => {
+    assert.equal(normalizeNotificationPayload(validPayload({ type: 'marketing_blast' })), null);
+    assert.equal(normalizeNotificationPayload(validPayload({ type: undefined })), null);
+    assert.equal(normalizeNotificationPayload(null), null);
+    assert.equal(normalizeNotificationPayload('dm_message'), null);
+  });
+
+  it('rejects empty or non-string title/body', () => {
+    assert.equal(normalizeNotificationPayload(validPayload({ title: '   ' })), null);
+    assert.equal(normalizeNotificationPayload(validPayload({ body: '' })), null);
+    assert.equal(normalizeNotificationPayload(validPayload({ title: 42 })), null);
+    assert.equal(normalizeNotificationPayload(validPayload({ body: undefined })), null);
+  });
+
+  it('rejects payloads whose url fails the route allowlist', () => {
+    assert.equal(
+      normalizeNotificationPayload(validPayload({ url: 'https://evil.example/x' })),
+      null
+    );
+    assert.equal(normalizeNotificationPayload(validPayload({ url: '/session/../x' })), null);
+    assert.equal(normalizeNotificationPayload(validPayload({ url: undefined })), null);
+  });
+
+  it('rejects unsafe optional IDs but allows their absence', () => {
+    assert.equal(normalizeNotificationPayload(validPayload({ actorId: 'a/b' })), null);
+    assert.equal(normalizeNotificationPayload(validPayload({ sessionId: '..' })), null);
+    assert.equal(normalizeNotificationPayload(validPayload({ conversationId: '' })), null);
+    const minimal = normalizeNotificationPayload({
+      type: 'session_reminder',
+      title: 'Starting soon',
+      body: 'CS 354 starts in about 25 min.',
+      url: '/session/s1',
+    });
+    assert.ok(minimal);
+    assert.equal('actorId' in minimal, false);
+  });
+});
+
+describe('idempotent record IDs (CloudEvent-keyed)', () => {
+  it('DM: retries of one event dedupe; no cross-conversation collision', () => {
+    // Same CloudEvent delivered twice (retry) → identical ID.
+    assert.equal(dmNotificationId(CONVO, 'event-1'), dmNotificationId(CONVO, 'event-1'));
+    // Different messages are different events → distinct IDs.
+    assert.notEqual(dmNotificationId(CONVO, 'event-1'), dmNotificationId(CONVO, 'event-2'));
+    // Same event ID string in another conversation can never collide.
+    assert.notEqual(
+      dmNotificationId('aliceUid__caraUid', 'event-1'),
+      dmNotificationId(CONVO, 'event-1')
+    );
+  });
+
+  it('session joins: leave/rejoin (new events) notify again, retries dedupe', () => {
+    const firstJoin = sessionEventNotificationId('join', 'event-join-1');
+    const retry = sessionEventNotificationId('join', 'event-join-1');
+    const rejoin = sessionEventNotificationId('join', 'event-join-2');
+    assert.equal(firstJoin, retry);
+    assert.notEqual(firstJoin, rejoin);
+  });
+
+  it('cancel/reopen/cancel produces distinct records per cancel event', () => {
+    assert.notEqual(
+      sessionEventNotificationId('cancel', 'event-cancel-1'),
+      sessionEventNotificationId('cancel', 'event-cancel-2')
+    );
+  });
+
+  it('reverting to a prior time/location still notifies (no state hashing)', () => {
+    // Two edits that land on identical session state are still two events.
+    assert.notEqual(
+      sessionEventNotificationId('update', 'event-edit-1'),
+      sessionEventNotificationId('update', 'event-edit-3')
+    );
+  });
+
+  it('reminders: one per uid per session start occurrence', () => {
+    const start = 1786000000000;
+    assert.equal(
+      reminderNotificationId('s1', 'aliceUid', start),
+      reminderNotificationId('s1', 'aliceUid', start)
+    );
+    // Rescheduled session (new startTime) legitimately reminds again.
+    assert.notEqual(
+      reminderNotificationId('s1', 'aliceUid', start),
+      reminderNotificationId('s1', 'aliceUid', start + 3_600_000)
+    );
+    assert.notEqual(
+      reminderNotificationId('s1', 'aliceUid', start),
+      reminderNotificationId('s1', 'bobUid', start)
+    );
+    assert.notEqual(
+      reminderNotificationId('s1', 'aliceUid', start),
+      reminderNotificationId('s2', 'aliceUid', start)
+    );
+  });
+
+  it('sanitizes unexpected characters out of doc IDs', () => {
+    const id = dmNotificationId('a/b', 'e.v/t');
+    assert.equal(/^[A-Za-z0-9_-]+$/.test(id), true);
+  });
+});

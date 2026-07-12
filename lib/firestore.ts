@@ -6,6 +6,7 @@ import {
   deleteField,
   doc,
   documentId,
+  getCountFromServer,
   getDoc,
   getDocs,
   limit,
@@ -15,8 +16,10 @@ import {
   runTransaction,
   serverTimestamp,
   setDoc,
+  startAfter,
   Timestamp,
   type QueryConstraint,
+  type QueryDocumentSnapshot,
   updateDoc,
   where,
   writeBatch,
@@ -508,6 +511,113 @@ export async function saveNotificationPref(
     },
     { merge: true }
   );
+}
+
+/**
+ * Notification records (users/{uid}/notifications) — written only by Cloud
+ * Functions; the client reads them and flips readAt. group_message /
+ * friend_* types are reserved by the schema but not produced yet.
+ */
+export type AppNotification = {
+  notificationId: string;
+  /** One of the schema's 8 types; kept open so unknown future types render generically. */
+  type: string;
+  title: string;
+  body: string;
+  url: string;
+  createdAt: Timestamp | null;
+  readAt: Timestamp | null;
+};
+
+export const NOTIFICATIONS_PAGE_SIZE = 30;
+
+function notificationsCollection(userId: string) {
+  return collection(db, COLLECTIONS.users, userId, "notifications");
+}
+
+function parseNotification(id: string, data: Record<string, unknown>): AppNotification {
+  return {
+    notificationId: id,
+    type: typeof data.type === "string" ? data.type : "unknown",
+    title: typeof data.title === "string" ? data.title : "",
+    body: typeof data.body === "string" ? data.body : "",
+    url: typeof data.url === "string" ? data.url : "",
+    createdAt: data.createdAt instanceof Timestamp ? data.createdAt : null,
+    readAt: data.readAt instanceof Timestamp ? data.readAt : null,
+  };
+}
+
+export type NotificationsPage = {
+  notifications: AppNotification[];
+  /** Pass back to getNotificationsPage to fetch the next page; null when exhausted. */
+  cursor: QueryDocumentSnapshot | null;
+  hasMore: boolean;
+};
+
+/** Newest-first page; never an unbounded read. */
+export async function getNotificationsPage(
+  userId: string,
+  cursor?: QueryDocumentSnapshot | null
+): Promise<NotificationsPage> {
+  const snapshot = await getDocs(
+    query(
+      notificationsCollection(userId),
+      orderBy("createdAt", "desc"),
+      ...(cursor ? [startAfter(cursor)] : []),
+      limit(NOTIFICATIONS_PAGE_SIZE)
+    )
+  );
+
+  const hasMore = snapshot.size === NOTIFICATIONS_PAGE_SIZE;
+
+  return {
+    notifications: snapshot.docs.map((d) => parseNotification(d.id, d.data())),
+    cursor: hasMore ? snapshot.docs[snapshot.docs.length - 1] : null,
+    hasMore,
+  };
+}
+
+/** Aggregation count — no document reads, safe to call on every focus. */
+export async function getUnreadNotificationCount(userId: string): Promise<number> {
+  const snapshot = await getCountFromServer(
+    query(notificationsCollection(userId), where("readAt", "==", null))
+  );
+  return snapshot.data().count;
+}
+
+export async function markNotificationRead(userId: string, notificationId: string) {
+  await updateDoc(doc(db, COLLECTIONS.users, userId, "notifications", notificationId), {
+    readAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Marks every unread notification read, paging well under the 500-write
+ * batch cap. Touches only unread docs and only their readAt field.
+ * Returns how many were updated.
+ */
+export async function markAllNotificationsRead(userId: string): Promise<number> {
+  const pageSize = 300;
+  let total = 0;
+
+  for (;;) {
+    const snapshot = await getDocs(
+      query(notificationsCollection(userId), where("readAt", "==", null), limit(pageSize))
+    );
+
+    if (snapshot.empty) {
+      return total;
+    }
+
+    const batch = writeBatch(db);
+    snapshot.docs.forEach((d) => batch.update(d.ref, { readAt: serverTimestamp() }));
+    await batch.commit();
+    total += snapshot.size;
+
+    if (snapshot.size < pageSize) {
+      return total;
+    }
+  }
 }
 
 export async function getLocations() {

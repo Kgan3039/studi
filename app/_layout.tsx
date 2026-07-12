@@ -97,8 +97,9 @@ function RootLayout() {
     let cleanup: (() => void) | undefined;
     let cancelled = false;
 
-    addNotificationResponseListener((url) => {
+    addNotificationResponseListener(({ url, type }) => {
       if (!cancelled) {
+        track('notification_opened', { type: type ?? 'unknown', source: 'push' });
         router.push(url as never);
       }
     }).then((unsubscribe) => {
@@ -180,6 +181,7 @@ function RootLayout() {
           <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />
           <Stack.Screen name="rate-location" options={{ title: 'Rate This Spot' }} />
           <Stack.Screen name="settings" options={{ title: 'Settings' }} />
+          <Stack.Screen name="notifications" options={{ title: 'Notifications' }} />
         </Stack.Protected>
       </Stack>
       <StatusBar style="auto" />

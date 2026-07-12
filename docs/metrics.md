@@ -15,6 +15,9 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 | `profile_updated` | Profile edit save succeeds (name/year/major/pronouns/bio) | `fieldsChanged` (count, never values) |
 | `settings_viewed` | Settings screen opened | — |
 | `notification_pref_toggled` | Notification preference save succeeds | `category` (pref key), `enabled` |
+| `notifications_viewed` | Notifications Center gains focus | `unreadCount` |
+| `notification_opened` | Notification acted on — center row tap or push tap (push taps navigate straight to content, so one tap never fires both sources) | `type` (notification type), `source` (`center` \| `push`) |
+| `notifications_mark_all_read` | Mark-all-read persists | `count` (rows updated) |
 | `session_create_started` | Create-session screen opened | `fromClassId?`, `fromLocationId?` |
 | `session_created` | `createSession()` succeeds | `classId`, `hoursUntilStart`, `capacity` |
 | `session_joined` | `joinSession()` performs a real join | `classId`, `participantCountAfter` |
