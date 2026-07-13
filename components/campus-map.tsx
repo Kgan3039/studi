@@ -1,10 +1,13 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { MapSessionTiming } from '@/components/campus-map.types';
 import { Brand, Colors, Elevation, FontFamily, Radius, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { canonicalStudyLocationId } from '@/lib/catalog';
 import type { StudyLocation } from '@/lib/firestore';
+import { buildCampusMarkerEntries } from '@/lib/map-markers';
 
 type CampusMapProps = {
   locations: StudyLocation[];
@@ -13,6 +16,7 @@ type CampusMapProps = {
   selectedLocationId: string | null;
   sessionTimingByLocation: Map<string, MapSessionTiming>;
   sessionsByLocation: Map<string, number>;
+  visibleLocationIds: Set<string>;
 };
 
 const TIMING_LABELS: { timing: Exclude<MapSessionTiming, 'none'>; label: string }[] = [
@@ -65,10 +69,21 @@ export function CampusMap({
   selectedLocationId,
   sessionTimingByLocation,
   sessionsByLocation,
+  visibleLocationIds,
 }: CampusMapProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const isDark = colorScheme === 'dark';
+
+  // Same dedupe/ordering as the native map so both variants agree on which
+  // pin represents an aliased location.
+  const visibleMarkers = useMemo(
+    () =>
+      buildCampusMarkerEntries(locations, { canonicalize: canonicalStudyLocationId }).filter(
+        ({ location }) => visibleLocationIds.has(location.locationId)
+      ),
+    [locations, visibleLocationIds]
+  );
 
   return (
     <View
@@ -135,7 +150,7 @@ export function CampusMap({
         ))}
       </View>
 
-      {locations.map((location) => {
+      {visibleMarkers.map(({ canonicalId, location }) => {
         const isSelected = selectedLocationId === location.locationId;
         const sessionCount = sessionsByLocation.get(location.locationId) ?? 0;
         const timing = sessionTimingByLocation.get(location.locationId) ?? 'none';
@@ -148,7 +163,7 @@ export function CampusMap({
             accessibilityRole="button"
             accessibilityState={{ selected: isSelected }}
             hitSlop={8}
-            key={location.locationId}
+            key={canonicalId}
             onPress={() => onSelectLocation(location.locationId)}
             style={({ pressed }) => [
               styles.markerWrap,
@@ -190,7 +205,7 @@ export function CampusMap({
         );
       })}
 
-      {locations.length === 0 ? (
+      {visibleMarkers.length === 0 ? (
         <View
           pointerEvents="none"
           style={[styles.emptyOverlay, Elevation.e1, { backgroundColor: palette.surface }]}>

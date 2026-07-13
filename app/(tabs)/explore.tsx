@@ -523,12 +523,13 @@ export default function StudyLocationsScreen() {
 
       <View style={styles.mapAndSheet}>
         <CampusMap
-          locations={filteredLocations}
+          locations={locations}
           onOpenCampusMap={openCampusMap}
           onSelectLocation={selectLocation}
           selectedLocationId={selectedLocationId}
           sessionTimingByLocation={sessionTimingByLocation}
           sessionsByLocation={sessionsByLocation}
+          visibleLocationIds={visibleLocationIds}
         />
 
         {filteredLocations.length > 0 ? (

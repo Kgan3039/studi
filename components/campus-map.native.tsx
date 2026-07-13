@@ -1,5 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Marker, type LatLng } from 'react-native-maps';
 
@@ -12,7 +12,9 @@ import {
   TypeScale,
 } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { canonicalStudyLocationId } from '@/lib/catalog';
 import type { StudyLocation } from '@/lib/firestore';
+import { buildCampusMarkerEntries, isRenderableCoordinate } from '@/lib/map-markers';
 import type { MapSessionTiming } from '@/components/campus-map.types';
 
 type CampusMapProps = {
@@ -22,6 +24,7 @@ type CampusMapProps = {
   selectedLocationId: string | null;
   sessionTimingByLocation: Map<string, MapSessionTiming>;
   sessionsByLocation: Map<string, number>;
+  visibleLocationIds: Set<string>;
 };
 
 const CAMPUS_REGION = {
@@ -34,24 +37,13 @@ const CAMPUS_REGION = {
 const MAP_PADDING = { bottom: 24, left: 8, right: 8, top: 8 };
 const FIT_PADDING = { bottom: 64, left: 44, right: 44, top: 64 };
 
-function isUsableCoordinate(coordinate: StudyLocation['coordinates'] | undefined) {
-  const latitude = coordinate?.latitude;
-  const longitude = coordinate?.longitude;
-
-  if (typeof latitude !== 'number' || typeof longitude !== 'number') {
-    return false;
-  }
-
-  return (
-    Number.isFinite(latitude) &&
-    Number.isFinite(longitude) &&
-    Math.abs(latitude) <= 90 &&
-    Math.abs(longitude) <= 180
-  );
-}
+// How long a marker keeps tracksViewChanges on after its appearance changes.
+// Long enough for iOS to re-snapshot the custom view, short enough to keep
+// the map cheap while idle.
+const TRACK_APPEARANCE_MS = 350;
 
 function markerCoordinate(location: StudyLocation): LatLng | null {
-  if (!isUsableCoordinate(location.coordinates)) {
+  if (!isRenderableCoordinate(location.coordinates)) {
     return null;
   }
 
@@ -78,6 +70,92 @@ function getTimingColor(timing: MapSessionTiming, tint: string, icon: string) {
   }
 }
 
+type CampusMapMarkerProps = {
+  coordinate: LatLng;
+  isSelected: boolean;
+  isVisible: boolean;
+  location: StudyLocation;
+  onSelectLocation: (locationId: string) => void;
+  palette: (typeof Colors)[keyof typeof Colors];
+  sessionCount: number;
+  timing: MapSessionTiming;
+};
+
+// Markers stay mounted for the whole location set; search and filters only
+// flip isVisible/appearance. AIRMap's native child array must never see
+// churn from filtering — remount-by-key is what crashed the map under the
+// Fabric interop, so selection/timing may only change props here.
+const CampusMapMarker = memo(function CampusMapMarker({
+  coordinate,
+  isSelected,
+  isVisible,
+  location,
+  onSelectLocation,
+  palette,
+  sessionCount,
+  timing,
+}: CampusMapMarkerProps) {
+  const timingColor = getTimingColor(timing, palette.tint, palette.icon);
+  const [tracksViewChanges, setTracksViewChanges] = useState(true);
+
+  // iOS snapshots custom marker views once tracksViewChanges turns off, so
+  // pulse it back on whenever the rendered appearance changes.
+  useEffect(() => {
+    setTracksViewChanges(true);
+    const timer = setTimeout(() => setTracksViewChanges(false), TRACK_APPEARANCE_MS);
+
+    return () => clearTimeout(timer);
+  }, [isSelected, isVisible, timingColor, palette.surface, palette.border]);
+
+  const handlePress = useCallback(() => {
+    if (isVisible) {
+      onSelectLocation(location.locationId);
+    }
+  }, [isVisible, location.locationId, onSelectLocation]);
+
+  return (
+    <Marker
+      anchor={{ x: 0.5, y: 0.5 }}
+      accessibilityElementsHidden={!isVisible}
+      accessibilityLabel={`${location.name}, ${sessionCount} upcoming ${sessionCount === 1 ? 'session' : 'sessions'}, ${timing === 'live' ? 'happening now' : timing === 'soon' ? 'starting soon' : timing === 'later' ? 'later' : 'no scheduled sessions'}`}
+      coordinate={coordinate}
+      identifier={location.locationId}
+      onPress={handlePress}
+      opacity={isVisible ? 1 : 0}
+      tracksViewChanges={tracksViewChanges}
+      zIndex={isSelected ? 4 : sessionCount > 0 ? 3 : 2}>
+      <View style={styles.markerTouchTarget}>
+        <View
+          style={[
+            styles.markerHalo,
+            {
+              backgroundColor: isSelected ? `${timingColor}20` : 'transparent',
+            },
+          ]}>
+          <View
+            style={[
+              styles.markerCore,
+              isSelected && styles.markerCoreSelected,
+              Elevation.e1,
+              {
+                backgroundColor: palette.surface,
+                borderColor: isSelected ? timingColor : palette.border,
+              },
+            ]}>
+            <View
+              style={[
+                styles.markerStatus,
+                isSelected && styles.markerStatusSelected,
+                { backgroundColor: timingColor },
+              ]}
+            />
+          </View>
+        </View>
+      </View>
+    </Marker>
+  );
+});
+
 export function CampusMap({
   locations,
   onOpenCampusMap,
@@ -85,43 +163,44 @@ export function CampusMap({
   selectedLocationId,
   sessionTimingByLocation,
   sessionsByLocation,
+  visibleLocationIds,
 }: CampusMapProps) {
   const mapRef = useRef<MapView | null>(null);
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const [isMapReady, setIsMapReady] = useState(false);
+
+  // One entry per canonical location id, in canonical-id order, valid
+  // coordinates only — MapView's direct children are exactly this list and
+  // nothing else, so the native child array stays deterministic.
   const markers = useMemo(
     () =>
-      locations.flatMap((location) => {
-        const coordinate = markerCoordinate(location);
+      buildCampusMarkerEntries(locations, { canonicalize: canonicalStudyLocationId }).flatMap(
+        ({ canonicalId, location }) => {
+          const coordinate = markerCoordinate(location);
 
-        if (!coordinate) {
-          return [];
+          return coordinate ? [{ canonicalId, coordinate, location }] : [];
         }
+      ),
+    [locations]
+  );
 
-        return [
-          {
-            coordinate,
-            location,
-            sessionCount: sessionsByLocation.get(location.locationId) ?? 0,
-            timing: sessionTimingByLocation.get(location.locationId) ?? 'none',
-          },
-        ];
-      }),
-    [locations, sessionTimingByLocation, sessionsByLocation]
+  const visibleMarkers = useMemo(
+    () => markers.filter((marker) => visibleLocationIds.has(marker.location.locationId)),
+    [markers, visibleLocationIds]
   );
 
   const fitVisibleMarkers = useCallback(() => {
-    if (!isMapReady || markers.length === 0) {
+    if (!isMapReady || visibleMarkers.length === 0) {
       return;
     }
 
     requestAnimationFrame(() => {
       try {
-        if (markers.length === 1) {
+        if (visibleMarkers.length === 1) {
           mapRef.current?.animateToRegion(
             {
-              ...markers[0].coordinate,
+              ...visibleMarkers[0].coordinate,
               latitudeDelta: 0.004,
               longitudeDelta: 0.004,
             },
@@ -131,7 +210,7 @@ export function CampusMap({
         }
 
         mapRef.current?.fitToCoordinates(
-          markers.map((marker) => marker.coordinate),
+          visibleMarkers.map((marker) => marker.coordinate),
           { animated: true, edgePadding: FIT_PADDING }
         );
       } catch {
@@ -139,7 +218,7 @@ export function CampusMap({
         // leaving the current region is safer than letting search/filter crash.
       }
     });
-  }, [isMapReady, markers]);
+  }, [isMapReady, visibleMarkers]);
 
   useEffect(() => {
     fitVisibleMarkers();
@@ -170,54 +249,22 @@ export function CampusMap({
         style={StyleSheet.absoluteFill}
         toolbarEnabled={false}
         userInterfaceStyle={colorScheme}>
-        {markers.map(({ coordinate, location, sessionCount, timing }) => {
-          const isSelected = selectedLocationId === location.locationId;
-          const timingColor = getTimingColor(timing, palette.tint, palette.icon);
-
-          return (
-            <Marker
-              anchor={{ x: 0.5, y: 0.5 }}
-              accessibilityLabel={`${location.name}, ${sessionCount} upcoming ${sessionCount === 1 ? 'session' : 'sessions'}, ${timing === 'live' ? 'happening now' : timing === 'soon' ? 'starting soon' : timing === 'later' ? 'later' : 'no scheduled sessions'}`}
-              coordinate={coordinate}
-              identifier={location.locationId}
-              key={`${location.locationId}-${isSelected ? 'selected' : 'idle'}-${timing}`}
-              onPress={() => onSelectLocation(location.locationId)}
-              tracksViewChanges={false}
-              zIndex={isSelected ? 4 : sessionCount > 0 ? 3 : 2}>
-              <View style={styles.markerTouchTarget}>
-                <View
-                  style={[
-                    styles.markerHalo,
-                    {
-                      backgroundColor: isSelected ? `${timingColor}20` : 'transparent',
-                    },
-                  ]}>
-                  <View
-                    style={[
-                      styles.markerCore,
-                      isSelected && styles.markerCoreSelected,
-                      Elevation.e1,
-                      {
-                        backgroundColor: palette.surface,
-                        borderColor: isSelected ? timingColor : palette.border,
-                      },
-                    ]}>
-                    <View
-                      style={[
-                        styles.markerStatus,
-                        isSelected && styles.markerStatusSelected,
-                        { backgroundColor: timingColor },
-                      ]}
-                    />
-                  </View>
-                </View>
-              </View>
-            </Marker>
-          );
-        })}
+        {markers.map(({ canonicalId, coordinate, location }) => (
+          <CampusMapMarker
+            key={canonicalId}
+            coordinate={coordinate}
+            isSelected={selectedLocationId === location.locationId}
+            isVisible={visibleLocationIds.has(location.locationId)}
+            location={location}
+            onSelectLocation={onSelectLocation}
+            palette={palette}
+            sessionCount={sessionsByLocation.get(location.locationId) ?? 0}
+            timing={sessionTimingByLocation.get(location.locationId) ?? 'none'}
+          />
+        ))}
       </MapView>
 
-      {markers.length === 0 ? (
+      {visibleMarkers.length === 0 ? (
         <View
           pointerEvents="none"
           style={[
