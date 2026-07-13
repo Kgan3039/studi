@@ -110,6 +110,11 @@ export type StudySession = {
   classId: string;
   endTime: Timestamp;
   hostId: string;
+  /** Group-chat unread metadata, written only by the Cloud Function on each
+   *  message — arrival time and sender, never content (the session doc is
+   *  readable by all verified users). Absent until the first message. */
+  lastMessageAt?: Timestamp;
+  lastMessageSenderId?: string;
   locationId: string;
   participantIds: string[];
   sessionId: string;
@@ -180,6 +185,19 @@ export type ConversationMessage = {
   createdAt?: unknown;
   messageId: string;
   senderId: string;
+  text: string;
+};
+
+/** Session group-chat message — same shape as a DM message (senderId, text,
+ *  createdAt); sender names resolve from public profiles at render time, so
+ *  nothing forgeable or stale is denormalized onto the doc. */
+export type SessionMessage = {
+  createdAt?: unknown;
+  messageId: string;
+  /** True while the local optimistic write hasn't been acknowledged yet. */
+  pending: boolean;
+  senderId: string;
+  sessionId: string;
   text: string;
 };
 
@@ -729,6 +747,8 @@ function normalizeSessionDoc(
     return null;
   }
 
+  const lastMessageAt = normalizeSessionTimestamp(data.lastMessageAt);
+
   return {
     sessionId,
     classId: typeof data.classId === "string" ? data.classId : "",
@@ -744,6 +764,11 @@ function normalizeSessionDoc(
     // Pre-capacity docs have no field — leave undefined (unlimited).
     ...(typeof data.capacity === "number" && Number.isInteger(data.capacity)
       ? { capacity: data.capacity }
+      : {}),
+    // Group-chat unread metadata (CF-written) — absent until the first message.
+    ...(lastMessageAt ? { lastMessageAt } : {}),
+    ...(typeof data.lastMessageSenderId === "string" && data.lastMessageSenderId
+      ? { lastMessageSenderId: data.lastMessageSenderId }
       : {}),
   };
 }
@@ -1118,6 +1143,171 @@ export function subscribeToConversationMessages(
 
     listener(messages);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Session group chat (PR: group chat). Messages live in
+// sessions/{sessionId}/messages with the same doc shape as DM messages;
+// rules gate everything on parent-session participation. The chat screen
+// keeps a live window over the newest page and pages backwards on demand,
+// so no unbounded reads.
+// ---------------------------------------------------------------------------
+
+export const SESSION_MESSAGES_PAGE_SIZE = 30;
+
+/** Group-chat fanout ceiling, judged on the ACTUAL participant count (the
+ *  optional capacity field can be absent on legacy sessions). Mirrors
+ *  firestore.rules (messages create) and MAX_GROUP_CHAT_PARTICIPANTS in
+ *  functions/notification-validation.js — change all three together. */
+export const MAX_GROUP_CHAT_PARTICIPANTS = 20;
+
+/** Oversized legacy sessions get a read-only chat: rules deny new sends and
+ *  the Cloud Function skips notification fanout entirely. */
+export function isGroupChatAvailable(session: Pick<StudySession, "participantIds">) {
+  return session.participantIds.length <= MAX_GROUP_CHAT_PARTICIPANTS;
+}
+
+function sessionMessagesCollection(sessionId: string) {
+  return collection(db, COLLECTIONS.sessions, sessionId, "messages");
+}
+
+function mapSessionMessageDoc(
+  sessionId: string,
+  messageDoc: QueryDocumentSnapshot
+): SessionMessage {
+  // Estimated server timestamps keep an in-flight optimistic send ordered and
+  // renderable instead of surfacing createdAt: null until the ack arrives.
+  const data = messageDoc.data({ serverTimestamps: "estimate" });
+
+  return {
+    sessionId,
+    messageId: messageDoc.id,
+    pending: messageDoc.metadata.hasPendingWrites,
+    senderId: typeof data.senderId === "string" ? data.senderId : "",
+    text: typeof data.text === "string" ? data.text : "",
+    createdAt: data.createdAt,
+  };
+}
+
+/** Pre-generates the message doc ID so a failed send can be retried under the
+ *  same ID without ever duplicating on screen or in Firestore. */
+export function createSessionMessageId(sessionId: string): string {
+  return doc(sessionMessagesCollection(sessionId)).id;
+}
+
+export async function sendSessionMessage(
+  sessionId: string,
+  senderId: string,
+  text: string,
+  messageId: string
+) {
+  const trimmedText = text.trim();
+
+  if (!trimmedText) {
+    throw new Error("Write a message before sending.");
+  }
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, COLLECTIONS.sessions, sessionId, "messages", messageId), {
+    senderId,
+    text: trimmedText.slice(0, 2000),
+    createdAt: serverTimestamp(),
+  });
+  stageRateLimit(batch, senderId, "sendMessage");
+  await batch.commit();
+  track("group_message_sent", { length: trimmedText.length });
+}
+
+export type SessionMessagesPage = {
+  /** Newest-first, matching the inverted chat list. */
+  messages: SessionMessage[];
+  /** Cursor for the next-older page; null when this page came up short. */
+  cursor: QueryDocumentSnapshot | null;
+  hasMore: boolean;
+};
+
+/**
+ * Live window over the newest page of messages (newest-first). Local sends
+ * appear immediately via latency compensation (`pending: true`) and settle in
+ * place when the server acks. Older history loads through
+ * getEarlierSessionMessages using the returned cursor.
+ */
+export function subscribeToSessionMessages(
+  sessionId: string,
+  listener: (page: SessionMessagesPage) => void,
+  onError?: (error: Error) => void
+) {
+  const messagesQuery = query(
+    sessionMessagesCollection(sessionId),
+    orderBy("createdAt", "desc"),
+    limit(SESSION_MESSAGES_PAGE_SIZE)
+  );
+
+  return onSnapshot(
+    messagesQuery,
+    (snapshot) => {
+      const hasFullPage = snapshot.docs.length === SESSION_MESSAGES_PAGE_SIZE;
+      listener({
+        messages: snapshot.docs.map((messageDoc) =>
+          mapSessionMessageDoc(sessionId, messageDoc)
+        ),
+        cursor: hasFullPage ? snapshot.docs[snapshot.docs.length - 1] : null,
+        hasMore: hasFullPage,
+      });
+    },
+    onError
+  );
+}
+
+export async function getEarlierSessionMessages(
+  sessionId: string,
+  cursor: QueryDocumentSnapshot
+): Promise<SessionMessagesPage> {
+  const snapshot = await getDocs(
+    query(
+      sessionMessagesCollection(sessionId),
+      orderBy("createdAt", "desc"),
+      startAfter(cursor),
+      limit(SESSION_MESSAGES_PAGE_SIZE)
+    )
+  );
+
+  const hasFullPage = snapshot.docs.length === SESSION_MESSAGES_PAGE_SIZE;
+  return {
+    messages: snapshot.docs.map((messageDoc) => mapSessionMessageDoc(sessionId, messageDoc)),
+    cursor: hasFullPage ? snapshot.docs[snapshot.docs.length - 1] : null,
+    hasMore: hasFullPage,
+  };
+}
+
+/** Records "I've seen this thread as of now" — rules pin the value to the
+ *  server clock. threadId is the sessionId for group chats. */
+export async function markSessionChatRead(userId: string, sessionId: string) {
+  await setDoc(doc(db, COLLECTIONS.users, userId, "reads", sessionId), {
+    lastReadAt: serverTimestamp(),
+  });
+}
+
+export async function getSessionChatLastReadAt(
+  userId: string,
+  sessionId: string
+): Promise<Timestamp | null> {
+  const snap = await getDoc(doc(db, COLLECTIONS.users, userId, "reads", sessionId));
+  const lastReadAt = snap.exists() ? snap.data()?.lastReadAt : null;
+  return lastReadAt instanceof Timestamp ? lastReadAt : null;
+}
+
+/** Unread = someone else's message arrived after the viewer's read marker.
+ *  Your own sends never count, so the indicator can't flag you for talking. */
+export function hasUnreadSessionChat(
+  session: Pick<StudySession, "lastMessageAt" | "lastMessageSenderId">,
+  currentUserId: string,
+  lastReadAt: Timestamp | null
+): boolean {
+  if (!session.lastMessageAt || session.lastMessageSenderId === currentUserId) {
+    return false;
+  }
+  return !lastReadAt || session.lastMessageAt.toMillis() > lastReadAt.toMillis();
 }
 
 export function subscribeToUserConversations(

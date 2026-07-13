@@ -175,6 +175,34 @@ service cloud.firestore {
           && incoming().readAt == request.time;
         allow delete: if false;
       }
+
+      // Chat read markers (PR: group chat) — one tiny owner-only doc per
+      // thread recording when the owner last opened it; unread is derived as
+      // session.lastMessageAt > lastReadAt. threadId must name a real thread
+      // the owner belongs to — a session or a DM conversation — so nobody can
+      // pile up junk marker docs. Pinned to the server clock so a forged
+      // future marker can't hide messages that haven't arrived. Costs at most
+      // two extra document reads per marker write.
+      match /reads/{threadId} {
+        function isOwnSessionThread() {
+          return exists(/databases/$(database)/documents/sessions/$(threadId))
+            && request.auth.uid in
+               get(/databases/$(database)/documents/sessions/$(threadId)).data.participantIds;
+        }
+
+        function isOwnConversationThread() {
+          return exists(/databases/$(database)/documents/conversations/$(threadId))
+            && request.auth.uid in
+               get(/databases/$(database)/documents/conversations/$(threadId)).data.participantIds;
+        }
+
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && incoming().keys().hasOnly(['lastReadAt'])
+          && incoming().lastReadAt == request.time
+          && (isOwnSessionThread() || isOwnConversationThread());
+        allow delete: if false; // account deletion recursive-deletes the user tree
+      }
     }
 
     // ------------------------------------------------------------------
@@ -297,6 +325,41 @@ service cloud.firestore {
       allow update: if isVerifiedUwUser()
         && (isHostEdit() || isSelfJoin() || isSelfJoinNoOp() || isSelfLeave());
       allow delete: if isVerifiedUwUser() && request.auth.uid == resource.data.hostId;
+
+      // Session group chat (PR: group chat) — participant-gated via the
+      // parent session doc, message shape identical to DM messages. The
+      // lastMessageAt/lastMessageSenderId unread metadata on the session doc
+      // is written only by the Cloud Function (Admin SDK bypasses rules);
+      // no client update branch exists for it. Leaving the session ends
+      // access. A cancelled session is read-only: retained participants keep
+      // the history, nobody sends. Sends are also denied when the session
+      // holds more than 20 people — the group-chat fanout ceiling, judged on
+      // the ACTUAL participant count so legacy uncapped sessions can't force
+      // unbounded notification fanout (mirrors MAX_GROUP_CHAT_PARTICIPANTS
+      // in functions/notification-validation.js and lib/firestore.ts; change
+      // all three together). Messages are fully immutable from the client —
+      // no edits, no deletes; account deletion cleans them up server-side.
+      match /messages/{messageId} {
+        function parentSession() {
+          return get(/databases/$(database)/documents/sessions/$(sessionId)).data;
+        }
+
+        allow read: if isVerifiedUwUser()
+          && request.auth.uid in parentSession().participantIds;
+        allow create: if isVerifiedUwUser()
+          && request.auth.uid == incoming().senderId
+          && parentSession().status in ['open', 'full']
+          && request.auth.uid in parentSession().participantIds
+          && parentSession().participantIds.size() <= 20
+          && incoming().keys().hasOnly(['senderId', 'text', 'createdAt'])
+          && incoming().text is string
+          && incoming().text.size() >= 1
+          && incoming().text.size() <= 2000
+          && incoming().createdAt == request.time
+          && hasFreshRateLimit(request.auth.uid, 'sendMessage');
+        allow update: if false;
+        allow delete: if false;
+      }
     }
 
     // ------------------------------------------------------------------
@@ -426,6 +489,18 @@ service cloud.firestore {
         && incoming().createdAt == resource.data.createdAt
         && hasFreshRateLimit(request.auth.uid, 'locationRating');
       allow delete: if isVerifiedUwUser() && resource.data.userId == request.auth.uid;
+    }
+
+    // ------------------------------------------------------------------
+    // Account-deletion job markers — durable deletion intent + resumable
+    // progress, written ONLY by the Admin SDK (deleteUserAccount callable
+    // and scripts/resume-account-deletion.js). The default deny would
+    // already cover this; the explicit match documents the invariant and
+    // the tests pin it.
+    // ------------------------------------------------------------------
+
+    match /accountDeletionJobs/{uid} {
+      allow read, write: if false;
     }
 
     // ------------------------------------------------------------------

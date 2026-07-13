@@ -179,6 +179,7 @@ function RootLayout() {
           <Stack.Screen name="conversation/[conversationId]" options={{ title: 'Conversation' }} />
           <Stack.Screen name="report-user" options={{ title: 'Report User' }} />
           <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />
+          <Stack.Screen name="session-chat/[sessionId]" options={{ title: 'Session Chat' }} />
           <Stack.Screen name="rate-location" options={{ title: 'Rate This Spot' }} />
           <Stack.Screen name="settings" options={{ title: 'Settings' }} />
           <Stack.Screen name="notifications" options={{ title: 'Notifications' }} />

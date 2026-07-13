@@ -13,11 +13,19 @@ const admin = require("firebase-admin");
 const crypto = require("crypto");
 const { Expo } = require("expo-server-sdk");
 const {
+  blockPairIdsFor,
   dmNotificationId,
+  filterBlockedRecipients,
+  groupMessageNotificationId,
+  isWithinGroupChatFanoutLimit,
   normalizeNotificationPayload,
   reminderNotificationId,
   sessionEventNotificationId,
 } = require("./notification-validation");
+const {
+  classifyDeletionRequest,
+  createAccountDeletionRunner,
+} = require("./account-deletion");
 
 admin.initializeApp();
 setGlobalOptions({ region: "us-central1", maxInstances: 5 });
@@ -406,6 +414,105 @@ exports.onDirectMessageCreated = onDocumentCreated(
   }
 );
 
+exports.onSessionMessageCreated = onDocumentCreated(
+  "sessions/{sessionId}/messages/{messageId}",
+  async (event) => {
+    const message = event.data?.data();
+    const senderId = message?.senderId;
+    const text = normalizePreview(message?.text);
+    const sessionId = event.params.sessionId;
+
+    if (!senderId || !sessionId || !text) {
+      return;
+    }
+
+    const sessionSnap = await db.collection("sessions").doc(sessionId).get();
+    if (!sessionSnap.exists) {
+      return;
+    }
+    const session = sessionSnap.data();
+
+    const participantIds = Array.isArray(session?.participantIds)
+      ? session.participantIds.filter((id) => typeof id === "string")
+      : [];
+
+    // Fanout ceiling (shared with firestore.rules and the client): oversized
+    // legacy sessions get no metadata bump and no notifications. The rules
+    // deny new sends there, so this only fires on a race or an Admin write —
+    // and silently notifying a subset would be worse than notifying nobody.
+    // This also structurally bounds the block lookups below at ≤38 reads.
+    if (!isWithinGroupChatFanoutLimit(participantIds.length)) {
+      return;
+    }
+
+    // Unread metadata for the session-details indicator: arrival time and
+    // sender only, never content — the session doc is readable by every
+    // verified user, so a text preview here would leak participant-only
+    // messages. The write re-fires onSessionParticipantsUpdated, which
+    // no-ops (no participant/status/time/location delta).
+    try {
+      await sessionSnap.ref.update({
+        lastMessageAt:
+          message.createdAt ?? admin.firestore.FieldValue.serverTimestamp(),
+        lastMessageSenderId: senderId,
+      });
+    } catch (error) {
+      console.warn("Session chat metadata update failed", error);
+    }
+
+    const candidates = participantIds.filter((uid) => uid !== senderId);
+
+    if (candidates.length === 0) {
+      return;
+    }
+
+    // Server-side block filtering: a blocked pair (either direction) gets
+    // neither the record nor the push — client bubble-hiding is a courtesy,
+    // not the enforcement. One batched getAll over both block-doc directions
+    // per recipient: 2 document reads per recipient per message, bounded by
+    // the fanout ceiling above (20 participants incl. sender → 19 recipients
+    // → at most 38 lookups in a single RPC). A lookup failure throws so
+    // Eventarc retries the whole event; the idempotent record IDs make that
+    // retry safe.
+    const blockRefs = candidates.flatMap((uid) =>
+      blockPairIdsFor(senderId, uid).map((id) => db.collection("userBlocks").doc(id))
+    );
+    const blockSnaps = await db.getAll(...blockRefs);
+    const existingBlockIds = new Set(
+      blockSnaps.filter((snap) => snap.exists).map((snap) => snap.id)
+    );
+    const recipients = filterBlockedRecipients(senderId, candidates, existingBlockIds);
+
+    if (recipients.length === 0) {
+      return;
+    }
+
+    // Display name comes from the sender's profile doc (server truth), never
+    // from anything client-supplied on the message.
+    const senderName = (await getDisplayName(senderId)) || "Someone";
+    const title =
+      typeof session?.title === "string" && session.title.trim()
+        ? session.title.trim()
+        : "Session chat";
+
+    await Promise.all(
+      recipients.map((uid) =>
+        notifyUser(uid, {
+          // CloudEvent ID: retries of one message event dedupe, every new
+          // message notifies again. Session-scoped like the DM equivalent.
+          id: groupMessageNotificationId(sessionId, event.id),
+          type: "group_message",
+          title,
+          body: `${senderName}: ${text}`,
+          url: `/session-chat/${sessionId}`,
+          actorId: senderId,
+          sessionId,
+        })
+      )
+    );
+  }
+);
+
 // Historical export name (originally join-only); renaming a deployed function
 // forces a delete/create cycle, so the name stays while the trigger now covers
 // joins, cancellation, and material time/location edits.
@@ -587,19 +694,21 @@ exports.sendSessionReminders = onSchedule("every 10 minutes", async () => {
 // Account deletion (D8): single authoritative path. Admin SDK bypasses rules,
 // so client-side cleanup write-paths no longer exist in the rules at all.
 // Reports are intentionally retained (moderation evidence).
+//
+// The state machine and cleanup runner live in ./account-deletion.js. Deletion
+// intent is recorded as a durable accountDeletionJobs/{uid} marker BEFORE the
+// account is disabled or any data is touched; cleanup drains queries in
+// bounded pages and is idempotent, so it can resume — via this callable while
+// the user's ID token lives (≤1 h after the request), and via the ops script
+// scripts/resume-account-deletion.js after that. A disabled account WITHOUT a
+// job marker is a moderation action and never enters cleanup.
 // ---------------------------------------------------------------------------
 
-async function deleteQueryBatch(q) {
-  // Deletes in pages to stay under batch limits.
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const snap = await q.limit(200).get();
-    if (snap.empty) return;
-    const batch = db.batch();
-    snap.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
-  }
-}
+const accountDeletion = createAccountDeletionRunner({
+  db,
+  auth: admin.auth(),
+  FieldValue: admin.firestore.FieldValue,
+});
 
 async function enforceDeleteAccountRateLimit(uid) {
   const ref = db.collection("rateLimits").doc(uid).collection("actions").doc("deleteAccount");
@@ -623,7 +732,7 @@ async function enforceDeleteAccountRateLimit(uid) {
   });
 }
 
-exports.deleteUserAccount = onCall(async (request) => {
+exports.deleteUserAccount = onCall({ timeoutSeconds: 540 }, async (request) => {
   const uid = request.auth?.uid;
   const authTime = request.auth?.token?.auth_time;
 
@@ -631,56 +740,64 @@ exports.deleteUserAccount = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "Sign in to delete your account.");
   }
 
-  if (
-    typeof authTime !== "number" ||
-    Date.now() / 1000 - authTime > DELETE_ACCOUNT_MAX_AUTH_AGE_SECONDS
-  ) {
+  let userRecord;
+  try {
+    userRecord = await admin.auth().getUser(uid);
+  } catch {
+    throw new HttpsError("failed-precondition", "This account no longer exists.");
+  }
+
+  const job = await accountDeletion.getJob(uid);
+  const decision = classifyDeletionRequest({
+    callerUid: uid,
+    job,
+    authDisabled: userRecord.disabled === true,
+  });
+
+  if (decision === "reject-disabled-no-job") {
+    // Disabled without a deletion job = moderation action, not a deletion in
+    // progress. Cleanup must never start from here.
+    throw new HttpsError("permission-denied", "This account is disabled. Contact support.");
+  }
+  if (decision === "reject-complete") {
+    throw new HttpsError("failed-precondition", "This account has already been deleted.");
+  }
+  if (decision === "reject-not-owner") {
+    throw new HttpsError("permission-denied", "You can only delete your own account.");
+  }
+
+  if (decision === "fresh") {
+    if (
+      typeof authTime !== "number" ||
+      Date.now() / 1000 - authTime > DELETE_ACCOUNT_MAX_AUTH_AGE_SECONDS
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Please sign in again before deleting your account."
+      );
+    }
+
+    await enforceDeleteAccountRateLimit(uid);
+
+    // Durable job marker first (deletion intent on record), then disable +
+    // revoke refresh tokens. From here the flow is resumable: by this
+    // callable while the user's ID token lives, then by the ops script.
+    await accountDeletion.beginDeletion(uid);
+  }
+  // decision === "resume": the caller's own active job exists — the
+  // freshness/rate-limit gates are skipped (a disabled account cannot
+  // re-authenticate; intent is proven by the marker) and the idempotent
+  // cleanup simply continues.
+
+  try {
+    await accountDeletion.runCleanup(uid);
+  } catch (error) {
+    console.warn("Account deletion cleanup failed", error);
     throw new HttpsError(
-      "failed-precondition",
-      "Please sign in again before deleting your account."
+      "internal",
+      "Account deletion did not finish. Try again to resume."
     );
   }
-
-  await enforceDeleteAccountRateLimit(uid);
-
-  // 1. Sessions hosted by the user: delete outright.
-  await deleteQueryBatch(db.collection("sessions").where("hostId", "==", uid));
-
-  // 2. Sessions joined: remove from participant arrays.
-  const joined = await db
-    .collection("sessions")
-    .where("participantIds", "array-contains", uid)
-    .get();
-  for (const docSnap of joined.docs) {
-    await docSnap.ref.update({
-      participantIds: admin.firestore.FieldValue.arrayRemove(uid),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-  }
-
-  // 3. Conversations: delete the thread and its messages (the counterpart
-  //    loses the thread too — acceptable for a 1:1 DM model and required to
-  //    avoid orphaned PII; messages contain the deleted user's words).
-  const conversations = await db
-    .collection("conversations")
-    .where("participantIds", "array-contains", uid)
-    .get();
-  for (const convo of conversations.docs) {
-    await db.recursiveDelete(convo.ref);
-  }
-
-  // 4. Blocks in either direction.
-  await deleteQueryBatch(db.collection("userBlocks").where("blockerUserId", "==", uid));
-  await deleteQueryBatch(db.collection("userBlocks").where("blockedUserId", "==", uid));
-
-  // 5. Location ratings (the aggregate trigger above decrements counts).
-  await deleteQueryBatch(db.collection("locationRatings").where("userId", "==", uid));
-
-  // 6. Profile (public doc + private and notifications subcollections — the
-  //    notification records double as reminder/dedupe state, so nothing else
-  //    to clean), then the Auth user.
-  await db.recursiveDelete(db.collection("users").doc(uid));
-  await admin.auth().deleteUser(uid);
 
   return { status: "deleted" };
 });

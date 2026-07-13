@@ -10,9 +10,14 @@ import validation from '../functions/notification-validation.js';
 
 const {
   BODY_MAX_LENGTH,
+  MAX_GROUP_CHAT_PARTICIPANTS,
   TITLE_MAX_LENGTH,
+  blockPairIdsFor,
   dmNotificationId,
+  filterBlockedRecipients,
+  groupMessageNotificationId,
   isAllowedNotificationUrl,
+  isWithinGroupChatFanoutLimit,
   normalizeNotificationPayload,
   reminderNotificationId,
   sessionEventNotificationId,
@@ -33,10 +38,21 @@ function validPayload(overrides = {}) {
 }
 
 describe('notification URL allowlist', () => {
-  it('accepts the three internal route shapes', () => {
+  it('accepts the four internal route shapes', () => {
     assert.equal(isAllowedNotificationUrl('/notifications'), true);
     assert.equal(isAllowedNotificationUrl(`/conversation/${CONVO}`), true);
     assert.equal(isAllowedNotificationUrl('/session/AbC123_x-9'), true);
+    assert.equal(isAllowedNotificationUrl('/session-chat/AbC123_x-9'), true);
+  });
+
+  it('holds /session-chat to the same segment rules as the other routes', () => {
+    assert.equal(isAllowedNotificationUrl('/session-chat/..'), false);
+    assert.equal(isAllowedNotificationUrl('/session-chat/../admin'), false);
+    assert.equal(isAllowedNotificationUrl('/session-chat/a%2Fb'), false);
+    assert.equal(isAllowedNotificationUrl('/session-chat/'), false);
+    assert.equal(isAllowedNotificationUrl('/session-chat'), false);
+    assert.equal(isAllowedNotificationUrl('/session-chat/a/b'), false);
+    assert.equal(isAllowedNotificationUrl(`/session-chat/${'a'.repeat(201)}`), false);
   });
 
   it('rejects traversal and dot segments', () => {
@@ -185,8 +201,95 @@ describe('idempotent record IDs (CloudEvent-keyed)', () => {
     );
   });
 
+  it('group messages: retries dedupe, new messages notify, sessions never collide', () => {
+    // Same CloudEvent delivered twice (retry) → identical ID.
+    assert.equal(
+      groupMessageNotificationId('s1', 'event-1'),
+      groupMessageNotificationId('s1', 'event-1')
+    );
+    // Every new message is a new event → distinct IDs.
+    assert.notEqual(
+      groupMessageNotificationId('s1', 'event-1'),
+      groupMessageNotificationId('s1', 'event-2')
+    );
+    // Same event ID string under another session can never collide.
+    assert.notEqual(
+      groupMessageNotificationId('s1', 'event-1'),
+      groupMessageNotificationId('s2', 'event-1')
+    );
+    assert.equal(/^[A-Za-z0-9_-]+$/.test(groupMessageNotificationId('a/b', 'e.v')), true);
+  });
+
   it('sanitizes unexpected characters out of doc IDs', () => {
     const id = dmNotificationId('a/b', 'e.v/t');
     assert.equal(/^[A-Za-z0-9_-]+$/.test(id), true);
+  });
+});
+
+describe('group-message block filtering (server-side)', () => {
+  // onSessionMessageCreated removes blocked recipients BEFORE notifyUser()
+  // runs, so a filtered recipient gets neither the persistent record nor the
+  // push — and since the filter takes no preference input, no
+  // notificationPrefs value can resurrect a blocked notification. (Prefs are
+  // applied later, inside notifyUser, and only ever suppress the push.)
+  const SENDER = 'senderUid';
+  const RECIPIENTS = ['bobUid', 'caraUid', 'danUid'];
+
+  it('returns both block-doc directions for a pair', () => {
+    assert.deepEqual(blockPairIdsFor('a', 'b'), ['a__b', 'b__a']);
+  });
+
+  it('sender-blocked-recipient is excluded — no record, no push', () => {
+    const blocks = new Set(['senderUid__bobUid']); // sender blocked bob
+    assert.deepEqual(
+      filterBlockedRecipients(SENDER, RECIPIENTS, blocks),
+      ['caraUid', 'danUid']
+    );
+  });
+
+  it('recipient-blocked-sender is excluded — no record, no push', () => {
+    const blocks = new Set(['caraUid__senderUid']); // cara blocked the sender
+    assert.deepEqual(
+      filterBlockedRecipients(SENDER, RECIPIENTS, blocks),
+      ['bobUid', 'danUid']
+    );
+  });
+
+  it('unrelated participants still notify; blocks between recipients are irrelevant', () => {
+    // bob and cara blocked each other — neither is blocked against the sender.
+    const blocks = new Set(['bobUid__caraUid', 'caraUid__bobUid']);
+    assert.deepEqual(filterBlockedRecipients(SENDER, RECIPIENTS, blocks), RECIPIENTS);
+  });
+
+  it('no blocks means everyone stays; both directions at once still exclude once', () => {
+    assert.deepEqual(filterBlockedRecipients(SENDER, RECIPIENTS, new Set()), RECIPIENTS);
+    const blocks = new Set(['senderUid__danUid', 'danUid__senderUid']);
+    assert.deepEqual(
+      filterBlockedRecipients(SENDER, RECIPIENTS, blocks),
+      ['bobUid', 'caraUid']
+    );
+  });
+});
+
+describe('group-chat fanout ceiling', () => {
+  // Judged on the actual participant count, never the optional capacity
+  // field — a legacy uncapped session is bounded by the same ceiling. The
+  // same 20 is hardcoded in firestore.rules (messages create) and mirrored
+  // in lib/firestore.ts.
+  it('a full 20-participant session (legacy or capped) fans out', () => {
+    assert.equal(MAX_GROUP_CHAT_PARTICIPANTS, 20);
+    assert.equal(isWithinGroupChatFanoutLimit(20), true);
+    assert.equal(isWithinGroupChatFanoutLimit(2), true);
+  });
+
+  it('21 participants (legacy uncapped session) do not fan out', () => {
+    assert.equal(isWithinGroupChatFanoutLimit(21), false);
+    assert.equal(isWithinGroupChatFanoutLimit(500), false);
+  });
+
+  it('non-integer counts never pass', () => {
+    assert.equal(isWithinGroupChatFanoutLimit(Number.NaN), false);
+    assert.equal(isWithinGroupChatFanoutLimit('20'), false);
+    assert.equal(isWithinGroupChatFanoutLimit(undefined), false);
   });
 });

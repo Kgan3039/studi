@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
@@ -35,6 +35,9 @@ import {
     getBlockedUserIds,
     getOrCreateDirectConversation,
     getSessionById,
+    getSessionChatLastReadAt,
+    hasUnreadSessionChat,
+    isGroupChatAvailable,
     isSessionAtCapacity,
     joinSession,
     leaveSession,
@@ -44,6 +47,7 @@ import {
 import { getStudyLocationDisplayName } from '@/lib/catalog';
 import { FirebaseError } from 'firebase/app';
 import type { User } from 'firebase/auth';
+import type { Timestamp } from 'firebase/firestore';
 
 function formatDisplayName(name: string | undefined) {
   if (name && name.trim().length > 0) {
@@ -68,6 +72,7 @@ export default function SessionDetailScreen() {
   const [isJoining, setIsJoining] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const [isOpeningHostChat, setIsOpeningHostChat] = useState(false);
+  const [chatLastReadAt, setChatLastReadAt] = useState<Timestamp | null>(null);
   const { toast, show: showToast } = useSuccessToast();
 
   useEffect(() => {
@@ -123,6 +128,43 @@ export default function SessionDetailScreen() {
     loadSession();
   }, [loadSession]);
 
+  // Refresh the chat read marker every time the screen regains focus, so the
+  // unread dot clears right after coming back from the chat.
+  useFocusEffect(
+    useCallback(() => {
+      if (!currentUser || !sessionId) {
+        setChatLastReadAt(null);
+        return;
+      }
+
+      let cancelled = false;
+      getSessionChatLastReadAt(currentUser.uid, sessionId)
+        .then((lastReadAt) => {
+          if (!cancelled) {
+            setChatLastReadAt(lastReadAt);
+          }
+        })
+        .catch(() => {
+          // Indicator-only data; a failed read just leaves the dot conservative.
+        });
+
+      return () => {
+        cancelled = true;
+      };
+    }, [currentUser, sessionId])
+  );
+
+  function openSessionChat(source: 'session_detail' | 'auto_join') {
+    if (!sessionId) {
+      return;
+    }
+
+    router.push({
+      pathname: '/session-chat/[sessionId]',
+      params: { sessionId, source },
+    });
+  }
+
   async function handleRefresh() {
     setIsRefreshing(true);
     await loadSession();
@@ -153,6 +195,8 @@ export default function SessionDetailScreen() {
         }
         setStatus('Joined session successfully.');
         showToast('You’re in.', session?.title ?? 'See you at the table.');
+        // Land new members in the group chat so coordination starts right away.
+        openSessionChat('auto_join');
       }
     } catch (error) {
       // Lost the race for the last seat: reload so the Full state renders,
@@ -275,6 +319,15 @@ export default function SessionDetailScreen() {
     ? session.participantIds.includes(currentUser.uid)
     : false;
   const isHost = currentUser && session ? session.hostId === currentUser.uid : false;
+  // Oversized legacy sessions (past the group-chat fanout ceiling) get a
+  // read-only chat — no unread dot, and the card says so.
+  const isChatAvailable = !!session && isGroupChatAvailable(session);
+  const hasUnreadChat =
+    !!currentUser &&
+    !!session &&
+    isParticipant &&
+    isChatAvailable &&
+    hasUnreadSessionChat(session, currentUser.uid, chatLastReadAt);
   const visibleAttendees = session
     ? session.attendeeProfiles.filter((attendee) => !blockedUserIds.includes(attendee.uid))
     : [];
@@ -414,6 +467,45 @@ export default function SessionDetailScreen() {
                 />
               </View>
             </View>
+
+            {/* 2.5 SESSION CHAT — participants only (host included). */}
+            {isParticipant ? (
+              <View
+                style={[
+                  styles.card,
+                  Elevation.e1,
+                  { backgroundColor: palette.surface, borderColor: palette.border },
+                ]}>
+                <View style={styles.chatRow}>
+                  <View style={styles.chatText}>
+                    <View style={styles.chatTitleRow}>
+                      <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
+                        Session chat
+                      </Text>
+                      {hasUnreadChat ? (
+                        <View
+                          accessibilityLabel="Unread messages"
+                          style={[styles.unreadDot, { backgroundColor: palette.tint }]}
+                        />
+                      ) : null}
+                    </View>
+                    <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+                      {!isChatAvailable
+                        ? 'Chat is unavailable for sessions this large.'
+                        : hasUnreadChat
+                          ? 'New messages from your group.'
+                          : 'Coordinate with everyone going.'}
+                    </Text>
+                  </View>
+                  <Button
+                    label="Open chat"
+                    variant="secondary"
+                    size="sm"
+                    onPress={() => openSessionChat('session_detail')}
+                  />
+                </View>
+              </View>
+            ) : null}
 
             {/* 3. ATTENDANCE — attendee list, capacity state, join status. */}
             <View
@@ -695,6 +787,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Space.md,
+  },
+  chatRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.md,
+  },
+  chatText: {
+    flex: 1,
+    gap: 2,
+  },
+  chatTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  unreadDot: {
+    borderRadius: Radius.pill,
+    height: 8,
+    width: 8,
   },
   hostText: {
     flex: 1,

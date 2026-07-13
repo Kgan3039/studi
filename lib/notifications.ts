@@ -26,10 +26,10 @@ const SAFE_ROUTE_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
 /**
  * Strict allowlist for navigation triggered by notification payloads — push
  * taps and Notifications Center rows both validate through here. Valid forms:
- * `/notifications`, `/conversation/{id}`, `/session/{id}` where {id} is a
- * safe internal ID. The segment must also decode to itself, so traversal
- * (`.`/`..`), percent-encoded separators (%2F, %5C), malformed escapes, and
- * external schemes never pass.
+ * `/notifications`, `/conversation/{id}`, `/session/{id}`, `/session-chat/{id}`
+ * where {id} is a safe internal ID. The segment must also decode to itself, so
+ * traversal (`.`/`..`), percent-encoded separators (%2F, %5C), malformed
+ * escapes, and external schemes never pass.
  */
 export function isAllowedNotificationUrl(url: unknown): url is string {
   if (typeof url !== 'string') {
@@ -40,7 +40,7 @@ export function isAllowedNotificationUrl(url: unknown): url is string {
     return true;
   }
 
-  const match = /^\/(conversation|session)\/([^/]+)$/.exec(url);
+  const match = /^\/(conversation|session|session-chat)\/([^/]+)$/.exec(url);
   if (!match) {
     return false;
   }

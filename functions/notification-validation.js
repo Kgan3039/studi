@@ -32,7 +32,7 @@ function isSafeId(value) {
 /**
  * Strict allowlist for notification navigation targets. Valid forms:
  *   /notifications
- *   /conversation/{id}   /session/{id}
+ *   /conversation/{id}   /session/{id}   /session-chat/{id}
  * where {id} must be a safe internal ID (see SAFE_ID_PATTERN). The segment is
  * also run through decodeURIComponent and must decode to itself, so
  * percent-encoded separators (%2F, %5C), traversal (`.`/`..`), external
@@ -47,7 +47,7 @@ function isAllowedNotificationUrl(url) {
     return true;
   }
 
-  const match = /^\/(conversation|session)\/([^/]+)$/.exec(url);
+  const match = /^\/(conversation|session|session-chat)\/([^/]+)$/.exec(url);
   if (!match) {
     return false;
   }
@@ -132,6 +132,52 @@ function sessionEventNotificationId(kind, eventId) {
   return `${kind}_${sanitizeIdPart(eventId)}`;
 }
 
+/** Retries of one group-chat message event dedupe; session scoping mirrors dmNotificationId. */
+function groupMessageNotificationId(sessionId, eventId) {
+  return `gm_${sanitizeIdPart(sessionId)}_${sanitizeIdPart(eventId)}`;
+}
+
+// Group-chat fanout ceiling. New sessions are capacity-capped at 20 already,
+// but legacy sessions have no capacity field and unbounded participantIds —
+// the ceiling is judged on the ACTUAL participant count, never on capacity.
+// firestore.rules (messages create) and lib/firestore.ts
+// (MAX_GROUP_CHAT_PARTICIPANTS) hardcode the same 20 — change all three
+// together. Bounds the per-message block lookups at 38 doc reads (20
+// participants, sender excluded → 19 recipients × 2 directions).
+const MAX_GROUP_CHAT_PARTICIPANTS = 20;
+
+function isWithinGroupChatFanoutLimit(participantCount) {
+  return (
+    Number.isInteger(participantCount) && participantCount <= MAX_GROUP_CHAT_PARTICIPANTS
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Server-side block filtering for group-message notifications. Blocked
+// recipients (either direction) are removed BEFORE notifyUser() is ever
+// called, so neither the persistent record nor the push exists for them —
+// and because the filter runs upstream of any preference check, no
+// notificationPrefs setting can resurrect a blocked notification. The chat
+// message itself stays stored for the remaining participants.
+// ---------------------------------------------------------------------------
+
+/** Both directions of the deterministic userBlocks/{blocker}__{blocked} doc ID. */
+function blockPairIdsFor(senderId, recipientId) {
+  return [`${senderId}__${recipientId}`, `${recipientId}__${senderId}`];
+}
+
+/**
+ * Drops every recipient with a block in either direction against the sender.
+ * `existingBlockIds` is the set of userBlocks doc IDs that actually exist
+ * (the caller looks them up in one batched getAll — 2 lookups per recipient,
+ * bounded by session capacity).
+ */
+function filterBlockedRecipients(senderId, recipients, existingBlockIds) {
+  return recipients.filter(
+    (uid) => !blockPairIdsFor(senderId, uid).some((id) => existingBlockIds.has(id))
+  );
+}
+
 /**
  * One reminder per recipient per session *start occurrence* — rescheduling a
  * session changes startTimeMillis, so the new occurrence reminds again. The
@@ -145,9 +191,14 @@ function reminderNotificationId(sessionId, uid, startTimeMillis) {
 module.exports = {
   BODY_MAX_LENGTH,
   TITLE_MAX_LENGTH,
+  MAX_GROUP_CHAT_PARTICIPANTS,
+  blockPairIdsFor,
   dmNotificationId,
+  filterBlockedRecipients,
+  groupMessageNotificationId,
   isAllowedNotificationUrl,
   isSafeId,
+  isWithinGroupChatFanoutLimit,
   normalizeNotificationPayload,
   reminderNotificationId,
   sanitizeIdPart,
