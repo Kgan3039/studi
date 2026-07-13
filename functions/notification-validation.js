@@ -137,6 +137,21 @@ function groupMessageNotificationId(sessionId, eventId) {
   return `gm_${sanitizeIdPart(sessionId)}_${sanitizeIdPart(eventId)}`;
 }
 
+// Group-chat fanout ceiling. New sessions are capacity-capped at 20 already,
+// but legacy sessions have no capacity field and unbounded participantIds —
+// the ceiling is judged on the ACTUAL participant count, never on capacity.
+// firestore.rules (messages create) and lib/firestore.ts
+// (MAX_GROUP_CHAT_PARTICIPANTS) hardcode the same 20 — change all three
+// together. Bounds the per-message block lookups at 38 doc reads (20
+// participants, sender excluded → 19 recipients × 2 directions).
+const MAX_GROUP_CHAT_PARTICIPANTS = 20;
+
+function isWithinGroupChatFanoutLimit(participantCount) {
+  return (
+    Number.isInteger(participantCount) && participantCount <= MAX_GROUP_CHAT_PARTICIPANTS
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Server-side block filtering for group-message notifications. Blocked
 // recipients (either direction) are removed BEFORE notifyUser() is ever
@@ -176,12 +191,14 @@ function reminderNotificationId(sessionId, uid, startTimeMillis) {
 module.exports = {
   BODY_MAX_LENGTH,
   TITLE_MAX_LENGTH,
+  MAX_GROUP_CHAT_PARTICIPANTS,
   blockPairIdsFor,
   dmNotificationId,
   filterBlockedRecipients,
   groupMessageNotificationId,
   isAllowedNotificationUrl,
   isSafeId,
+  isWithinGroupChatFanoutLimit,
   normalizeNotificationPayload,
   reminderNotificationId,
   sanitizeIdPart,

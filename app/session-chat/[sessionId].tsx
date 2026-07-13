@@ -24,7 +24,9 @@ import {
   getEarlierSessionMessages,
   getProfilesByIds,
   getSessionById,
+  isGroupChatAvailable,
   markSessionChatRead,
+  MAX_GROUP_CHAT_PARTICIPANTS,
   sendSessionMessage,
   subscribeToSessionMessages,
   type SessionMessage,
@@ -190,9 +192,12 @@ export default function SessionChatScreen() {
 
   const isParticipant =
     !!currentUser && !!session && session.participantIds.includes(currentUser.uid);
-  // Cancelled sessions are read-only (rules deny new sends); retained
-  // participants keep the history.
+  // Two read-only states (rules deny new sends in both; history stays
+  // readable): cancelled sessions, and oversized legacy sessions past the
+  // group-chat fanout ceiling.
   const isCancelled = session?.status === 'cancelled';
+  const isOversized = !!session && !isGroupChatAvailable(session);
+  const isReadOnly = isCancelled || isOversized;
 
   const markRead = useCallback(
     (newestMessageId: string | null) => {
@@ -328,7 +333,7 @@ export default function SessionChatScreen() {
   }
 
   async function handleSend() {
-    if (!currentUser || !sessionId || isCancelled) {
+    if (!currentUser || !sessionId || isReadOnly) {
       return;
     }
 
@@ -353,7 +358,7 @@ export default function SessionChatScreen() {
   }
 
   async function handleRetry(failed: FailedSend) {
-    if (!currentUser || !sessionId || failed.isRetrying || isCancelled) {
+    if (!currentUser || !sessionId || failed.isRetrying || isReadOnly) {
       return;
     }
 
@@ -408,7 +413,7 @@ export default function SessionChatScreen() {
     [profilesById]
   );
 
-  const canSend = !isSending && !isCancelled && draft.trim().length > 0;
+  const canSend = !isSending && !isReadOnly && draft.trim().length > 0;
 
   if (isLoadingSession && !session) {
     return (
@@ -476,10 +481,12 @@ export default function SessionChatScreen() {
         </Pressable>
       </View>
 
-      {isCancelled ? (
+      {isReadOnly ? (
         <View style={[styles.readOnlyNotice, { backgroundColor: palette.surfaceMuted }]}>
           <Text style={[TypeScale.caption, styles.readOnlyText, { color: palette.icon }]}>
-            This session was cancelled. Chat history is still available.
+            {isCancelled
+              ? 'This session was cancelled. Chat history is still available.'
+              : `Group chat is unavailable for sessions with more than ${MAX_GROUP_CHAT_PARTICIPANTS} people.`}
           </Text>
         </View>
       ) : null}
@@ -505,11 +512,11 @@ export default function SessionChatScreen() {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Retry sending message"
-                    disabled={failed.isRetrying || isCancelled}
+                    disabled={failed.isRetrying || isReadOnly}
                     onPress={() => handleRetry(failed)}
-                    style={({ pressed }) => ({ opacity: pressed && !isCancelled ? 0.6 : 1 })}>
+                    style={({ pressed }) => ({ opacity: pressed && !isReadOnly ? 0.6 : 1 })}>
                     <Text style={[styles.bubbleTime, { color: Brand.accent }]}>
-                      {isCancelled
+                      {isReadOnly
                         ? 'Not sent'
                         : failed.isRetrying
                           ? 'Retrying…'
@@ -603,13 +610,19 @@ export default function SessionChatScreen() {
         <View
           style={[
             styles.composer,
-            { backgroundColor: palette.surfaceMuted, opacity: isCancelled ? 0.55 : 1 },
+            { backgroundColor: palette.surfaceMuted, opacity: isReadOnly ? 0.55 : 1 },
           ]}>
           <TextInput
-            editable={!isSending && !isCancelled}
+            editable={!isSending && !isReadOnly}
             multiline
             onChangeText={setDraft}
-            placeholder={isCancelled ? 'This session was cancelled.' : 'Message the group…'}
+            placeholder={
+              isCancelled
+                ? 'This session was cancelled.'
+                : isOversized
+                  ? 'Chat is unavailable for this session.'
+                  : 'Message the group…'
+            }
             placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
             style={[styles.composerInput, { color: palette.text }]}
             value={draft}

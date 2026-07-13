@@ -1155,6 +1155,18 @@ export function subscribeToConversationMessages(
 
 export const SESSION_MESSAGES_PAGE_SIZE = 30;
 
+/** Group-chat fanout ceiling, judged on the ACTUAL participant count (the
+ *  optional capacity field can be absent on legacy sessions). Mirrors
+ *  firestore.rules (messages create) and MAX_GROUP_CHAT_PARTICIPANTS in
+ *  functions/notification-validation.js — change all three together. */
+export const MAX_GROUP_CHAT_PARTICIPANTS = 20;
+
+/** Oversized legacy sessions get a read-only chat: rules deny new sends and
+ *  the Cloud Function skips notification fanout entirely. */
+export function isGroupChatAvailable(session: Pick<StudySession, "participantIds">) {
+  return session.participantIds.length <= MAX_GROUP_CHAT_PARTICIPANTS;
+}
+
 function sessionMessagesCollection(sessionId: string) {
   return collection(db, COLLECTIONS.sessions, sessionId, "messages");
 }

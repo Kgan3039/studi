@@ -1161,6 +1161,29 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     }));
   });
 
+  it('fanout ceiling: exactly 20 participants can chat (legacy, no capacity field)', async () => {
+    // validSession has no capacity — this is the legacy-uncapped shape.
+    const twenty = [ALICE, BOB, ...Array.from({ length: 18 }, (_, i) => `filler${i}`)];
+    await seedChatSession('s20', { participantIds: twenty });
+
+    await assertSucceeds(createSessionChatMessage(ctx(ALICE), ALICE, 's20', 'm1', {
+      senderId: ALICE, text: 'big group, still fine', createdAt: serverTimestamp(),
+    }));
+    await assertSucceeds(getDocs(collection(ctx(BOB), 'sessions', 's20', 'messages')));
+  });
+
+  it('fanout ceiling: 21 participants cannot send (legacy uncapped session)', async () => {
+    const twentyOne = [ALICE, BOB, ...Array.from({ length: 19 }, (_, i) => `filler${i}`)];
+    await seedChatSession('s21', { participantIds: twentyOne });
+
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's21', 'm1', {
+      senderId: BOB, text: 'too many of us', createdAt: serverTimestamp(),
+    }));
+    await assertFails(createSessionChatMessage(ctx(ALICE), ALICE, 's21', 'm2', {
+      senderId: ALICE, text: 'host is capped too', createdAt: serverTimestamp(),
+    }));
+  });
+
   it('leaving the session ends read and send access', async () => {
     // Same shape as seedChatSession but BOB is no longer seated.
     await seed('sessions/s2', validSession(ALICE, {
@@ -1257,6 +1280,28 @@ describe('chat read markers (users/{uid}/reads)', () => {
     await assertFails(getDoc(readRef(ctx(BOB), ALICE)));
     await assertFails(setDoc(readRef(ctx(BOB), ALICE), { lastReadAt: serverTimestamp() }));
     await assertFails(deleteDoc(readRef(ctx(ALICE), ALICE)));
+  });
+});
+
+describe('account deletion jobs (Admin SDK only)', () => {
+  it('clients can never read or write deletion-job docs — not even their own', async () => {
+    await seed(`accountDeletionJobs/${ALICE}`, {
+      userId: ALICE, status: 'running', attemptCount: 1,
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(), requestedAt: Timestamp.now(),
+    });
+
+    await assertFails(getDoc(doc(ctx(ALICE), 'accountDeletionJobs', ALICE)));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'accountDeletionJobs', ALICE), {
+      status: 'complete',
+    }));
+    await assertFails(deleteDoc(doc(ctx(ALICE), 'accountDeletionJobs', ALICE)));
+    // Nobody can forge a job for themselves or anyone else.
+    await assertFails(setDoc(doc(ctx(BOB), 'accountDeletionJobs', BOB), {
+      userId: BOB, status: 'pending',
+    }));
+    await assertFails(setDoc(doc(ctx(MALLORY), 'accountDeletionJobs', ALICE), {
+      userId: ALICE, status: 'failed',
+    }));
   });
 });
 

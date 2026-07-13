@@ -37,6 +37,7 @@ import {
     getSessionById,
     getSessionChatLastReadAt,
     hasUnreadSessionChat,
+    isGroupChatAvailable,
     isSessionAtCapacity,
     joinSession,
     leaveSession,
@@ -318,10 +319,14 @@ export default function SessionDetailScreen() {
     ? session.participantIds.includes(currentUser.uid)
     : false;
   const isHost = currentUser && session ? session.hostId === currentUser.uid : false;
+  // Oversized legacy sessions (past the group-chat fanout ceiling) get a
+  // read-only chat — no unread dot, and the card says so.
+  const isChatAvailable = !!session && isGroupChatAvailable(session);
   const hasUnreadChat =
     !!currentUser &&
     !!session &&
     isParticipant &&
+    isChatAvailable &&
     hasUnreadSessionChat(session, currentUser.uid, chatLastReadAt);
   const visibleAttendees = session
     ? session.attendeeProfiles.filter((attendee) => !blockedUserIds.includes(attendee.uid))
@@ -485,9 +490,11 @@ export default function SessionDetailScreen() {
                       ) : null}
                     </View>
                     <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-                      {hasUnreadChat
-                        ? 'New messages from your group.'
-                        : 'Coordinate with everyone going.'}
+                      {!isChatAvailable
+                        ? 'Chat is unavailable for sessions this large.'
+                        : hasUnreadChat
+                          ? 'New messages from your group.'
+                          : 'Coordinate with everyone going.'}
                     </Text>
                   </View>
                   <Button

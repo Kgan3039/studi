@@ -10,12 +10,14 @@ import validation from '../functions/notification-validation.js';
 
 const {
   BODY_MAX_LENGTH,
+  MAX_GROUP_CHAT_PARTICIPANTS,
   TITLE_MAX_LENGTH,
   blockPairIdsFor,
   dmNotificationId,
   filterBlockedRecipients,
   groupMessageNotificationId,
   isAllowedNotificationUrl,
+  isWithinGroupChatFanoutLimit,
   normalizeNotificationPayload,
   reminderNotificationId,
   sessionEventNotificationId,
@@ -266,5 +268,28 @@ describe('group-message block filtering (server-side)', () => {
       filterBlockedRecipients(SENDER, RECIPIENTS, blocks),
       ['bobUid', 'caraUid']
     );
+  });
+});
+
+describe('group-chat fanout ceiling', () => {
+  // Judged on the actual participant count, never the optional capacity
+  // field — a legacy uncapped session is bounded by the same ceiling. The
+  // same 20 is hardcoded in firestore.rules (messages create) and mirrored
+  // in lib/firestore.ts.
+  it('a full 20-participant session (legacy or capped) fans out', () => {
+    assert.equal(MAX_GROUP_CHAT_PARTICIPANTS, 20);
+    assert.equal(isWithinGroupChatFanoutLimit(20), true);
+    assert.equal(isWithinGroupChatFanoutLimit(2), true);
+  });
+
+  it('21 participants (legacy uncapped session) do not fan out', () => {
+    assert.equal(isWithinGroupChatFanoutLimit(21), false);
+    assert.equal(isWithinGroupChatFanoutLimit(500), false);
+  });
+
+  it('non-integer counts never pass', () => {
+    assert.equal(isWithinGroupChatFanoutLimit(Number.NaN), false);
+    assert.equal(isWithinGroupChatFanoutLimit('20'), false);
+    assert.equal(isWithinGroupChatFanoutLimit(undefined), false);
   });
 });

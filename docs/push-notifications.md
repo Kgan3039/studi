@@ -31,14 +31,26 @@ Group-message notifications are **block-filtered server-side**: before
 `notifyUser()` runs, `onSessionMessageCreated` checks both directions of the
 deterministic `userBlocks/{blocker}__{blocked}` docs in one batched `getAll`
 and drops blocked recipients entirely — no record, no push, regardless of any
-preference setting (the filter runs upstream of the pref check). Read cost:
-2 document lookups per recipient per message, bounded by session capacity
-(≤20 participants → ≤38 lookups in a single RPC). The chat message itself
-stays stored for the remaining participants; client bubble-hiding is a UI
-courtesy on top, not the enforcement. A cancelled session is read-only —
-rules deny new sends while retained participants keep the history — and
-group messages are fully immutable from the client (no edits, no deletes;
-account deletion cleans them up via the Admin SDK).
+preference setting (the filter runs upstream of the pref check). The chat
+message itself stays stored for the remaining participants; client
+bubble-hiding is a UI courtesy on top, not the enforcement.
+
+Group-chat fanout is **capped at 20 participants**
+(`MAX_GROUP_CHAT_PARTICIPANTS`), judged on the ACTUAL `participantIds`
+length — never the optional capacity field — so legacy uncapped sessions
+cannot force unbounded fanout. The same ceiling is enforced in three places
+(change them together): the messages create rule in `firestore.rules`
+(`participantIds.size() <= 20`), the client's read-only chat state
+(`lib/firestore.ts` `isGroupChatAvailable`), and the Cloud Function, which
+skips metadata + notifications entirely for oversized sessions rather than
+silently notifying a subset. Exact read cost: **at most 38 block-doc reads
+per message** — a full 20-participant session minus the sender is 19
+recipients × 2 directions, fetched in a single RPC.
+
+A cancelled session is read-only — rules deny new sends while retained
+participants keep the history — and group messages are fully immutable from
+the client (no edits, no deletes; account deletion cleans them up via the
+Admin SDK).
 
 ## Payload validation & deep-link safety
 
@@ -178,11 +190,22 @@ Group chat (this PR):
 - Cancelling a session flips its chat to read-only: the notice renders, the
   composer disables, failed sends stop offering retry, and a deep link into
   the cancelled chat shows history without crashing.
-- Account deletion is resumable: the account is disabled and refresh tokens
-  revoked before any cleanup, every step drains queries in bounded pages,
-  and re-calling the callable on an already-disabled account resumes the
-  idempotent cleanup (worst case: a locked-out account with residual data
-  until a retry or ops re-run completes).
+- Account deletion is job-tracked and resumable. A fresh request (recent
+  auth + rate limit) writes a durable `accountDeletionJobs/{uid}` marker
+  (Admin-only; clients denied by rules), then disables the account and
+  revokes refresh tokens, then runs the idempotent, page-bounded cleanup —
+  auth-user deletion last, `status: complete` after that. Resume requires
+  the marker: re-calling the callable continues the caller's own active job
+  (a **moderation-disabled account without a job is rejected and never
+  enters cleanup**), and after the user's ID token expires (≤1 h), ops
+  resumes with
+  `GOOGLE_CLOUD_PROJECT=<project> node scripts/resume-account-deletion.js <uid>`
+  — which refuses to run without an active job, so ops can't delete a
+  merely-disabled account either. Failures stay visible on the job doc
+  (`status: failed`, bounded `errorCode`, `lastStep`, `attemptCount`).
+  State machine unit tests: `npm run test:deletion`. Remaining live QA: one
+  end-to-end deletion against a dev project (no CF integration harness in
+  the repo).
 - The Session Details chat card shows the unread dot only for someone else's
   message arriving after your last visit to the chat, and clears when you
   come back from the chat.

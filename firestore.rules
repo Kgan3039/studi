@@ -332,9 +332,13 @@ service cloud.firestore {
       // is written only by the Cloud Function (Admin SDK bypasses rules);
       // no client update branch exists for it. Leaving the session ends
       // access. A cancelled session is read-only: retained participants keep
-      // the history, nobody sends. Messages are fully immutable from the
-      // client — no edits, no deletes; account deletion cleans them up
-      // server-side (Admin SDK bypasses rules).
+      // the history, nobody sends. Sends are also denied when the session
+      // holds more than 20 people — the group-chat fanout ceiling, judged on
+      // the ACTUAL participant count so legacy uncapped sessions can't force
+      // unbounded notification fanout (mirrors MAX_GROUP_CHAT_PARTICIPANTS
+      // in functions/notification-validation.js and lib/firestore.ts; change
+      // all three together). Messages are fully immutable from the client —
+      // no edits, no deletes; account deletion cleans them up server-side.
       match /messages/{messageId} {
         function parentSession() {
           return get(/databases/$(database)/documents/sessions/$(sessionId)).data;
@@ -346,6 +350,7 @@ service cloud.firestore {
           && request.auth.uid == incoming().senderId
           && parentSession().status in ['open', 'full']
           && request.auth.uid in parentSession().participantIds
+          && parentSession().participantIds.size() <= 20
           && incoming().keys().hasOnly(['senderId', 'text', 'createdAt'])
           && incoming().text is string
           && incoming().text.size() >= 1
@@ -484,6 +489,18 @@ service cloud.firestore {
         && incoming().createdAt == resource.data.createdAt
         && hasFreshRateLimit(request.auth.uid, 'locationRating');
       allow delete: if isVerifiedUwUser() && resource.data.userId == request.auth.uid;
+    }
+
+    // ------------------------------------------------------------------
+    // Account-deletion job markers — durable deletion intent + resumable
+    // progress, written ONLY by the Admin SDK (deleteUserAccount callable
+    // and scripts/resume-account-deletion.js). The default deny would
+    // already cover this; the explicit match documents the invariant and
+    // the tests pin it.
+    // ------------------------------------------------------------------
+
+    match /accountDeletionJobs/{uid} {
+      allow read, write: if false;
     }
 
     // ------------------------------------------------------------------
