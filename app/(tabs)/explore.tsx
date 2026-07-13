@@ -47,11 +47,53 @@ const MAP_FILTERS: { id: MapFilter; label: string }[] = [
 ];
 
 function isLive(session: StudySession, now: number) {
-  return session.startTime.toMillis() <= now && session.endTime.toMillis() > now;
+  const start = getTimestampMillis(session.startTime);
+  const end = getTimestampMillis(session.endTime);
+
+  return start !== null && end !== null && start <= now && end > now;
+}
+
+function getTimestampMillis(timestamp: StudySession['startTime'] | StudySession['endTime']) {
+  try {
+    const millis = timestamp.toMillis();
+
+    return Number.isFinite(millis) ? millis : null;
+  } catch {
+    return null;
+  }
+}
+
+function getTimestampDate(timestamp: StudySession['startTime'] | StudySession['endTime']) {
+  try {
+    const date = timestamp.toDate();
+
+    return Number.isNaN(date.getTime()) ? null : date;
+  } catch {
+    return null;
+  }
+}
+
+function isStartingWithin(session: StudySession, now: number, endWindow: number) {
+  const start = getTimestampMillis(session.startTime);
+
+  return start !== null && start > now && start <= endWindow;
+}
+
+function normalizeClassCode(classCode: string) {
+  return classCode.trim().toUpperCase();
+}
+
+function getLocationTags(location: StudyLocation) {
+  return Array.isArray(location.tags) ? location.tags.filter((tag) => typeof tag === 'string') : [];
 }
 
 function formatSessionTime(session: StudySession) {
-  const start = session.startTime.toDate();
+  const start = getTimestampDate(session.startTime);
+
+  if (!start) {
+    return 'Time TBA';
+  }
+
   const now = new Date();
   const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
   const time = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -70,6 +112,8 @@ function formatSessionTime(session: StudySession) {
 export default function StudyLocationsScreen() {
   const router = useRouter();
   const scrollViewRef = useRef<ScrollView>(null);
+  const loadRequestRef = useRef(0);
+  const isMountedRef = useRef(true);
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
@@ -87,6 +131,12 @@ export default function StudyLocationsScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadMessage, setLoadMessage] = useState('Finding open tables around campus…');
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -108,6 +158,8 @@ export default function StudyLocationsScreen() {
       return;
     }
 
+    const requestId = loadRequestRef.current + 1;
+    loadRequestRef.current = requestId;
     setIsLoading(true);
 
     try {
@@ -135,6 +187,10 @@ export default function StudyLocationsScreen() {
           (counts.get(second.locationId) ?? 0) - (counts.get(first.locationId) ?? 0)
       )[0];
 
+      if (!isMountedRef.current || loadRequestRef.current !== requestId) {
+        return;
+      }
+
       setLocations(loadedLocations);
       setSessions(canonicalSessions);
       setRatingAggregates(aggregatesResult);
@@ -144,9 +200,15 @@ export default function StudyLocationsScreen() {
         `${loadedLocations.length} spot${loadedLocations.length === 1 ? '' : 's'} around campus`
       );
     } catch (error) {
+      if (!isMountedRef.current || loadRequestRef.current !== requestId) {
+        return;
+      }
+
       setLoadMessage(error instanceof Error ? error.message : 'The campus map could not load.');
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current && loadRequestRef.current === requestId) {
+        setIsLoading(false);
+      }
     }
   }, [currentUser]);
 
@@ -156,6 +218,27 @@ export default function StudyLocationsScreen() {
     }, [loadMap])
   );
 
+  const profileClassSet = useMemo(
+    () => new Set(profileClasses.map((classCode) => normalizeClassCode(classCode))),
+    [profileClasses]
+  );
+
+  const sessionsByLocationId = useMemo(() => {
+    const groupedSessions = new Map<string, StudySession[]>();
+
+    sessions.forEach((session) => {
+      if (!session.locationId) {
+        return;
+      }
+
+      const locationSessions = groupedSessions.get(session.locationId) ?? [];
+      locationSessions.push(session);
+      groupedSessions.set(session.locationId, locationSessions);
+    });
+
+    return groupedSessions;
+  }, [sessions]);
+
   const filteredLocations = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
     const now = Date.now();
@@ -163,16 +246,16 @@ export default function StudyLocationsScreen() {
 
     return locations.filter((location) => {
       const aggregate = ratingAggregates.get(location.locationId);
-      const locationSessions = sessions.filter(
-        (session) => session.locationId === location.locationId
-      );
+      const locationSessions = sessionsByLocationId.get(location.locationId) ?? [];
+      const locationTags = getLocationTags(location);
+      const reviewTags = aggregate?.reviewTags ?? [];
       const searchText = [
         location.name,
         location.building,
         location.campusArea,
         location.notes,
-        ...location.tags,
-        ...(aggregate?.reviewTags ?? []),
+        ...locationTags,
+        ...reviewTags,
         ...locationSessions.flatMap((session) => [session.classId, session.title]),
       ]
         .join(' ')
@@ -186,22 +269,25 @@ export default function StudyLocationsScreen() {
         case 'live':
           return locationSessions.some((session) => isLive(session, now));
         case 'next-hour':
-          return locationSessions.some((session) => {
-            const start = session.startTime.toMillis();
-            return start > now && start <= oneHourFromNow;
-          });
+          return locationSessions.some((session) => isStartingWithin(session, now, oneHourFromNow));
         case 'my-classes':
-          return locationSessions.some((session) => profileClasses.includes(session.classId));
+          return locationSessions.some((session) =>
+            profileClassSet.has(normalizeClassCode(session.classId))
+          );
         case 'quiet':
-          return getAtmosphereFiltersForLocationTags([
-            ...location.tags,
-            ...(aggregate?.reviewTags ?? []),
-          ]).has('Quiet');
+          return getAtmosphereFiltersForLocationTags([...locationTags, ...reviewTags]).has('Quiet');
         default:
           return true;
       }
     });
-  }, [locations, profileClasses, ratingAggregates, searchQuery, selectedFilter, sessions]);
+  }, [
+    locations,
+    profileClassSet,
+    ratingAggregates,
+    searchQuery,
+    selectedFilter,
+    sessionsByLocationId,
+  ]);
 
   useEffect(() => {
     if (
@@ -229,17 +315,15 @@ export default function StudyLocationsScreen() {
       switch (selectedFilter) {
         case 'live':
           return isLive(session, now);
-        case 'next-hour': {
-          const start = session.startTime.toMillis();
-          return start > now && start <= oneHourFromNow;
-        }
+        case 'next-hour':
+          return isStartingWithin(session, now, oneHourFromNow);
         case 'my-classes':
-          return profileClasses.includes(session.classId);
+          return profileClassSet.has(normalizeClassCode(session.classId));
         default:
           return true;
       }
     });
-  }, [profileClasses, selectedFilter, sessions, visibleLocationIds]);
+  }, [profileClassSet, selectedFilter, sessions, visibleLocationIds]);
 
   const sessionsByLocation = useMemo(() => {
     const counts = new Map<string, number>();
@@ -258,10 +342,14 @@ export default function StudyLocationsScreen() {
 
     visibleSessions.forEach((session) => {
       const currentTiming = timings.get(session.locationId) ?? 'none';
-      const start = session.startTime.toMillis();
-      const end = session.endTime.toMillis();
+      const start = getTimestampMillis(session.startTime);
+      const end = getTimestampMillis(session.endTime);
 
-      if (start <= now && end > now) {
+      if (start === null) {
+        return;
+      }
+
+      if (end !== null && start <= now && end > now) {
         timings.set(session.locationId, 'live');
       } else if (currentTiming !== 'live' && start > now && start <= oneHourFromNow) {
         timings.set(session.locationId, 'soon');
@@ -276,9 +364,11 @@ export default function StudyLocationsScreen() {
   const selectedLocation =
     filteredLocations.find((location) => location.locationId === selectedLocationId) ?? null;
   const selectedSessions = selectedLocation
-    ? sessions
-        .filter((session) => session.locationId === selectedLocation.locationId)
-        .sort((first, second) => first.startTime.toMillis() - second.startTime.toMillis())
+    ? [...(sessionsByLocationId.get(selectedLocation.locationId) ?? [])].sort(
+        (first, second) =>
+          (getTimestampMillis(first.startTime) ?? Number.MAX_SAFE_INTEGER) -
+          (getTimestampMillis(second.startTime) ?? Number.MAX_SAFE_INTEGER)
+      )
     : [];
   const selectedRating = selectedLocation
     ? ratingAggregates.get(selectedLocation.locationId)
@@ -286,8 +376,14 @@ export default function StudyLocationsScreen() {
 
   async function handleRefresh() {
     setIsRefreshing(true);
-    await loadMap();
-    setIsRefreshing(false);
+
+    try {
+      await loadMap();
+    } finally {
+      if (isMountedRef.current) {
+        setIsRefreshing(false);
+      }
+    }
   }
 
   function selectLocation(locationId: string) {
@@ -308,12 +404,16 @@ export default function StudyLocationsScreen() {
         : `https://www.google.com/maps/dir/?api=1&destination=${destination}`;
 
     track('map_directions_opened', { locationId: location.locationId });
-    void Linking.openURL(url);
+    void Linking.openURL(url).catch(() => {
+      setLoadMessage('Could not open directions on this device.');
+    });
   }
 
   function openCampusMap() {
     track('uw_map_opened');
-    void Linking.openURL('https://map.wisc.edu/');
+    void Linking.openURL('https://map.wisc.edu/').catch(() => {
+      setLoadMessage('Could not open the UW campus map on this device.');
+    });
   }
 
   function rateLocation(location: StudyLocation) {
@@ -421,17 +521,18 @@ export default function StudyLocationsScreen() {
         })}
       </ScrollView>
 
-      {filteredLocations.length > 0 ? (
-        <View style={styles.mapAndSheet}>
-          <CampusMap
-            locations={filteredLocations}
-            onOpenCampusMap={openCampusMap}
-            onSelectLocation={selectLocation}
-            selectedLocationId={selectedLocationId}
-            sessionTimingByLocation={sessionTimingByLocation}
-            sessionsByLocation={sessionsByLocation}
-          />
+      <View style={styles.mapAndSheet}>
+        <CampusMap
+          locations={filteredLocations}
+          onOpenCampusMap={openCampusMap}
+          onSelectLocation={selectLocation}
+          selectedLocationId={selectedLocationId}
+          sessionTimingByLocation={sessionTimingByLocation}
+          sessionsByLocation={sessionsByLocation}
+        />
 
+        {filteredLocations.length > 0 ? (
+          <View style={styles.resultsStack}>
           <View
             style={[
               styles.locationList,
@@ -547,7 +648,7 @@ export default function StudyLocationsScreen() {
               </Text>
 
               <View style={styles.tagRow}>
-                {selectedLocation.tags.slice(0, 3).map((tag) => (
+                {getLocationTags(selectedLocation).slice(0, 3).map((tag) => (
                   <View
                     key={tag}
                     style={[styles.tag, { backgroundColor: palette.surfaceMuted }]}>
@@ -560,6 +661,9 @@ export default function StudyLocationsScreen() {
                 <View style={styles.sessionList}>
                   {selectedSessions.slice(0, 3).map((session) => {
                     const live = isLive(session, Date.now());
+                    const participantCount = Array.isArray(session.participantIds)
+                      ? session.participantIds.length
+                      : 0;
 
                     return (
                       <Pressable
@@ -579,7 +683,7 @@ export default function StudyLocationsScreen() {
                             {session.title}
                           </Text>
                           <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                            {formatSessionTime(session)} · {session.participantIds.length} going
+                            {formatSessionTime(session)} · {participantCount} going
                           </Text>
                         </View>
                         {live ? (
@@ -612,16 +716,18 @@ export default function StudyLocationsScreen() {
               )}
             </View>
           ) : null}
-        </View>
-      ) : !isLoading ? (
-        <EmptyState
-          icon="spot"
-          headline="No pins over here"
-          body="Try another search or widen the map filters."
-          actionLabel="Show every spot"
-          onAction={clearFilters}
-        />
-      ) : null}
+          </View>
+        ) : !isLoading ? (
+          <EmptyState
+            icon="spot"
+            headline="No pins over here"
+            body="Try another search or widen the map filters."
+            actionLabel="Show every spot"
+            onAction={clearFilters}
+            style={styles.noPinsState}
+          />
+        ) : null}
+      </View>
     </ScrollView>
   );
 }
@@ -673,6 +779,13 @@ const styles = StyleSheet.create({
   },
   mapAndSheet: {
     gap: Space.md,
+  },
+  resultsStack: {
+    gap: Space.md,
+  },
+  noPinsState: {
+    backgroundColor: 'transparent',
+    paddingTop: Space.lg,
   },
   locationList: {
     borderRadius: Radius.xxl,
