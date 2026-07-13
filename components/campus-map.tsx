@@ -34,6 +34,30 @@ const CAMPUS_BUILDINGS = [
   { height: '12%', left: '73%', top: '75%', width: '19%' },
 ] as const;
 
+function getSafeMapPosition(position: StudyLocation['mapPosition']) {
+  const xPercent = Number.isFinite(position.xPercent)
+    ? Math.min(100, Math.max(0, position.xPercent))
+    : 50;
+  const yPercent = Number.isFinite(position.yPercent)
+    ? Math.min(100, Math.max(0, position.yPercent))
+    : 50;
+
+  return { xPercent, yPercent };
+}
+
+function getTimingColor(timing: MapSessionTiming, tint: string, icon: string) {
+  switch (timing) {
+    case 'live':
+      return tint;
+    case 'soon':
+      return Brand.warning;
+    case 'later':
+      return Brand.info;
+    default:
+      return icon;
+  }
+}
+
 export function CampusMap({
   locations,
   onOpenCampusMap,
@@ -115,14 +139,8 @@ export function CampusMap({
         const isSelected = selectedLocationId === location.locationId;
         const sessionCount = sessionsByLocation.get(location.locationId) ?? 0;
         const timing = sessionTimingByLocation.get(location.locationId) ?? 'none';
-        const timingColor =
-          timing === 'live'
-            ? palette.tint
-            : timing === 'soon'
-              ? Brand.warning
-              : timing === 'later'
-                ? Brand.info
-                : palette.icon;
+        const timingColor = getTimingColor(timing, palette.tint, palette.icon);
+        const position = getSafeMapPosition(location.mapPosition);
 
         return (
           <Pressable
@@ -135,9 +153,9 @@ export function CampusMap({
             style={({ pressed }) => [
               styles.markerWrap,
               {
-                left: `${location.mapPosition.xPercent}%`,
+                left: `${position.xPercent}%`,
                 opacity: pressed ? 0.72 : 1,
-                top: `${location.mapPosition.yPercent}%`,
+                top: `${position.yPercent}%`,
                 zIndex: isSelected ? 4 : sessionCount > 0 ? 3 : 2,
               },
             ]}>
@@ -171,6 +189,17 @@ export function CampusMap({
           </Pressable>
         );
       })}
+
+      {locations.length === 0 ? (
+        <View
+          pointerEvents="none"
+          style={[styles.emptyOverlay, Elevation.e1, { backgroundColor: palette.surface }]}>
+          <Text style={[TypeScale.label, { color: palette.text }]}>No matching pins</Text>
+          <Text style={[TypeScale.caption, styles.emptyOverlayText, { color: palette.icon }]}>
+            Clear search or try another filter.
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -255,6 +284,20 @@ const styles = StyleSheet.create({
     position: 'absolute',
     flexDirection: 'row',
     gap: 4,
+  },
+  emptyOverlay: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    borderRadius: Radius.xl,
+    gap: 2,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    position: 'absolute',
+    top: 16,
+    zIndex: 6,
+  },
+  emptyOverlayText: {
+    textAlign: 'center',
   },
   legend: {
     alignItems: 'center',
