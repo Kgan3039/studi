@@ -12,10 +12,14 @@ import { strict as assert } from 'node:assert';
 import deletion from '../functions/account-deletion.js';
 
 const {
+  DELETION_PROJECT_ID,
+  boundedErrorCode,
   classifyDeletionRequest,
   createAccountDeletionRunner,
   isResumableJob,
-  boundedErrorCode,
+  isValidDeletionUid,
+  validateResumableJob,
+  validateResumeScriptArgs,
 } = deletion;
 
 const UID = 'aliceUid';
@@ -38,10 +42,18 @@ function createFakes() {
   const jobWrites = [];
   let jobData = null;
   let authUserExists = true;
-  const failures = { collection: null };
+  // failures.collection: named query throws; failures.jobWriteStatus: the
+  // job-doc write carrying that status throws; failures.disableAccount:
+  // auth.updateUser throws.
+  const failures = { collection: null, jobWriteStatus: null, disableAccount: false };
 
   const jobDoc = {
     async set(fields) {
+      if (failures.jobWriteStatus && fields.status === failures.jobWriteStatus) {
+        const error = new Error(`job write rejected (${fields.status})`);
+        error.code = 'job-write-denied';
+        throw error;
+      }
       jobWrites.push(fields);
       ops.push(`job:${fields.status ?? `step:${fields.lastStep}`}`);
       jobData = { ...(jobData ?? {}), ...fields };
@@ -87,6 +99,11 @@ function createFakes() {
 
   const auth = {
     async updateUser() {
+      if (failures.disableAccount) {
+        const error = new Error('auth disable failed');
+        error.code = 'auth/internal-error';
+        throw error;
+      }
       ops.push('auth:disable');
     },
     async revokeRefreshTokens() {
@@ -209,7 +226,7 @@ describe('deletion runner (same code path as callable + ops script)', () => {
     assert.equal(fakes.getJobData().status, 'complete');
   });
 
-  it('a failed step persists partial progress and leaves the job resumable', async () => {
+  it('a failed step persists the failing phase and leaves the job resumable', async () => {
     const fakes = createFakes();
     fakes.failures.collection = 'conversations';
 
@@ -217,9 +234,12 @@ describe('deletion runner (same code path as callable + ops script)', () => {
 
     const job = fakes.getJobData();
     assert.equal(job.status, 'failed');
-    assert.equal(job.lastStep, 'joined-sessions'); // last step that finished
+    assert.equal(job.lastStep, 'conversations'); // the phase that broke
     assert.equal(job.errorCode, 'unavailable');
     assert.equal(isResumableJob(job), true);
+    // The last COMPLETED step was still durably recorded along the way.
+    const stepWrites = fakes.jobWrites.map((w) => w.lastStep).filter(Boolean);
+    assert.ok(stepWrites.includes('joined-sessions'));
     // The auth user was never deleted on the failed run.
     assert.equal(fakes.ops.includes('auth:deleteUser'), false);
   });
@@ -244,5 +264,138 @@ describe('deletion runner (same code path as callable + ops script)', () => {
 
     assert.equal(fakes.getJobData().status, 'complete');
     assert.equal(fakes.ops.filter((op) => op === 'auth:deleteUser').length, 1);
+  });
+});
+
+describe('full-lifecycle failure persistence', () => {
+  it('a lockAccount failure persists failed status + errorCode on the job', async () => {
+    const fakes = createFakes();
+    fakes.failures.disableAccount = true;
+
+    await assert.rejects(() => fakes.runner.runCleanup(UID), /auth disable failed/);
+
+    const job = fakes.getJobData();
+    assert.equal(job.status, 'failed');
+    assert.equal(job.lastStep, 'lock-account');
+    assert.equal(job.errorCode, 'auth/internal-error');
+    // attemptCount was never incremented — the run died before `running`.
+    assert.equal('attemptCount' in job, false);
+    assert.equal(isResumableJob(job), true);
+  });
+
+  it("beginDeletion's lock phase cannot fail silently", async () => {
+    const fakes = createFakes();
+    fakes.failures.disableAccount = true;
+
+    await assert.rejects(() => fakes.runner.beginDeletion(UID), /auth disable failed/);
+
+    const job = fakes.getJobData();
+    // Intent was recorded, the lock failure landed on the doc, and the job
+    // is resumable — the marker keeps attemptCount at its initial 0.
+    assert.equal(job.status, 'failed');
+    assert.equal(job.lastStep, 'lock-account');
+    assert.equal(job.attemptCount, 0);
+    assert.equal(isResumableJob(job), true);
+  });
+
+  it('an initial running-write failure is persisted without masking the error', async () => {
+    const fakes = createFakes();
+    fakes.failures.jobWriteStatus = 'running';
+
+    await assert.rejects(() => fakes.runner.runCleanup(UID), /job write rejected \(running\)/);
+
+    const job = fakes.getJobData();
+    assert.equal(job.status, 'failed');
+    assert.equal(job.lastStep, 'mark-running');
+    assert.equal(job.errorCode, 'job-write-denied');
+  });
+
+  it('a failure-state write failure does not hide the original error', async () => {
+    const fakes = createFakes();
+    fakes.failures.collection = 'conversations';
+    fakes.failures.jobWriteStatus = 'failed'; // the failure write itself breaks
+
+    // The rejection is the ORIGINAL step error, not the write error.
+    await assert.rejects(() => fakes.runner.runCleanup(UID), /conversations query failed/);
+    // And nothing pretended to succeed: the job never reached 'failed'.
+    assert.notEqual(fakes.getJobData().status, 'failed');
+  });
+
+  it('a retry after a pre-step (lock) failure resumes idempotently to complete', async () => {
+    const fakes = createFakes();
+    fakes.failures.disableAccount = true;
+    await assert.rejects(() => fakes.runner.runCleanup(UID));
+
+    fakes.failures.disableAccount = false;
+    await fakes.runner.runCleanup(UID);
+
+    assert.equal(fakes.getJobData().status, 'complete');
+  });
+});
+
+describe('ops resume script preflight (shared helpers)', () => {
+  const GOOD_UID = 'AbC123_x-9';
+
+  it('rejects empty, padded, path-like, and malformed uids before any Firebase use', () => {
+    for (const bad of [
+      undefined,
+      null,
+      '',
+      '   ',
+      ` ${GOOD_UID}`,
+      `${GOOD_UID} `,
+      'a/b',
+      '../x',
+      'users/aliceUid',
+      'a.b',
+      'a%2Fb',
+      'a b',
+      'x'.repeat(129),
+      42,
+    ]) {
+      assert.equal(isValidDeletionUid(bad), false, `expected invalid: ${String(bad)}`);
+      assert.equal(
+        validateResumeScriptArgs({ uid: bad, projectId: DELETION_PROJECT_ID }).reason,
+        'invalid-uid'
+      );
+    }
+    assert.equal(isValidDeletionUid(GOOD_UID), true);
+    assert.equal(isValidDeletionUid('x'.repeat(128)), true);
+  });
+
+  it('rejects any project other than the pinned studi-b02c3', () => {
+    assert.equal(DELETION_PROJECT_ID, 'studi-b02c3');
+    for (const project of ['studi-prod', 'demo-studi-b02c3', '', undefined]) {
+      assert.deepEqual(validateResumeScriptArgs({ uid: GOOD_UID, projectId: project }), {
+        ok: false,
+        reason: 'wrong-project',
+      });
+    }
+    assert.deepEqual(
+      validateResumeScriptArgs({ uid: GOOD_UID, projectId: DELETION_PROJECT_ID }),
+      { ok: true }
+    );
+  });
+
+  it('job validation: missing, malformed, mismatched, complete, and unknown-status jobs are rejected', () => {
+    assert.equal(validateResumableJob(null, UID).reason, 'missing-job');
+    assert.equal(validateResumableJob('running', UID).reason, 'missing-job');
+    assert.equal(validateResumableJob({ status: 'running' }, UID).reason, 'malformed-job');
+    assert.equal(validateResumableJob({ userId: UID }, UID).reason, 'malformed-job');
+    assert.equal(
+      validateResumableJob({ userId: 'someoneElse', status: 'running' }, UID).reason,
+      'user-mismatch'
+    );
+    assert.equal(
+      validateResumableJob({ userId: UID, status: 'complete' }, UID).reason,
+      'already-complete'
+    );
+    assert.equal(
+      validateResumableJob({ userId: UID, status: 'archived' }, UID).reason,
+      'unknown-status'
+    );
+    for (const status of ['pending', 'running', 'failed']) {
+      assert.deepEqual(validateResumableJob({ userId: UID, status }, UID), { ok: true });
+    }
   });
 });

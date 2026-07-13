@@ -199,10 +199,14 @@ Group chat (this PR):
   (a **moderation-disabled account without a job is rejected and never
   enters cleanup**), and after the user's ID token expires (≤1 h), ops
   resumes with
-  `GOOGLE_CLOUD_PROJECT=<project> node scripts/resume-account-deletion.js <uid>`
-  — which refuses to run without an active job, so ops can't delete a
-  merely-disabled account either. Failures stay visible on the job doc
-  (`status: failed`, bounded `errorCode`, `lastStep`, `attemptCount`).
+  `GOOGLE_APPLICATION_CREDENTIALS=<service-account.json> node scripts/resume-account-deletion.js <uid>`
+  — the script strictly validates the uid before touching Firebase, pins the
+  Admin SDK to `studi-b02c3` (any other ambient/resolved project aborts),
+  and refuses to run unless a well-formed active job naming that exact uid
+  exists — so ops can't delete a merely-disabled account either. Every
+  lifecycle phase (lock, running-write, each step, auth deletion, final
+  complete-write) persists failures to the job doc (`status: failed`,
+  bounded `errorCode`, failing phase in `lastStep`, `attemptCount`).
   State machine unit tests: `npm run test:deletion`. Remaining live QA: one
   end-to-end deletion against a dev project (no CF integration harness in
   the repo).

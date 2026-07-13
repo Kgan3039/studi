@@ -16,8 +16,59 @@
 const DELETION_JOB_ACTIVE_STATUSES = ["pending", "running", "failed"];
 const DELETE_CLEANUP_PAGE_SIZE = 100;
 
+// The only project the ops resume script may ever touch. Matches .firebaserc
+// and firebaseConfig.ts.
+const DELETION_PROJECT_ID = "studi-b02c3";
+
+// Firebase Auth uids are ≤128 chars; the charset matches the backend-wide
+// safe-ID pattern (notification-validation.js). Rejects empty, padded,
+// path-like, dotted, and percent-encoded values outright.
+const SAFE_UID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+function isValidDeletionUid(value) {
+  return typeof value === "string" && SAFE_UID_PATTERN.test(value);
+}
+
+/**
+ * Preflight for the ops resume script — must pass BEFORE any Firebase
+ * initialization or reads. Returns { ok: true } or { ok: false, reason }.
+ */
+function validateResumeScriptArgs({ uid, projectId }) {
+  if (!isValidDeletionUid(uid)) {
+    return { ok: false, reason: "invalid-uid" };
+  }
+  if (projectId !== DELETION_PROJECT_ID) {
+    return { ok: false, reason: "wrong-project" };
+  }
+  return { ok: true };
+}
+
 function isResumableJob(job) {
   return !!job && DELETION_JOB_ACTIVE_STATUSES.includes(job.status);
+}
+
+/**
+ * Strict gate before runCleanup() may be driven from the ops path: the job
+ * doc must exist, be well-formed, belong to the target uid, and be in an
+ * active (non-complete) state. Returns { ok: true } or { ok: false, reason }.
+ */
+function validateResumableJob(job, uid) {
+  if (!job || typeof job !== "object") {
+    return { ok: false, reason: "missing-job" };
+  }
+  if (typeof job.userId !== "string" || typeof job.status !== "string") {
+    return { ok: false, reason: "malformed-job" };
+  }
+  if (job.userId !== uid) {
+    return { ok: false, reason: "user-mismatch" };
+  }
+  if (job.status === "complete") {
+    return { ok: false, reason: "already-complete" };
+  }
+  if (!DELETION_JOB_ACTIVE_STATUSES.includes(job.status)) {
+    return { ok: false, reason: "unknown-status" };
+  }
+  return { ok: true };
 }
 
 /**
@@ -179,18 +230,50 @@ function createAccountDeletionRunner({ db, auth, FieldValue }) {
   }
 
   /**
+   * Best-effort durable failure record. `lastStep` names the PHASE that was
+   * executing when the failure hit (per-step writes already recorded the
+   * last completed step up to that point). A failure while writing the
+   * failure state itself is logged loudly but never masks the original
+   * error — the caller always rethrows what actually broke.
+   */
+  async function persistFailure(uid, phase, originalError) {
+    try {
+      await markJob(uid, {
+        status: "failed",
+        lastStep: phase,
+        errorCode: boundedErrorCode(originalError),
+      });
+    } catch (writeError) {
+      console.error(
+        `Account-deletion failure state could not be persisted (uid: ${uid}, phase: ${phase});` +
+          " original error follows the rethrow",
+        writeError
+      );
+    }
+  }
+
+  /**
    * First step of a fresh deletion: record intent, then lock the account.
    * The marker is written BEFORE anything is disabled or destroyed, so every
-   * later state is attributable to an explicit user request.
+   * later state is attributable to an explicit user request. Both phases run
+   * inside the protected lifecycle — a lock failure lands on the job doc as
+   * status: failed instead of vanishing.
    */
   async function beginDeletion(uid) {
-    await markJob(uid, {
-      status: "pending",
-      requestedAt: FieldValue.serverTimestamp(),
-      createdAt: FieldValue.serverTimestamp(),
-      attemptCount: 0,
-    });
-    await lockAccount(uid);
+    let phase = "record-intent";
+    try {
+      await markJob(uid, {
+        status: "pending",
+        requestedAt: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
+        attemptCount: 0,
+      });
+      phase = "lock-account";
+      await lockAccount(uid);
+    } catch (error) {
+      await persistFailure(uid, phase, error);
+      throw error;
+    }
   }
 
   /**
@@ -198,20 +281,29 @@ function createAccountDeletionRunner({ db, auth, FieldValue }) {
    * re-locked first, every step is idempotent, the Auth user is deleted only
    * after all data cleanup finished, and `complete` is written only after
    * that — so an interrupted run always leaves a resumable job behind.
-   * `lastStep` is durable diagnostics, not a skip cursor: a resume re-runs
-   * every step (each is a no-op on already-clean data) rather than trusting
-   * a pointer that could hide a partially-failed page.
+   * The ENTIRE lifecycle (lock, running-write, steps, auth deletion,
+   * complete-write) is failure-protected: whatever phase breaks is persisted
+   * as status: failed with that phase in lastStep. Per-step lastStep writes
+   * are durable diagnostics, not a skip cursor: a resume re-runs every step
+   * (each is a no-op on already-clean data) rather than trusting a pointer
+   * that could hide a partially-failed page. attemptCount increments only
+   * when a run reaches `running` — a pre-lock failure preserves it.
    */
   async function runCleanup(uid) {
-    await lockAccount(uid);
-    await markJob(uid, { status: "running", attemptCount: FieldValue.increment(1) });
-
+    let phase = "lock-account";
     try {
+      await lockAccount(uid);
+
+      phase = "mark-running";
+      await markJob(uid, { status: "running", attemptCount: FieldValue.increment(1) });
+
       for (const step of cleanupSteps(uid)) {
+        phase = step.name;
         await step.run();
         await markJob(uid, { lastStep: step.name });
       }
 
+      phase = "delete-auth-user";
       try {
         await auth.deleteUser(uid);
       } catch (error) {
@@ -221,10 +313,11 @@ function createAccountDeletionRunner({ db, auth, FieldValue }) {
         // Already gone from a prior attempt — idempotent.
       }
 
+      phase = "mark-complete";
       await markJob(uid, { status: "complete" });
     } catch (error) {
       // Keep the failure durably visible for ops; the job stays resumable.
-      await markJob(uid, { status: "failed", errorCode: boundedErrorCode(error) }).catch(() => {});
+      await persistFailure(uid, phase, error);
       throw error;
     }
   }
@@ -235,8 +328,12 @@ function createAccountDeletionRunner({ db, auth, FieldValue }) {
 module.exports = {
   DELETE_CLEANUP_PAGE_SIZE,
   DELETION_JOB_ACTIVE_STATUSES,
+  DELETION_PROJECT_ID,
   boundedErrorCode,
   classifyDeletionRequest,
   createAccountDeletionRunner,
   isResumableJob,
+  isValidDeletionUid,
+  validateResumableJob,
+  validateResumeScriptArgs,
 };
