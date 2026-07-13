@@ -92,7 +92,9 @@
         "NSPrivacyAccessedAPITypes": [
           {
             "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
-            "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]
+            "NSPrivacyAccessedAPITypeReasons": [
+              "CA92.1"
+            ]
           }
         ]
       }
@@ -126,7 +128,8 @@
       ],
       "expo-web-browser",
       "expo-notifications",
-      "@sentry/react-native"
+      "@sentry/react-native",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true,
