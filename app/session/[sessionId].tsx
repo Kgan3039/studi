@@ -1,4 +1,4 @@
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
@@ -162,7 +162,7 @@ export default function SessionDetailScreen() {
     router.push({
       pathname: '/session-chat/[sessionId]',
       params: { sessionId, source },
-    });
+    } as unknown as Href);
   }
 
   async function handleRefresh() {

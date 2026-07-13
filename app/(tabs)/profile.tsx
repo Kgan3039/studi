@@ -40,7 +40,7 @@ import {
     type StudySession,
     type UserYear,
 } from '@/lib/firestore';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import type { User } from 'firebase/auth';
 
 // How many saved-location rows the board renders (ProfileScreen ~1815).
@@ -732,7 +732,7 @@ export default function ProfileScreen() {
             ? `Notifications, ${unreadNotifications} unread`
             : 'Notifications'
         }
-        onPress={() => router.push('/notifications')}
+        onPress={() => router.push('/notifications' as Href)}
         style={({ pressed }) => [
           styles.settingsRow,
           {
@@ -761,7 +761,7 @@ export default function ProfileScreen() {
           support, sign out, and delete account live there now. */}
       <Pressable
         accessibilityRole="button"
-        onPress={() => router.push('/settings')}
+        onPress={() => router.push('/settings' as Href)}
         style={({ pressed }) => [
           styles.settingsRow,
           {
