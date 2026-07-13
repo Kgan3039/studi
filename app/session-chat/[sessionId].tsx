@@ -31,6 +31,7 @@ import {
   type StudySessionListItem,
   type UserProfile,
 } from '@/lib/firestore';
+import { FirebaseError } from 'firebase/app';
 import type { User } from 'firebase/auth';
 import type { QueryDocumentSnapshot } from 'firebase/firestore';
 
@@ -189,6 +190,9 @@ export default function SessionChatScreen() {
 
   const isParticipant =
     !!currentUser && !!session && session.participantIds.includes(currentUser.uid);
+  // Cancelled sessions are read-only (rules deny new sends); retained
+  // participants keep the history.
+  const isCancelled = session?.status === 'cancelled';
 
   const markRead = useCallback(
     (newestMessageId: string | null) => {
@@ -314,8 +318,17 @@ export default function SessionChatScreen() {
       .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
   }, [messagesById, blockedUserIds]);
 
+  // A denied write usually means the session state changed under us (e.g.
+  // the host cancelled while this screen was open) — reload the session so
+  // the read-only state renders instead of an endless retry loop.
+  function refreshSessionOnDenied(error: unknown) {
+    if (error instanceof FirebaseError && error.code === 'permission-denied') {
+      setRetryNonce((nonce) => nonce + 1);
+    }
+  }
+
   async function handleSend() {
-    if (!currentUser || !sessionId) {
+    if (!currentUser || !sessionId || isCancelled) {
       return;
     }
 
@@ -330,16 +343,17 @@ export default function SessionChatScreen() {
     try {
       setIsSending(true);
       await sendSessionMessage(sessionId, currentUser.uid, text, messageId);
-    } catch {
+    } catch (error) {
       // Keep the message; the bubble flips to a failed state with a retry.
       setFailedSends((current) => [{ messageId, text, isRetrying: false }, ...current]);
+      refreshSessionOnDenied(error);
     } finally {
       setIsSending(false);
     }
   }
 
   async function handleRetry(failed: FailedSend) {
-    if (!currentUser || !sessionId || failed.isRetrying) {
+    if (!currentUser || !sessionId || failed.isRetrying || isCancelled) {
       return;
     }
 
@@ -353,12 +367,13 @@ export default function SessionChatScreen() {
       // Same pre-generated ID: a retry can never double-send.
       await sendSessionMessage(sessionId, currentUser.uid, failed.text, failed.messageId);
       setFailedSends((current) => current.filter((item) => item.messageId !== failed.messageId));
-    } catch {
+    } catch (error) {
       setFailedSends((current) =>
         current.map((item) =>
           item.messageId === failed.messageId ? { ...item, isRetrying: false } : item
         )
       );
+      refreshSessionOnDenied(error);
     }
   }
 
@@ -393,7 +408,7 @@ export default function SessionChatScreen() {
     [profilesById]
   );
 
-  const canSend = !isSending && draft.trim().length > 0;
+  const canSend = !isSending && !isCancelled && draft.trim().length > 0;
 
   if (isLoadingSession && !session) {
     return (
@@ -461,6 +476,14 @@ export default function SessionChatScreen() {
         </Pressable>
       </View>
 
+      {isCancelled ? (
+        <View style={[styles.readOnlyNotice, { backgroundColor: palette.surfaceMuted }]}>
+          <Text style={[TypeScale.caption, styles.readOnlyText, { color: palette.icon }]}>
+            This session was cancelled. Chat history is still available.
+          </Text>
+        </View>
+      ) : null}
+
       <FlatList
         style={styles.thread}
         inverted
@@ -482,11 +505,15 @@ export default function SessionChatScreen() {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Retry sending message"
-                    disabled={failed.isRetrying}
+                    disabled={failed.isRetrying || isCancelled}
                     onPress={() => handleRetry(failed)}
-                    style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+                    style={({ pressed }) => ({ opacity: pressed && !isCancelled ? 0.6 : 1 })}>
                     <Text style={[styles.bubbleTime, { color: Brand.accent }]}>
-                      {failed.isRetrying ? 'Retrying…' : 'Not sent · Tap to retry'}
+                      {isCancelled
+                        ? 'Not sent'
+                        : failed.isRetrying
+                          ? 'Retrying…'
+                          : 'Not sent · Tap to retry'}
                     </Text>
                   </Pressable>
                 </View>
@@ -573,12 +600,16 @@ export default function SessionChatScreen() {
             paddingBottom: Math.max(insets.bottom, Space.md),
           },
         ]}>
-        <View style={[styles.composer, { backgroundColor: palette.surfaceMuted }]}>
+        <View
+          style={[
+            styles.composer,
+            { backgroundColor: palette.surfaceMuted, opacity: isCancelled ? 0.55 : 1 },
+          ]}>
           <TextInput
-            editable={!isSending}
+            editable={!isSending && !isCancelled}
             multiline
             onChangeText={setDraft}
-            placeholder="Message the group…"
+            placeholder={isCancelled ? 'This session was cancelled.' : 'Message the group…'}
             placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
             style={[styles.composerInput, { color: palette.text }]}
             value={draft}
@@ -627,6 +658,13 @@ const styles = StyleSheet.create({
   identityText: {
     flex: 1,
     gap: 1,
+  },
+  readOnlyNotice: {
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.sm + 2,
+  },
+  readOnlyText: {
+    textAlign: 'center',
   },
   thread: {
     flex: 1,

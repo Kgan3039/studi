@@ -137,6 +137,32 @@ function groupMessageNotificationId(sessionId, eventId) {
   return `gm_${sanitizeIdPart(sessionId)}_${sanitizeIdPart(eventId)}`;
 }
 
+// ---------------------------------------------------------------------------
+// Server-side block filtering for group-message notifications. Blocked
+// recipients (either direction) are removed BEFORE notifyUser() is ever
+// called, so neither the persistent record nor the push exists for them —
+// and because the filter runs upstream of any preference check, no
+// notificationPrefs setting can resurrect a blocked notification. The chat
+// message itself stays stored for the remaining participants.
+// ---------------------------------------------------------------------------
+
+/** Both directions of the deterministic userBlocks/{blocker}__{blocked} doc ID. */
+function blockPairIdsFor(senderId, recipientId) {
+  return [`${senderId}__${recipientId}`, `${recipientId}__${senderId}`];
+}
+
+/**
+ * Drops every recipient with a block in either direction against the sender.
+ * `existingBlockIds` is the set of userBlocks doc IDs that actually exist
+ * (the caller looks them up in one batched getAll — 2 lookups per recipient,
+ * bounded by session capacity).
+ */
+function filterBlockedRecipients(senderId, recipients, existingBlockIds) {
+  return recipients.filter(
+    (uid) => !blockPairIdsFor(senderId, uid).some((id) => existingBlockIds.has(id))
+  );
+}
+
 /**
  * One reminder per recipient per session *start occurrence* — rescheduling a
  * session changes startTimeMillis, so the new occurrence reminds again. The
@@ -150,7 +176,9 @@ function reminderNotificationId(sessionId, uid, startTimeMillis) {
 module.exports = {
   BODY_MAX_LENGTH,
   TITLE_MAX_LENGTH,
+  blockPairIdsFor,
   dmNotificationId,
+  filterBlockedRecipients,
   groupMessageNotificationId,
   isAllowedNotificationUrl,
   isSafeId,

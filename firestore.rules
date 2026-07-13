@@ -178,14 +178,29 @@ service cloud.firestore {
 
       // Chat read markers (PR: group chat) — one tiny owner-only doc per
       // thread recording when the owner last opened it; unread is derived as
-      // session.lastMessageAt > lastReadAt. threadId is a sessionId today;
-      // DM threads can adopt the same shape later. Pinned to the server clock
-      // so a forged future marker can't hide messages that haven't arrived.
+      // session.lastMessageAt > lastReadAt. threadId must name a real thread
+      // the owner belongs to — a session or a DM conversation — so nobody can
+      // pile up junk marker docs. Pinned to the server clock so a forged
+      // future marker can't hide messages that haven't arrived. Costs at most
+      // two extra document reads per marker write.
       match /reads/{threadId} {
+        function isOwnSessionThread() {
+          return exists(/databases/$(database)/documents/sessions/$(threadId))
+            && request.auth.uid in
+               get(/databases/$(database)/documents/sessions/$(threadId)).data.participantIds;
+        }
+
+        function isOwnConversationThread() {
+          return exists(/databases/$(database)/documents/conversations/$(threadId))
+            && request.auth.uid in
+               get(/databases/$(database)/documents/conversations/$(threadId)).data.participantIds;
+        }
+
         allow read: if isOwner(userId);
         allow create, update: if isOwner(userId)
           && incoming().keys().hasOnly(['lastReadAt'])
-          && incoming().lastReadAt == request.time;
+          && incoming().lastReadAt == request.time
+          && (isOwnSessionThread() || isOwnConversationThread());
         allow delete: if false; // account deletion recursive-deletes the user tree
       }
     }
@@ -316,8 +331,10 @@ service cloud.firestore {
       // lastMessageAt/lastMessageSenderId unread metadata on the session doc
       // is written only by the Cloud Function (Admin SDK bypasses rules);
       // no client update branch exists for it. Leaving the session ends
-      // access; blocked pairs sharing a session are filtered client-side
-      // (same policy as the attendee list).
+      // access. A cancelled session is read-only: retained participants keep
+      // the history, nobody sends. Messages are fully immutable from the
+      // client — no edits, no deletes; account deletion cleans them up
+      // server-side (Admin SDK bypasses rules).
       match /messages/{messageId} {
         function parentSession() {
           return get(/databases/$(database)/documents/sessions/$(sessionId)).data;
@@ -327,6 +344,7 @@ service cloud.firestore {
           && request.auth.uid in parentSession().participantIds;
         allow create: if isVerifiedUwUser()
           && request.auth.uid == incoming().senderId
+          && parentSession().status in ['open', 'full']
           && request.auth.uid in parentSession().participantIds
           && incoming().keys().hasOnly(['senderId', 'text', 'createdAt'])
           && incoming().text is string
@@ -335,7 +353,7 @@ service cloud.firestore {
           && incoming().createdAt == request.time
           && hasFreshRateLimit(request.auth.uid, 'sendMessage');
         allow update: if false;
-        allow delete: if isVerifiedUwUser() && request.auth.uid == resource.data.senderId;
+        allow delete: if false;
       }
     }
 

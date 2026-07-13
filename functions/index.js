@@ -13,7 +13,9 @@ const admin = require("firebase-admin");
 const crypto = require("crypto");
 const { Expo } = require("expo-server-sdk");
 const {
+  blockPairIdsFor,
   dmNotificationId,
+  filterBlockedRecipients,
   groupMessageNotificationId,
   normalizeNotificationPayload,
   reminderNotificationId,
@@ -443,7 +445,27 @@ exports.onSessionMessageCreated = onDocumentCreated(
     const participantIds = Array.isArray(session?.participantIds)
       ? session.participantIds.filter((id) => typeof id === "string")
       : [];
-    const recipients = participantIds.filter((uid) => uid !== senderId);
+    const candidates = participantIds.filter((uid) => uid !== senderId);
+
+    if (candidates.length === 0) {
+      return;
+    }
+
+    // Server-side block filtering: a blocked pair (either direction) gets
+    // neither the record nor the push — client bubble-hiding is a courtesy,
+    // not the enforcement. One batched getAll over both block-doc directions
+    // per recipient: 2 document reads per recipient per message, bounded by
+    // session capacity (≤20 participants → ≤38 lookups in a single RPC).
+    // A lookup failure throws so Eventarc retries the whole event; the
+    // idempotent record IDs make that retry safe.
+    const blockRefs = candidates.flatMap((uid) =>
+      blockPairIdsFor(senderId, uid).map((id) => db.collection("userBlocks").doc(id))
+    );
+    const blockSnaps = await db.getAll(...blockRefs);
+    const existingBlockIds = new Set(
+      blockSnaps.filter((snap) => snap.exists).map((snap) => snap.id)
+    );
+    const recipients = filterBlockedRecipients(senderId, candidates, existingBlockIds);
 
     if (recipients.length === 0) {
       return;
@@ -656,18 +678,38 @@ exports.sendSessionReminders = onSchedule("every 10 minutes", async () => {
 // Account deletion (D8): single authoritative path. Admin SDK bypasses rules,
 // so client-side cleanup write-paths no longer exist in the rules at all.
 // Reports are intentionally retained (moderation evidence).
+//
+// Bounded + resumable: the account is disabled (and refresh tokens revoked)
+// BEFORE any data is touched, every cleanup step drains a query in fixed-size
+// pages whose handler removes the docs from the query's own result set, and
+// re-invoking the callable on an already-disabled account skips the
+// freshness/rate-limit gates and resumes the idempotent cleanup where it
+// stopped. Worst case a run is cut off repeatedly: the user is locked out
+// (existing sessions die at ID-token expiry, ≤1 h) and residual data is
+// orphaned-but-inaccessible until a retry or ops re-run finishes the job.
 // ---------------------------------------------------------------------------
 
-async function deleteQueryBatch(q) {
-  // Deletes in pages to stay under batch limits.
+const DELETE_CLEANUP_PAGE_SIZE = 100;
+
+// Runs `handler` over fixed-size pages of `q` until the query is empty. Every
+// handler MUST remove its docs from the query's result set (delete the doc or
+// mutate the queried field) so each pass strictly shrinks the remainder — that
+// is what makes an interrupted run resume instead of loop.
+async function drainQuery(q, handler) {
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const snap = await q.limit(200).get();
+    const snap = await q.limit(DELETE_CLEANUP_PAGE_SIZE).get();
     if (snap.empty) return;
-    const batch = db.batch();
-    snap.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
+    await handler(snap.docs);
   }
+}
+
+async function deleteQueryBatch(q) {
+  await drainQuery(q, async (docs) => {
+    const batch = db.batch();
+    docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  });
 }
 
 async function enforceDeleteAccountRateLimit(uid) {
@@ -692,7 +734,7 @@ async function enforceDeleteAccountRateLimit(uid) {
   });
 }
 
-exports.deleteUserAccount = onCall(async (request) => {
+exports.deleteUserAccount = onCall({ timeoutSeconds: 540 }, async (request) => {
   const uid = request.auth?.uid;
   const authTime = request.auth?.token?.auth_time;
 
@@ -700,47 +742,77 @@ exports.deleteUserAccount = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "Sign in to delete your account.");
   }
 
-  if (
-    typeof authTime !== "number" ||
-    Date.now() / 1000 - authTime > DELETE_ACCOUNT_MAX_AUTH_AGE_SECONDS
-  ) {
-    throw new HttpsError(
-      "failed-precondition",
-      "Please sign in again before deleting your account."
-    );
+  let userRecord;
+  try {
+    userRecord = await admin.auth().getUser(uid);
+  } catch {
+    // Auth user already gone means a previous run completed everything
+    // (deleteUser is the final step below).
+    throw new HttpsError("failed-precondition", "This account no longer exists.");
   }
 
-  await enforceDeleteAccountRateLimit(uid);
+  // Resume path: a previous run disabled the account but was cut off before
+  // cleanup finished. The user cannot re-authenticate a disabled account, so
+  // the freshness and rate-limit gates are skipped — the destructive intent
+  // was already proven, and everything below is idempotent.
+  const isResume = userRecord.disabled === true;
+
+  if (!isResume) {
+    if (
+      typeof authTime !== "number" ||
+      Date.now() / 1000 - authTime > DELETE_ACCOUNT_MAX_AUTH_AGE_SECONDS
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Please sign in again before deleting your account."
+      );
+    }
+
+    await enforceDeleteAccountRateLimit(uid);
+
+    // Lock the account BEFORE touching any data: even if this run is cut off
+    // mid-cleanup, no new sign-in is possible and revoked refresh tokens cap
+    // existing sessions at ID-token expiry (≤1 h). The still-valid ID token
+    // lets the client retry this callable to resume.
+    await admin.auth().updateUser(uid, { disabled: true });
+    await admin.auth().revokeRefreshTokens(uid);
+  }
 
   // 1. Sessions hosted by the user: delete outright, including the group-chat
   //    messages subcollection — a flat batch delete would orphan it.
-  const hosted = await db.collection("sessions").where("hostId", "==", uid).get();
-  for (const docSnap of hosted.docs) {
-    await db.recursiveDelete(docSnap.ref);
-  }
+  await drainQuery(db.collection("sessions").where("hostId", "==", uid), async (docs) => {
+    for (const docSnap of docs) {
+      await db.recursiveDelete(docSnap.ref);
+    }
+  });
 
-  // 2. Sessions joined: remove from participant arrays.
-  const joined = await db
-    .collection("sessions")
-    .where("participantIds", "array-contains", uid)
-    .get();
-  for (const docSnap of joined.docs) {
-    await docSnap.ref.update({
-      participantIds: admin.firestore.FieldValue.arrayRemove(uid),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-  }
+  // 2. Sessions joined: remove from participant arrays (arrayRemove is
+  //    idempotent and takes the doc out of this query's results).
+  await drainQuery(
+    db.collection("sessions").where("participantIds", "array-contains", uid),
+    async (docs) => {
+      const batch = db.batch();
+      docs.forEach((docSnap) =>
+        batch.update(docSnap.ref, {
+          participantIds: admin.firestore.FieldValue.arrayRemove(uid),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        })
+      );
+      await batch.commit();
+    }
+  );
 
   // 3. Conversations: delete the thread and its messages (the counterpart
   //    loses the thread too — acceptable for a 1:1 DM model and required to
   //    avoid orphaned PII; messages contain the deleted user's words).
-  const conversations = await db
-    .collection("conversations")
-    .where("participantIds", "array-contains", uid)
-    .get();
-  for (const convo of conversations.docs) {
-    await db.recursiveDelete(convo.ref);
-  }
+  await drainQuery(
+    db.collection("conversations").where("participantIds", "array-contains", uid),
+    async (docs) => {
+      for (const convo of docs) {
+        await db.recursiveDelete(convo.ref);
+      }
+    }
+  );
 
   // 3b. Group-chat messages the user sent in sessions they didn't host —
   //     collection-group lookup on senderId (COLLECTION_GROUP index in
@@ -757,7 +829,8 @@ exports.deleteUserAccount = onCall(async (request) => {
 
   // 6. Profile (public doc + private, notifications, and reads subcollections
   //    — the notification records double as reminder/dedupe state, so nothing
-  //    else to clean), then the Auth user.
+  //    else to clean), then the Auth user — last, so a lost run can always
+  //    resume through the disabled-account path above.
   await db.recursiveDelete(db.collection("users").doc(uid));
   await admin.auth().deleteUser(uid);
 

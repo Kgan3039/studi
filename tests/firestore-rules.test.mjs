@@ -1039,11 +1039,12 @@ describe('conversations + messages', () => {
 // ------------------------------------------- session group chat (PR: group chat)
 describe('session group chat (sessions/{sessionId}/messages)', () => {
   // ALICE hosts, BOB joined, MALLORY is outside the session.
-  async function seedChatSession(sessionId = 's1') {
+  async function seedChatSession(sessionId = 's1', overrides = {}) {
     await seed(`sessions/${sessionId}`, validSession(ALICE, {
       participantIds: [ALICE, BOB],
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
+      ...overrides,
     }));
   }
 
@@ -1119,7 +1120,7 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     }));
   });
 
-  it('messages are immutable; only the sender may delete', async () => {
+  it('messages are fully immutable — no client edits or deletes, even by the sender', async () => {
     await seedChatSession();
     await seed('sessions/s1/messages/m1', {
       senderId: BOB, text: 'original', createdAt: Timestamp.now(),
@@ -1128,8 +1129,36 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1'), {
       text: 'edited',
     }));
+    await assertFails(deleteDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1')));
     await assertFails(deleteDoc(doc(ctx(ALICE), 'sessions', 's1', 'messages', 'm1')));
-    await assertSucceeds(deleteDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1')));
+    await assertFails(deleteDoc(doc(ctx(MALLORY), 'sessions', 's1', 'messages', 'm1')));
+  });
+
+  it('cancellation makes the chat read-only for retained participants', async () => {
+    await seedChatSession();
+    // Before cancellation the participant can send…
+    await assertSucceeds(createSessionChatMessage(ctx(BOB), BOB, 's1', 'm1', {
+      senderId: BOB, text: 'see you there', createdAt: serverTimestamp(),
+    }));
+
+    await seedChatSession('s1', { status: 'cancelled' });
+    // …after it, the same participant (and the host) cannot send…
+    await seed(`rateLimits/${BOB}/actions/sendMessage`, {
+      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
+    });
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'm2', {
+      senderId: BOB, text: 'anyone still going?', createdAt: serverTimestamp(),
+    }));
+    await assertFails(createSessionChatMessage(ctx(ALICE), ALICE, 's1', 'm3', {
+      senderId: ALICE, text: 'sorry all', createdAt: serverTimestamp(),
+    }));
+    // …but retained participants keep the history, and outsiders still get nothing.
+    await assertSucceeds(getDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1')));
+    await assertSucceeds(getDocs(collection(ctx(ALICE), 'sessions', 's1', 'messages')));
+    await assertFails(getDoc(doc(ctx(MALLORY), 'sessions', 's1', 'messages', 'm1')));
+    await assertFails(createSessionChatMessage(ctx(MALLORY), MALLORY, 's1', 'm4', {
+      senderId: MALLORY, text: 'intruder', createdAt: serverTimestamp(),
+    }));
   });
 
   it('leaving the session ends read and send access', async () => {
@@ -1152,7 +1181,18 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
 describe('chat read markers (users/{uid}/reads)', () => {
   const readRef = (db, uid, threadId = 's1') => doc(db, 'users', uid, 'reads', threadId);
 
-  it('owner writes lastReadAt at server time, and can re-mark later', async () => {
+  // Markers must point at a real thread the owner belongs to.
+  async function seedOwnSession(sessionId = 's1', overrides = {}) {
+    await seed(`sessions/${sessionId}`, validSession(BOB, {
+      participantIds: [BOB, ALICE],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      ...overrides,
+    }));
+  }
+
+  it('owner marks a session thread they belong to, and can re-mark later', async () => {
+    await seedOwnSession();
     await assertSucceeds(setDoc(readRef(ctx(ALICE), ALICE), {
       lastReadAt: serverTimestamp(),
     }));
@@ -1162,7 +1202,46 @@ describe('chat read markers (users/{uid}/reads)', () => {
     await assertSucceeds(getDoc(readRef(ctx(ALICE), ALICE)));
   });
 
+  it('owner marks a DM conversation thread they belong to', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB),
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+      lastMessageAt: Timestamp.now(),
+    });
+    await assertSucceeds(setDoc(readRef(ctx(ALICE), ALICE, cid), {
+      lastReadAt: serverTimestamp(),
+    }));
+  });
+
+  it('rejects junk thread ids that name no session or conversation', async () => {
+    await assertFails(setDoc(readRef(ctx(ALICE), ALICE, 'no-such-thread'), {
+      lastReadAt: serverTimestamp(),
+    }));
+  });
+
+  it('rejects threads that do not include the owner', async () => {
+    // A session ALICE is not part of…
+    await seed('sessions/others', validSession(BOB, {
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+    }));
+    await assertFails(setDoc(readRef(ctx(ALICE), ALICE, 'others'), {
+      lastReadAt: serverTimestamp(),
+    }));
+    // …and a conversation between two other people.
+    const cid = convoId(BOB, MALLORY);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(BOB, MALLORY),
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+      lastMessageAt: Timestamp.now(),
+    });
+    await assertFails(setDoc(readRef(ctx(ALICE), ALICE, cid), {
+      lastReadAt: serverTimestamp(),
+    }));
+  });
+
   it('rejects forged timestamps and extra keys', async () => {
+    await seedOwnSession();
     await assertFails(setDoc(readRef(ctx(ALICE), ALICE), {
       lastReadAt: Timestamp.fromMillis(Date.now() + 86_400_000),
     }));
@@ -1172,6 +1251,7 @@ describe('chat read markers (users/{uid}/reads)', () => {
   });
 
   it('only the owner reads or writes; delete is denied', async () => {
+    await seedOwnSession();
     await seed(`users/${ALICE}/reads/s1`, { lastReadAt: Timestamp.now() });
 
     await assertFails(getDoc(readRef(ctx(BOB), ALICE)));

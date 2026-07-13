@@ -11,7 +11,9 @@ import validation from '../functions/notification-validation.js';
 const {
   BODY_MAX_LENGTH,
   TITLE_MAX_LENGTH,
+  blockPairIdsFor,
   dmNotificationId,
+  filterBlockedRecipients,
   groupMessageNotificationId,
   isAllowedNotificationUrl,
   normalizeNotificationPayload,
@@ -219,5 +221,50 @@ describe('idempotent record IDs (CloudEvent-keyed)', () => {
   it('sanitizes unexpected characters out of doc IDs', () => {
     const id = dmNotificationId('a/b', 'e.v/t');
     assert.equal(/^[A-Za-z0-9_-]+$/.test(id), true);
+  });
+});
+
+describe('group-message block filtering (server-side)', () => {
+  // onSessionMessageCreated removes blocked recipients BEFORE notifyUser()
+  // runs, so a filtered recipient gets neither the persistent record nor the
+  // push — and since the filter takes no preference input, no
+  // notificationPrefs value can resurrect a blocked notification. (Prefs are
+  // applied later, inside notifyUser, and only ever suppress the push.)
+  const SENDER = 'senderUid';
+  const RECIPIENTS = ['bobUid', 'caraUid', 'danUid'];
+
+  it('returns both block-doc directions for a pair', () => {
+    assert.deepEqual(blockPairIdsFor('a', 'b'), ['a__b', 'b__a']);
+  });
+
+  it('sender-blocked-recipient is excluded — no record, no push', () => {
+    const blocks = new Set(['senderUid__bobUid']); // sender blocked bob
+    assert.deepEqual(
+      filterBlockedRecipients(SENDER, RECIPIENTS, blocks),
+      ['caraUid', 'danUid']
+    );
+  });
+
+  it('recipient-blocked-sender is excluded — no record, no push', () => {
+    const blocks = new Set(['caraUid__senderUid']); // cara blocked the sender
+    assert.deepEqual(
+      filterBlockedRecipients(SENDER, RECIPIENTS, blocks),
+      ['bobUid', 'danUid']
+    );
+  });
+
+  it('unrelated participants still notify; blocks between recipients are irrelevant', () => {
+    // bob and cara blocked each other — neither is blocked against the sender.
+    const blocks = new Set(['bobUid__caraUid', 'caraUid__bobUid']);
+    assert.deepEqual(filterBlockedRecipients(SENDER, RECIPIENTS, blocks), RECIPIENTS);
+  });
+
+  it('no blocks means everyone stays; both directions at once still exclude once', () => {
+    assert.deepEqual(filterBlockedRecipients(SENDER, RECIPIENTS, new Set()), RECIPIENTS);
+    const blocks = new Set(['senderUid__danUid', 'danUid__senderUid']);
+    assert.deepEqual(
+      filterBlockedRecipients(SENDER, RECIPIENTS, blocks),
+      ['bobUid', 'caraUid']
+    );
   });
 });

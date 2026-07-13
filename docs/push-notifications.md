@@ -25,10 +25,20 @@ The notifications-center PR extends that into a persistent pipeline:
 - `/notifications` screen (protected) with unread badge on the Profile tab.
 
 Not implemented: App Check, RNFirebase messaging, friend notifications,
-client dismiss (no delete rule; records expire via TTL). Group-chat pushes are
-not block-filtered: two users who blocked each other can share a session
-(blocks only gate joining against the host), and the client hides their
-bubbles the same way it hides them in the attendee list.
+client dismiss (no delete rule; records expire via TTL).
+
+Group-message notifications are **block-filtered server-side**: before
+`notifyUser()` runs, `onSessionMessageCreated` checks both directions of the
+deterministic `userBlocks/{blocker}__{blocked}` docs in one batched `getAll`
+and drops blocked recipients entirely — no record, no push, regardless of any
+preference setting (the filter runs upstream of the pref check). Read cost:
+2 document lookups per recipient per message, bounded by session capacity
+(≤20 participants → ≤38 lookups in a single RPC). The chat message itself
+stays stored for the remaining participants; client bubble-hiding is a UI
+courtesy on top, not the enforcement. A cancelled session is read-only —
+rules deny new sends while retained participants keep the history — and
+group messages are fully immutable from the client (no edits, no deletes;
+account deletion cleans them up via the Admin SDK).
 
 ## Payload validation & deep-link safety
 
@@ -162,6 +172,17 @@ Group chat (this PR):
 - A message from A creates a `group_message` record for every other
   participant (never A) and pushes unless `groupMessages` is toggled off;
   tap opens `/session-chat/{id}`.
+- A blocked pair (either direction) gets neither the record nor the push,
+  even with every preference enabled; an unrelated participant in the same
+  session still gets both.
+- Cancelling a session flips its chat to read-only: the notice renders, the
+  composer disables, failed sends stop offering retry, and a deep link into
+  the cancelled chat shows history without crashing.
+- Account deletion is resumable: the account is disabled and refresh tokens
+  revoked before any cleanup, every step drains queries in bounded pages,
+  and re-calling the callable on an already-disabled account resumes the
+  idempotent cleanup (worst case: a locked-out account with residual data
+  until a retry or ops re-run completes).
 - The Session Details chat card shows the unread dot only for someone else's
   message arriving after your last visit to the chat, and clears when you
   come back from the chat.
