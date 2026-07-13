@@ -249,32 +249,75 @@ function withBuiltInLocationFallback(location: StudyLocation): StudyLocation {
   };
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function normalizeCoordinates(
+  coordinates: Partial<StudyLocation["coordinates"]> | undefined,
+  fallback: StudyLocation["coordinates"]
+): StudyLocation["coordinates"] {
+  return isFiniteNumber(coordinates?.latitude) && isFiniteNumber(coordinates?.longitude)
+    ? {
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+      }
+    : fallback;
+}
+
+function normalizeMapPosition(
+  mapPosition: Partial<StudyLocation["mapPosition"]> | undefined,
+  fallback: StudyLocation["mapPosition"]
+): StudyLocation["mapPosition"] {
+  const xPercent = isFiniteNumber(mapPosition?.xPercent)
+    ? Math.min(100, Math.max(0, mapPosition.xPercent))
+    : fallback.xPercent;
+  const yPercent = isFiniteNumber(mapPosition?.yPercent)
+    ? Math.min(100, Math.max(0, mapPosition.yPercent))
+    : fallback.yPercent;
+
+  return { xPercent, yPercent };
+}
+
+function isValidTimestampSecond(value: unknown): value is number {
+  return (
+    isFiniteNumber(value) &&
+    Number.isInteger(value) &&
+    value >= -62_135_596_800 &&
+    value <= 253_402_300_799
+  );
+}
+
+function normalizeTimestampNanoseconds(value: unknown) {
+  return isFiniteNumber(value) &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value < 1_000_000_000
+    ? value
+    : 0;
+}
+
 function normalizeStudyLocation(
   locationId: string,
   location: Partial<Omit<StudyLocation, "locationId">>
 ): StudyLocation {
   const fallback = findStudyLocationById(locationId);
+  const fallbackCoordinates =
+    fallback?.coordinates ??
+    UW_STUDY_LOCATION_COORDINATE_OVERRIDES[locationId] ?? {
+      latitude: 43.0731,
+      longitude: -89.4012,
+    };
 
   return {
     building: location.building ?? fallback?.building ?? "UW-Madison",
     campusArea: location.campusArea ?? fallback?.campusArea ?? "Campus",
-    coordinates:
-      location.coordinates &&
-      typeof location.coordinates.latitude === "number" &&
-      typeof location.coordinates.longitude === "number"
-        ? location.coordinates
-        : fallback?.coordinates ??
-          UW_STUDY_LOCATION_COORDINATE_OVERRIDES[locationId] ?? {
-            latitude: 43.0731,
-            longitude: -89.4012,
-          },
+    coordinates: normalizeCoordinates(location.coordinates, fallbackCoordinates),
     locationId,
-    mapPosition:
-      location.mapPosition &&
-      typeof location.mapPosition.xPercent === "number" &&
-      typeof location.mapPosition.yPercent === "number"
-        ? location.mapPosition
-        : fallback?.mapPosition ?? { xPercent: 50, yPercent: 50 },
+    mapPosition: normalizeMapPosition(
+      location.mapPosition,
+      fallback?.mapPosition ?? { xPercent: 50, yPercent: 50 }
+    ),
     // A stored name that just repeats the doc id is a slug, not a display
     // name — prefer the curated name (or a humanized label) instead.
     name:
@@ -721,10 +764,10 @@ export function normalizeSessionTimestamp(value: unknown): Timestamp | null {
   if (
     value &&
     typeof value === "object" &&
-    typeof (value as { seconds?: unknown }).seconds === "number"
+    isValidTimestampSecond((value as { seconds?: unknown }).seconds)
   ) {
     const { seconds, nanoseconds } = value as { seconds: number; nanoseconds?: unknown };
-    return new Timestamp(seconds, typeof nanoseconds === "number" ? nanoseconds : 0);
+    return new Timestamp(seconds, normalizeTimestampNanoseconds(nanoseconds));
   }
 
   return null;
