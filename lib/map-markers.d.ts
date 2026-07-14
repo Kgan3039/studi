@@ -19,6 +19,18 @@ export declare function buildCampusMarkerEntries<Location extends { locationId: 
 
 export declare function hiddenMarkerCoordinate(canonicalId: string): MapCoordinate;
 
+export declare const ANDROID_TRACK_REFRESH_MS: number;
+
+export declare function markerAppearanceSignature(parts: {
+  isSelected: boolean;
+  isVisible: boolean;
+  latitude: number;
+  longitude: number;
+  sessionCount: number;
+  theme: string;
+  timing: string;
+}): string;
+
 export type PlannedCampusMarker<Marker> = Marker & {
   isVisible: boolean;
   renderCoordinate: MapCoordinate;

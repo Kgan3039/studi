@@ -1,6 +1,6 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Marker, type LatLng } from 'react-native-maps';
 
 import {
@@ -15,8 +15,10 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { canonicalStudyLocationId } from '@/lib/catalog';
 import type { StudyLocation } from '@/lib/firestore';
 import {
+  ANDROID_TRACK_REFRESH_MS,
   buildCampusMarkerEntries,
   isRenderableCoordinate,
+  markerAppearanceSignature,
   planCampusMarkers,
 } from '@/lib/map-markers';
 import type { MapSessionTiming } from '@/components/campus-map.types';
@@ -88,6 +90,8 @@ type CampusMapMarkerProps = {
 // to reorder them (verified via crash reports; see PR #54). So: no zIndex,
 // no key churn, no conditional children, and an identical subtree shape in
 // every state.
+const IS_ANDROID = Platform.OS === 'android';
+
 const CampusMapMarker = memo(function CampusMapMarker({
   coordinate,
   isSelected,
@@ -99,6 +103,36 @@ const CampusMapMarker = memo(function CampusMapMarker({
   timing,
 }: CampusMapMarkerProps) {
   const timingColor = getTimingColor(timing, palette.tint, palette.icon);
+
+  // Android redraws tracked custom markers on a ~40 ms loop, so tracking is
+  // only pulsed on for a bounded window when the rendered appearance (or the
+  // native position, e.g. a hidden marker relocating) actually changes, then
+  // switched back off. iOS Apple Maps ignores the prop entirely, so it stays
+  // a constant false there. The toggle is a prop update only — same key,
+  // same child position, identical subtree.
+  const appearanceSignature = markerAppearanceSignature({
+    isSelected,
+    isVisible,
+    latitude: coordinate.latitude,
+    longitude: coordinate.longitude,
+    sessionCount,
+    theme: `${palette.surface}|${palette.border}|${palette.tint}|${palette.icon}`,
+    timing,
+  });
+  const [tracksViewChanges, setTracksViewChanges] = useState(IS_ANDROID);
+
+  useEffect(() => {
+    if (!IS_ANDROID) {
+      return;
+    }
+
+    setTracksViewChanges(true);
+    const timer = setTimeout(() => setTracksViewChanges(false), ANDROID_TRACK_REFRESH_MS);
+
+    // Restarts the window on rapid changes and prevents any state update
+    // after unmount — the pending timer is always cleared first.
+    return () => clearTimeout(timer);
+  }, [appearanceSignature]);
 
   const handlePress = useCallback(() => {
     // Hidden markers are relocated off-campus and never selectable, but keep
@@ -117,12 +151,10 @@ const CampusMapMarker = memo(function CampusMapMarker({
       identifier={location.locationId}
       onPress={handlePress}
       opacity={isVisible ? 1 : 0}
-      tracksViewChanges>
+      tracksViewChanges={tracksViewChanges}>
       {/* collapsable={false} keeps Fabric from flattening/unflattening these
           views as their styles change, so the marker's native subtree shape
-          is identical in every state. tracksViewChanges is inert on the
-          Apple provider (not implemented in AIRMapMarker); it stays a
-          constant so there is no timer-driven prop churn on any platform. */}
+          is identical in every state. */}
       <View collapsable={false} style={styles.markerTouchTarget}>
         <View
           collapsable={false}

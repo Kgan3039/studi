@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import mapMarkers from "../lib/map-markers.js";
 
 const {
+  ANDROID_TRACK_REFRESH_MS,
   buildCampusMarkerEntries,
   hiddenMarkerCoordinate,
   isRenderableCoordinate,
+  markerAppearanceSignature,
   planCampusMarkers,
 } = mapMarkers;
 
@@ -193,6 +195,50 @@ describe("campus marker render plan", () => {
     }
 
     assert.equal(isRenderableCoordinate(hiddenMarkerCoordinate(undefined)), true);
+  });
+});
+
+describe("marker appearance signature (Android tracking pulse)", () => {
+  const BASE = {
+    isSelected: false,
+    isVisible: true,
+    latitude: 43.0766969,
+    longitude: -89.4013466,
+    sessionCount: 2,
+    theme: "#FFFFFF|#E5DFD2|#C5050C|#6B6359",
+    timing: "live",
+  };
+
+  it("is stable for identical appearance inputs", () => {
+    assert.equal(markerAppearanceSignature(BASE), markerAppearanceSignature({ ...BASE }));
+  });
+
+  it("changes when any appearance-affecting field changes", () => {
+    const variants = [
+      { isSelected: true },
+      { isVisible: false },
+      { timing: "none" },
+      { sessionCount: 0 },
+      { latitude: -47.5 },
+      { longitude: -38.7 },
+      { theme: "#1F1B16|#3B342A|#E8B4B8|#8A8174" },
+    ];
+
+    const baseSignature = markerAppearanceSignature(BASE);
+
+    for (const change of variants) {
+      assert.notEqual(
+        markerAppearanceSignature({ ...BASE, ...change }),
+        baseSignature,
+        `expected signature to change for ${JSON.stringify(change)}`
+      );
+    }
+  });
+
+  it("keeps the refresh window short and bounded", () => {
+    assert.ok(Number.isInteger(ANDROID_TRACK_REFRESH_MS));
+    assert.ok(ANDROID_TRACK_REFRESH_MS >= 100);
+    assert.ok(ANDROID_TRACK_REFRESH_MS <= 1000);
   });
 });
 
