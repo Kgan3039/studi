@@ -12,7 +12,8 @@
     "lint": "expo lint",
     "rules:test": "firebase emulators:exec --only firestore \"mocha tests/firestore-rules.test.mjs --timeout 10000\"",
     "test:notifications": "mocha tests/notification-validation.test.mjs",
-    "test:deletion": "mocha tests/account-deletion.test.mjs"
+    "test:deletion": "mocha tests/account-deletion.test.mjs",
+    "test:map": "mocha tests/map-markers.test.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/cormorant-garamond": "^0.4.1",
