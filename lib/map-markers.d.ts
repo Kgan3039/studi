@@ -16,3 +16,24 @@ export declare function buildCampusMarkerEntries<Location extends { locationId: 
   locations: readonly Location[] | null | undefined,
   options?: { canonicalize?: (locationId: string) => string }
 ): CampusMarkerEntry<Location>[];
+
+export declare function hiddenMarkerCoordinate(canonicalId: string): MapCoordinate;
+
+export type PlannedCampusMarker<Marker> = Marker & {
+  isVisible: boolean;
+  renderCoordinate: MapCoordinate;
+};
+
+export declare function planCampusMarkers<
+  Marker extends {
+    canonicalId: string;
+    coordinate: MapCoordinate;
+    location: { locationId: string };
+  },
+>(
+  markers: readonly Marker[] | null | undefined,
+  visibleLocationIds: ReadonlySet<string> | readonly string[] | null | undefined
+): {
+  fitCoordinates: MapCoordinate[];
+  markers: PlannedCampusMarker<Marker>[];
+};

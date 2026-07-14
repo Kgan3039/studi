@@ -14,7 +14,11 @@ import {
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { canonicalStudyLocationId } from '@/lib/catalog';
 import type { StudyLocation } from '@/lib/firestore';
-import { buildCampusMarkerEntries, isRenderableCoordinate } from '@/lib/map-markers';
+import {
+  buildCampusMarkerEntries,
+  isRenderableCoordinate,
+  planCampusMarkers,
+} from '@/lib/map-markers';
 import type { MapSessionTiming } from '@/components/campus-map.types';
 
 type CampusMapProps = {
@@ -97,6 +101,8 @@ const CampusMapMarker = memo(function CampusMapMarker({
   const timingColor = getTimingColor(timing, palette.tint, palette.icon);
 
   const handlePress = useCallback(() => {
+    // Hidden markers are relocated off-campus and never selectable, but keep
+    // the guard so a tap racing a visibility change cannot select one.
     if (isVisible) {
       onSelectLocation(location.locationId);
     }
@@ -114,8 +120,9 @@ const CampusMapMarker = memo(function CampusMapMarker({
       tracksViewChanges>
       {/* collapsable={false} keeps Fabric from flattening/unflattening these
           views as their styles change, so the marker's native subtree shape
-          is identical in every state. tracksViewChanges stays constant true
-          so style updates render without timer-driven prop churn. */}
+          is identical in every state. tracksViewChanges is inert on the
+          Apple provider (not implemented in AIRMapMarker); it stays a
+          constant so there is no timer-driven prop churn on any platform. */}
       <View collapsable={false} style={styles.markerTouchTarget}>
         <View
           collapsable={false}
@@ -180,8 +187,11 @@ export function CampusMap({
     [locations]
   );
 
-  const visibleMarkers = useMemo(
-    () => markers.filter((marker) => visibleLocationIds.has(marker.location.locationId)),
+  // Same-length, same-order, same-key list on every render: hidden markers
+  // are relocated off-campus (renderCoordinate) instead of unmounted, and
+  // only visible markers feed the camera fit.
+  const markerPlan = useMemo(
+    () => planCampusMarkers(markers, visibleLocationIds),
     [markers, visibleLocationIds]
   );
 
@@ -215,16 +225,18 @@ export function CampusMap({
   }, [markers, selectedLocationId]);
 
   const fitVisibleMarkers = useCallback(() => {
-    if (!isMapReady || visibleMarkers.length === 0) {
+    const { fitCoordinates } = markerPlan;
+
+    if (!isMapReady || fitCoordinates.length === 0) {
       return;
     }
 
     requestAnimationFrame(() => {
       try {
-        if (visibleMarkers.length === 1) {
+        if (fitCoordinates.length === 1) {
           mapRef.current?.animateToRegion(
             {
-              ...visibleMarkers[0].coordinate,
+              ...fitCoordinates[0],
               latitudeDelta: 0.004,
               longitudeDelta: 0.004,
             },
@@ -233,16 +245,16 @@ export function CampusMap({
           return;
         }
 
-        mapRef.current?.fitToCoordinates(
-          visibleMarkers.map((marker) => marker.coordinate),
-          { animated: true, edgePadding: FIT_PADDING }
-        );
+        mapRef.current?.fitToCoordinates(fitCoordinates, {
+          animated: true,
+          edgePadding: FIT_PADDING,
+        });
       } catch {
         // Native maps can reject camera updates while mounting or unmounting;
         // leaving the current region is safer than letting search/filter crash.
       }
     });
-  }, [isMapReady, visibleMarkers]);
+  }, [isMapReady, markerPlan]);
 
   useEffect(() => {
     fitVisibleMarkers();
@@ -273,12 +285,12 @@ export function CampusMap({
         style={StyleSheet.absoluteFill}
         toolbarEnabled={false}
         userInterfaceStyle={colorScheme}>
-        {markers.map(({ canonicalId, coordinate, location }) => (
+        {markerPlan.markers.map(({ canonicalId, isVisible, location, renderCoordinate }) => (
           <CampusMapMarker
             key={canonicalId}
-            coordinate={coordinate}
+            coordinate={renderCoordinate}
             isSelected={selectedLocationId === location.locationId}
-            isVisible={visibleLocationIds.has(location.locationId)}
+            isVisible={isVisible}
             location={location}
             onSelectLocation={onSelectLocation}
             palette={palette}
@@ -288,7 +300,7 @@ export function CampusMap({
         ))}
       </MapView>
 
-      {visibleMarkers.length === 0 ? (
+      {markerPlan.fitCoordinates.length === 0 ? (
         <View
           pointerEvents="none"
           style={[
