@@ -1,5 +1,5 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SessionCard } from '@/components/session-card';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
@@ -56,6 +57,8 @@ export default function SessionsScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
   const [todayOnly, setTodayOnly] = useState(false);
+  const createSessionNavigationRef = useRef(false);
+  const [isNavigatingToCreateSession, setIsNavigatingToCreateSession] = useState(false);
   const { toast, show: showToast } = useSuccessToast();
   const normalizedRequestedClass = requestedClassId?.trim().toUpperCase() ?? '';
 
@@ -170,6 +173,39 @@ export default function SessionsScreen() {
     setIsRefreshing(true);
     await loadSessions();
   }
+
+  useFocusEffect(
+    useCallback(() => {
+      createSessionNavigationRef.current = false;
+      setIsNavigatingToCreateSession(false);
+    }, [])
+  );
+
+  const handleCreateSession = useCallback(
+    (classId?: string) => {
+      if (createSessionNavigationRef.current) {
+        return;
+      }
+
+      createSessionNavigationRef.current = true;
+      setIsNavigatingToCreateSession(true);
+
+      try {
+        router.push(
+          classId
+            ? {
+                pathname: '/create-session',
+                params: { classId },
+              }
+            : '/create-session'
+        );
+      } catch {
+        createSessionNavigationRef.current = false;
+        setIsNavigatingToCreateSession(false);
+      }
+    },
+    [router]
+  );
 
   useEffect(() => {
     loadSessions();
@@ -340,6 +376,15 @@ export default function SessionsScreen() {
         </View>
       ) : null}
 
+      {sessions.length > 0 ? (
+        <Button
+          fullWidth
+          label="Host a session"
+          loading={isNavigatingToCreateSession}
+          onPress={handleCreateSession}
+        />
+      ) : null}
+
       {visibleSessions.length > 0 ? (
         <View style={styles.list}>
           {visibleSessions.map((session) => {
@@ -392,16 +437,7 @@ export default function SessionsScreen() {
               : 'No sessions for your classes right now. Someone has to set the first table.'
           }
           actionLabel={normalizedRequestedClass ? 'Host one' : 'Host a session'}
-          onAction={() =>
-            router.push(
-              normalizedRequestedClass
-                ? {
-                    pathname: '/create-session',
-                    params: { classId: normalizedRequestedClass },
-                  }
-                : '/create-session'
-            )
-          }
+          onAction={() => handleCreateSession(normalizedRequestedClass || undefined)}
         />
       )}
       </ScrollView>
