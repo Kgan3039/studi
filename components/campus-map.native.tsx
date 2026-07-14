@@ -37,11 +37,6 @@ const CAMPUS_REGION = {
 const MAP_PADDING = { bottom: 24, left: 8, right: 8, top: 8 };
 const FIT_PADDING = { bottom: 64, left: 44, right: 44, top: 64 };
 
-// How long a marker keeps tracksViewChanges on after its appearance changes.
-// Long enough for iOS to re-snapshot the custom view, short enough to keep
-// the map cheap while idle.
-const TRACK_APPEARANCE_MS = 350;
-
 function markerCoordinate(location: StudyLocation): LatLng | null {
   if (!isRenderableCoordinate(location.coordinates)) {
     return null;
@@ -81,10 +76,14 @@ type CampusMapMarkerProps = {
   timing: MapSessionTiming;
 };
 
-// Markers stay mounted for the whole location set; search and filters only
-// flip isVisible/appearance. AIRMap's native child array must never see
-// churn from filtering — remount-by-key is what crashed the map under the
-// Fabric interop, so selection/timing may only change props here.
+// Markers stay mounted for the whole location set; search, filters, and
+// selection only flip scalar props and styles. Under the Fabric legacy
+// interop, AIRMap's native child array must never see structural churn:
+// remount-by-key crashed it, and so does a changing zIndex — Fabric sorts
+// absolute-positioned siblings by zIndex and emits remove/insert mutations
+// to reorder them (verified via crash reports; see PR #54). So: no zIndex,
+// no key churn, no conditional children, and an identical subtree shape in
+// every state.
 const CampusMapMarker = memo(function CampusMapMarker({
   coordinate,
   isSelected,
@@ -96,16 +95,6 @@ const CampusMapMarker = memo(function CampusMapMarker({
   timing,
 }: CampusMapMarkerProps) {
   const timingColor = getTimingColor(timing, palette.tint, palette.icon);
-  const [tracksViewChanges, setTracksViewChanges] = useState(true);
-
-  // iOS snapshots custom marker views once tracksViewChanges turns off, so
-  // pulse it back on whenever the rendered appearance changes.
-  useEffect(() => {
-    setTracksViewChanges(true);
-    const timer = setTimeout(() => setTracksViewChanges(false), TRACK_APPEARANCE_MS);
-
-    return () => clearTimeout(timer);
-  }, [isSelected, isVisible, timingColor, palette.surface, palette.border]);
 
   const handlePress = useCallback(() => {
     if (isVisible) {
@@ -122,10 +111,14 @@ const CampusMapMarker = memo(function CampusMapMarker({
       identifier={location.locationId}
       onPress={handlePress}
       opacity={isVisible ? 1 : 0}
-      tracksViewChanges={tracksViewChanges}
-      zIndex={isSelected ? 4 : sessionCount > 0 ? 3 : 2}>
-      <View style={styles.markerTouchTarget}>
+      tracksViewChanges>
+      {/* collapsable={false} keeps Fabric from flattening/unflattening these
+          views as their styles change, so the marker's native subtree shape
+          is identical in every state. tracksViewChanges stays constant true
+          so style updates render without timer-driven prop churn. */}
+      <View collapsable={false} style={styles.markerTouchTarget}>
         <View
+          collapsable={false}
           style={[
             styles.markerHalo,
             {
@@ -133,6 +126,7 @@ const CampusMapMarker = memo(function CampusMapMarker({
             },
           ]}>
           <View
+            collapsable={false}
             style={[
               styles.markerCore,
               isSelected && styles.markerCoreSelected,
@@ -143,6 +137,7 @@ const CampusMapMarker = memo(function CampusMapMarker({
               },
             ]}>
             <View
+              collapsable={false}
               style={[
                 styles.markerStatus,
                 isSelected && styles.markerStatusSelected,
@@ -189,6 +184,35 @@ export function CampusMap({
     () => markers.filter((marker) => visibleLocationIds.has(marker.location.locationId)),
     [markers, visibleLocationIds]
   );
+
+  useEffect(() => {
+    if (!__DEV__) {
+      return;
+    }
+
+    const seenKeys = new Set<string>();
+
+    for (const { canonicalId, location } of markers) {
+      if (seenKeys.has(canonicalId)) {
+        console.error(
+          `[CampusMap] Duplicate marker key "${canonicalId}" (source id "${location.locationId}"). ` +
+            'Marker keys must be unique or AIRMap child indexes diverge.'
+        );
+      }
+      seenKeys.add(canonicalId);
+    }
+
+    console.log(
+      '[CampusMap] markers',
+      markers.map(({ canonicalId, coordinate, location }) => ({
+        key: canonicalId,
+        sourceId: location.locationId,
+        latitude: coordinate.latitude,
+        longitude: coordinate.longitude,
+        selected: selectedLocationId === location.locationId,
+      }))
+    );
+  }, [markers, selectedLocationId]);
 
   const fitVisibleMarkers = useCallback(() => {
     if (!isMapReady || visibleMarkers.length === 0) {
