@@ -16,6 +16,9 @@ const {
   blockPairIdsFor,
   dmNotificationId,
   filterBlockedRecipients,
+  friendAcceptedNotificationId,
+  friendCleanupPathsForBlock,
+  friendRequestNotificationId,
   groupMessageNotificationId,
   isWithinGroupChatFanoutLimit,
   normalizeNotificationPayload,
@@ -615,6 +618,111 @@ exports.onSessionParticipantsUpdated = onDocumentUpdated(
           actorId: hostId,
           sessionId,
         })
+      )
+    );
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Friends / Study Buddies (PR 6). Two notification triggers and one cleanup
+// trigger. Both notification triggers re-check the block relationship at fire
+// time (Admin SDK read of both userBlocks directions) so a block that lands
+// between the client write and the trigger still suppresses the record and
+// the push — the notification pipeline's block guarantee, matching group chat.
+// ---------------------------------------------------------------------------
+
+/** True if either direction of the block exists — one batched getAll. */
+async function isPairBlocked(userA, userB) {
+  const refs = blockPairIdsFor(userA, userB).map((id) =>
+    db.collection("userBlocks").doc(id)
+  );
+  const snaps = await db.getAll(...refs);
+  return snaps.some((snap) => snap.exists);
+}
+
+exports.onFriendRequestCreated = onDocumentCreated(
+  "friendRequests/{requestId}",
+  async (event) => {
+    const request = event.data?.data();
+    const fromUid = request?.fromUid;
+    const toUid = request?.toUid;
+
+    if (typeof fromUid !== "string" || typeof toUid !== "string" || fromUid === toUid) {
+      return;
+    }
+
+    // A block landing between the client write and this trigger still stops
+    // the notification — no record, no push for a blocked pair.
+    if (await isPairBlocked(fromUid, toUid)) {
+      return;
+    }
+
+    const senderName = (await getDisplayName(fromUid)) || "Someone";
+    await notifyUser(toUid, {
+      id: friendRequestNotificationId(event.id),
+      type: "friend_request",
+      title: "New study buddy request",
+      body: `${senderName} wants to be study buddies`,
+      url: "/friends",
+      actorId: fromUid,
+    });
+  }
+);
+
+exports.onFriendshipCreated = onDocumentCreated(
+  "friendships/{pairId}",
+  async (event) => {
+    const friendship = event.data?.data();
+    const acceptedBy = friendship?.acceptedBy;
+    const userIds = Array.isArray(friendship?.userIds)
+      ? friendship.userIds.filter((id) => typeof id === "string")
+      : [];
+
+    if (typeof acceptedBy !== "string" || userIds.length !== 2) {
+      return;
+    }
+
+    // Notify the ORIGINAL SENDER — the member who didn't click accept — that
+    // their request went through.
+    const originalSender = userIds.find((uid) => uid !== acceptedBy);
+    if (!originalSender) {
+      return;
+    }
+
+    if (await isPairBlocked(originalSender, acceptedBy)) {
+      return;
+    }
+
+    const accepterName = (await getDisplayName(acceptedBy)) || "Someone";
+    await notifyUser(originalSender, {
+      id: friendAcceptedNotificationId(event.id),
+      type: "friend_accepted",
+      title: "Study buddy request accepted",
+      body: `${accepterName} accepted your study buddy request`,
+      url: `/user/${acceptedBy}`,
+      actorId: acceptedBy,
+    });
+  }
+);
+
+// Block cleanup: creating a block severs any friendship and pending requests
+// between the pair, at deterministic IDs (no queries). Idempotent — deleting
+// an absent doc is a no-op — so an Eventarc retry is safe.
+exports.onUserBlockCreated = onDocumentCreated(
+  "userBlocks/{blockId}",
+  async (event) => {
+    const block = event.data?.data();
+    const blockerUserId = block?.blockerUserId;
+    const blockedUserId = block?.blockedUserId;
+
+    if (typeof blockerUserId !== "string" || typeof blockedUserId !== "string") {
+      return;
+    }
+
+    const paths = friendCleanupPathsForBlock(blockerUserId, blockedUserId);
+    await Promise.all(
+      paths.map(({ collection, id }) =>
+        db.collection(collection).doc(id).delete()
       )
     );
   }

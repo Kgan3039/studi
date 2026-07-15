@@ -1,0 +1,437 @@
+// lib/friends.ts — client data layer for Friends / Study Buddies (PR 6).
+//
+// Data model (mirrored in firestore.rules — the rules are the enforcement):
+//   friendRequests/{fromUid}__{toUid}   { fromUid, toUid, createdAt }
+//     Doc existence IS the pending state. Create = send, delete by sender =
+//     cancel, delete by recipient = decline or accept.
+//   friendships/{sortedUidA}__{sortedUidB}   { userIds, acceptedBy, createdAt }
+//     Created only by the request recipient, in the same batch that deletes
+//     the request — rules enforce the atomicity with exists/existsAfter.
+//
+// Every list here is paginated and every profile hydration goes through
+// getProfilesByIds (batched + cached) — no unbounded reads, no N+1.
+
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  serverTimestamp,
+  startAfter,
+  Timestamp,
+  where,
+  writeBatch,
+  type QueryDocumentSnapshot,
+} from "firebase/firestore";
+
+import { db } from "../firebaseConfig";
+import {
+  buildParticipantKey,
+  COLLECTIONS,
+  getProfilesByIds,
+  parseUserProfile,
+  stageRateLimit,
+  type UserProfile,
+} from "./firestore";
+
+export const FRIENDS_PAGE_SIZE = 30;
+export const FRIEND_SEARCH_LIMIT = 20;
+export const FRIEND_SEARCH_MIN_QUERY_LENGTH = 2;
+export const SUGGESTED_CLASSMATES_LIMIT = 25;
+
+export type FriendRequest = {
+  requestId: string;
+  fromUid: string;
+  toUid: string;
+  createdAt: Timestamp | null;
+};
+
+export type Friendship = {
+  friendshipId: string;
+  userIds: string[];
+  acceptedBy: string;
+  createdAt: Timestamp | null;
+};
+
+/** A friend row: the other user's uid plus their (possibly deleted) profile. */
+export type FriendListItem = {
+  friendUid: string;
+  profile: UserProfile | null;
+  createdAt: Timestamp | null;
+};
+
+/** A request row hydrated with the OTHER party's profile. */
+export type FriendRequestListItem = FriendRequest & {
+  otherUid: string;
+  profile: UserProfile | null;
+};
+
+export type FriendsPage<T> = {
+  items: T[];
+  /** Pass back to fetch the next page; null when exhausted. */
+  cursor: QueryDocumentSnapshot | null;
+  hasMore: boolean;
+};
+
+/** How the current user relates to another user, for profile/action states. */
+export type FriendStatus =
+  | "self"
+  | "friends"
+  | "outgoing" // we sent them a pending request
+  | "incoming" // they sent us a pending request
+  | "none";
+
+export function buildFriendRequestId(fromUid: string, toUid: string) {
+  return `${fromUid}__${toUid}`;
+}
+
+/** Sorted pair key — same convention as DM conversations. */
+export function buildFriendshipId(userA: string, userB: string) {
+  return buildParticipantKey(userA, userB);
+}
+
+/** Class codes both users share, in the viewer's saved order. */
+export function sharedClasses(mine: string[], theirs: string[]): string[] {
+  const theirSet = new Set(theirs.map((code) => code.trim().toUpperCase()));
+  return mine.filter((code) => theirSet.has(code.trim().toUpperCase()));
+}
+
+function friendRequestDoc(fromUid: string, toUid: string) {
+  return doc(db, COLLECTIONS.friendRequests, buildFriendRequestId(fromUid, toUid));
+}
+
+function friendshipDoc(userA: string, userB: string) {
+  return doc(db, COLLECTIONS.friendships, buildFriendshipId(userA, userB));
+}
+
+function asTimestamp(value: unknown): Timestamp | null {
+  return value instanceof Timestamp ? value : null;
+}
+
+function parseFriendRequest(id: string, data: Record<string, unknown>): FriendRequest {
+  return {
+    requestId: id,
+    fromUid: typeof data.fromUid === "string" ? data.fromUid : "",
+    toUid: typeof data.toUid === "string" ? data.toUid : "",
+    createdAt: asTimestamp(data.createdAt),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Mutations. Rules re-enforce every invariant server-side (self-request,
+// duplicates, blocks, atomic accept); the client checks are for friendly
+// errors, not security.
+// ---------------------------------------------------------------------------
+
+export async function sendFriendRequest(fromUid: string, toUid: string) {
+  if (fromUid === toUid) {
+    throw new Error("You can't send yourself a friend request.");
+  }
+
+  const batch = writeBatch(db);
+  batch.set(friendRequestDoc(fromUid, toUid), {
+    fromUid,
+    toUid,
+    createdAt: serverTimestamp(),
+  });
+  stageRateLimit(batch, fromUid, "friendRequest");
+  await batch.commit();
+}
+
+export async function cancelFriendRequest(fromUid: string, toUid: string) {
+  await deleteDoc(friendRequestDoc(fromUid, toUid));
+}
+
+export async function declineFriendRequest(currentUid: string, fromUid: string) {
+  await deleteDoc(friendRequestDoc(fromUid, currentUid));
+}
+
+/**
+ * Accept = one atomic batch: delete their incoming request, create the
+ * friendship. Rules only allow the friendship create when the request existed
+ * before the batch AND is gone after it, so a partial accept can't exist.
+ * If both users requested each other, the now-moot outgoing request is
+ * deleted in the same batch.
+ */
+export async function acceptFriendRequest(currentUid: string, fromUid: string) {
+  const outgoing = await getDoc(friendRequestDoc(currentUid, fromUid));
+
+  const batch = writeBatch(db);
+  batch.delete(friendRequestDoc(fromUid, currentUid));
+  if (outgoing.exists()) {
+    batch.delete(friendRequestDoc(currentUid, fromUid));
+  }
+  batch.set(friendshipDoc(currentUid, fromUid), {
+    userIds: [currentUid, fromUid].sort(),
+    acceptedBy: currentUid,
+    createdAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+export async function removeFriend(currentUid: string, otherUid: string) {
+  await deleteDoc(friendshipDoc(currentUid, otherUid));
+}
+
+// ---------------------------------------------------------------------------
+// Reads — paginated lists, hydrated through the batched profile cache.
+// Composite indexes (firestore.indexes.json):
+//   friendships(userIds CONTAINS, createdAt DESC)
+//   friendRequests(toUid ASC, createdAt DESC)
+//   friendRequests(fromUid ASC, createdAt DESC)
+// ---------------------------------------------------------------------------
+
+export async function getFriendsPage(
+  currentUid: string,
+  cursor?: QueryDocumentSnapshot | null
+): Promise<FriendsPage<FriendListItem>> {
+  const snapshot = await getDocs(
+    query(
+      collection(db, COLLECTIONS.friendships),
+      where("userIds", "array-contains", currentUid),
+      orderBy("createdAt", "desc"),
+      ...(cursor ? [startAfter(cursor)] : []),
+      limit(FRIENDS_PAGE_SIZE)
+    )
+  );
+
+  const rows = snapshot.docs.map((docSnap) => {
+    const userIds = Array.isArray(docSnap.data().userIds)
+      ? (docSnap.data().userIds as unknown[]).filter(
+          (id): id is string => typeof id === "string"
+        )
+      : [];
+    return {
+      friendUid: userIds.find((id) => id !== currentUid) ?? "",
+      createdAt: asTimestamp(docSnap.data().createdAt),
+    };
+  });
+
+  const profilesById = await getProfilesByIds(rows.map((row) => row.friendUid));
+  const hasMore = snapshot.size === FRIENDS_PAGE_SIZE;
+
+  return {
+    items: rows
+      .filter((row) => row.friendUid)
+      .map((row) => ({ ...row, profile: profilesById.get(row.friendUid) ?? null })),
+    cursor: hasMore ? snapshot.docs[snapshot.docs.length - 1] : null,
+    hasMore,
+  };
+}
+
+async function getRequestsPage(
+  field: "fromUid" | "toUid",
+  currentUid: string,
+  cursor?: QueryDocumentSnapshot | null
+): Promise<FriendsPage<FriendRequestListItem>> {
+  const snapshot = await getDocs(
+    query(
+      collection(db, COLLECTIONS.friendRequests),
+      where(field, "==", currentUid),
+      orderBy("createdAt", "desc"),
+      ...(cursor ? [startAfter(cursor)] : []),
+      limit(FRIENDS_PAGE_SIZE)
+    )
+  );
+
+  const requests = snapshot.docs.map((docSnap) =>
+    parseFriendRequest(docSnap.id, docSnap.data())
+  );
+  const otherUidOf = (request: FriendRequest) =>
+    field === "toUid" ? request.fromUid : request.toUid;
+  const profilesById = await getProfilesByIds(requests.map(otherUidOf));
+  const hasMore = snapshot.size === FRIENDS_PAGE_SIZE;
+
+  return {
+    items: requests.map((request) => ({
+      ...request,
+      otherUid: otherUidOf(request),
+      profile: profilesById.get(otherUidOf(request)) ?? null,
+    })),
+    cursor: hasMore ? snapshot.docs[snapshot.docs.length - 1] : null,
+    hasMore,
+  };
+}
+
+export function getIncomingRequestsPage(
+  currentUid: string,
+  cursor?: QueryDocumentSnapshot | null
+) {
+  return getRequestsPage("toUid", currentUid, cursor);
+}
+
+export function getOutgoingRequestsPage(
+  currentUid: string,
+  cursor?: QueryDocumentSnapshot | null
+) {
+  return getRequestsPage("fromUid", currentUid, cursor);
+}
+
+/**
+ * Relationship between the viewer and another user: 3 deterministic-ID gets
+ * (friendship + both request directions), no queries.
+ */
+export async function getFriendStatus(
+  currentUid: string,
+  otherUid: string
+): Promise<FriendStatus> {
+  if (currentUid === otherUid) {
+    return "self";
+  }
+
+  const [friendship, outgoing, incoming] = await Promise.all([
+    getDoc(friendshipDoc(currentUid, otherUid)),
+    getDoc(friendRequestDoc(currentUid, otherUid)),
+    getDoc(friendRequestDoc(otherUid, currentUid)),
+  ]);
+
+  if (friendship.exists()) {
+    return "friends";
+  }
+  if (incoming.exists()) {
+    return "incoming";
+  }
+  if (outgoing.exists()) {
+    return "outgoing";
+  }
+  return "none";
+}
+
+/**
+ * Whether a block exists in either direction. Rules allow either side to
+ * `get` the single block doc naming them, so both probes are readable —
+ * this powers the profile screen's unavailable state.
+ */
+export async function isBlockedEitherDirection(
+  currentUid: string,
+  otherUid: string
+): Promise<boolean> {
+  const [mine, theirs] = await Promise.all([
+    getDoc(doc(db, COLLECTIONS.userBlocks, `${currentUid}__${otherUid}`)),
+    getDoc(doc(db, COLLECTIONS.userBlocks, `${otherUid}__${currentUid}`)),
+  ]);
+  return mine.exists() || theirs.exists();
+}
+
+// ---------------------------------------------------------------------------
+// Search — bounded prefix search on displayNameLower (Firestore range scans
+// are case-sensitive, hence the lowercase shadow field written alongside
+// every displayName). Legacy profiles created before the field exists are
+// covered by a second bounded query on the raw displayName using a
+// title-cased variant of the query — most stored names are "First Last" —
+// until the documented backfill (scripts/backfill-display-name-lower.mjs)
+// runs or the user re-saves their name. Two limit-20 reads per search, ever.
+// ---------------------------------------------------------------------------
+
+function titleCase(value: string) {
+  return value
+    .split(/(\s+)/)
+    .map((part) => (part.trim() ? part[0].toUpperCase() + part.slice(1) : part))
+    .join("");
+}
+
+export async function searchUsersByNamePrefix(
+  currentUid: string,
+  rawQuery: string
+): Promise<UserProfile[]> {
+  const normalized = rawQuery.trim().toLowerCase();
+
+  if (normalized.length < FRIEND_SEARCH_MIN_QUERY_LENGTH) {
+    return [];
+  }
+
+  const usersRef = collection(db, COLLECTIONS.users);
+  const prefixEnd = `${normalized}\uf8ff`;
+  const legacyPrefix = titleCase(rawQuery.trim());
+
+  const [canonical, legacy] = await Promise.all([
+    getDocs(
+      query(
+        usersRef,
+        orderBy("displayNameLower"),
+        where("displayNameLower", ">=", normalized),
+        where("displayNameLower", "<=", prefixEnd),
+        limit(FRIEND_SEARCH_LIMIT)
+      )
+    ),
+    getDocs(
+      query(
+        usersRef,
+        orderBy("displayName"),
+        where("displayName", ">=", legacyPrefix),
+        where("displayName", "<=", `${legacyPrefix}\uf8ff`),
+        limit(FRIEND_SEARCH_LIMIT)
+      )
+    ),
+  ]);
+
+  const byUid = new Map<string, UserProfile>();
+  for (const docSnap of [...canonical.docs, ...legacy.docs]) {
+    if (docSnap.id === currentUid || byUid.has(docSnap.id)) {
+      continue;
+    }
+    const profile = parseUserProfile(docSnap.id, docSnap.data());
+    // The legacy query is case-sensitive over-approximation — keep only real
+    // case-insensitive prefix matches so both paths behave identically.
+    if (profile.displayName.toLowerCase().startsWith(normalized)) {
+      byUid.set(docSnap.id, profile);
+    }
+  }
+
+  return [...byUid.values()]
+    .sort((a, b) => a.displayName.localeCompare(b.displayName))
+    .slice(0, FRIEND_SEARCH_LIMIT);
+}
+
+// ---------------------------------------------------------------------------
+// Suggestions — ONE bounded array-contains-any query over the viewer's
+// classes (Firestore caps the disjunction at 10 values), ranked by shared-
+// class count. Never a global user scan, never a fabricated user.
+// ---------------------------------------------------------------------------
+
+export type SuggestedClassmate = {
+  profile: UserProfile;
+  sharedClasses: string[];
+};
+
+export async function getSuggestedClassmates(
+  currentUid: string,
+  myClasses: string[],
+  excludeUids: Iterable<string>
+): Promise<SuggestedClassmate[]> {
+  const classIds = [...new Set(myClasses.map((code) => code.trim()).filter(Boolean))].slice(
+    0,
+    10
+  );
+
+  if (classIds.length === 0) {
+    return [];
+  }
+
+  const snapshot = await getDocs(
+    query(
+      collection(db, COLLECTIONS.users),
+      where("classes", "array-contains-any", classIds),
+      limit(SUGGESTED_CLASSMATES_LIMIT)
+    )
+  );
+
+  const excluded = new Set([currentUid, ...excludeUids]);
+
+  return snapshot.docs
+    .filter((docSnap) => !excluded.has(docSnap.id))
+    .map((docSnap) => {
+      const profile = parseUserProfile(docSnap.id, docSnap.data());
+      return { profile, sharedClasses: sharedClasses(myClasses, profile.classes) };
+    })
+    .filter((candidate) => candidate.sharedClasses.length > 0)
+    .sort(
+      (a, b) =>
+        b.sharedClasses.length - a.sharedClasses.length ||
+        a.profile.displayName.localeCompare(b.profile.displayName)
+    );
+}

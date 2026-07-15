@@ -37,6 +37,8 @@ import { db } from "../firebaseConfig";
 import { track } from "./analytics";
 export const COLLECTIONS = {
   conversations: "conversations",
+  friendRequests: "friendRequests",
+  friendships: "friendships",
   locationRatings: "locationRatings",
   locations: "locations",
   reports: "reports",
@@ -46,13 +48,19 @@ export const COLLECTIONS = {
   users: "users",
 } as const;
 
-type RateLimitedAction = "createSession" | "locationRating" | "reportUser" | "sendMessage";
+type RateLimitedAction =
+  | "createSession"
+  | "friendRequest"
+  | "locationRating"
+  | "reportUser"
+  | "sendMessage";
 
 function rateLimitDoc(userId: string, action: RateLimitedAction) {
   return doc(db, COLLECTIONS.rateLimits, userId, "actions", action);
 }
 
-function stageRateLimit(
+/** Exported for lib/friends.ts — every abuse-prone write batches one of these. */
+export function stageRateLimit(
   batch: ReturnType<typeof writeBatch>,
   userId: string,
   action: RateLimitedAction
@@ -87,7 +95,8 @@ function isUserYear(value: unknown): value is UserYear {
   return typeof value === "string" && (USER_YEARS as readonly string[]).includes(value);
 }
 
-function parseUserProfile(uid: string, data: Record<string, unknown>): UserProfile {
+/** Exported for lib/friends.ts (search/suggestion query snapshots). */
+export function parseUserProfile(uid: string, data: Record<string, unknown>): UserProfile {
   return {
     uid,
     displayName: typeof data.displayName === "string" ? data.displayName : "",
@@ -348,7 +357,14 @@ export async function createOrUpdateUserProfile(
   const publicPayload: Record<string, unknown> = {
     updatedAt: serverTimestamp(),
     ...(existing.exists() ? {} : { createdAt: serverTimestamp(), classes: [] }),
-    ...(data.displayName ? { displayName: data.displayName } : {}),
+    // displayNameLower rides along with every displayName write (rules require
+    // the pair to match) — it backs the case-insensitive friend search.
+    ...(data.displayName
+      ? {
+          displayName: data.displayName,
+          displayNameLower: data.displayName.toLowerCase(),
+        }
+      : {}),
   };
 
   await setDoc(publicRef, publicPayload, { merge: true });
@@ -459,6 +475,9 @@ export async function updateUserDisplayName(userId: string, displayName: string)
 
   await updateDoc(doc(db, COLLECTIONS.users, userId), {
     displayName: trimmed,
+    // Search shadow field — rules pin it to displayName.lower(), and legacy
+    // docs gain it the first time the user re-saves their name.
+    displayNameLower: trimmed.toLowerCase(),
     updatedAt: serverTimestamp(),
   });
   // Keep the Auth profile in sync so future profile writes can never resurrect

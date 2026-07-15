@@ -191,6 +191,39 @@ describe('users', () => {
     );
   });
 
+  it('owner saves displayNameLower when it matches displayName.lower()', async () => {
+    await assertSucceeds(
+      setDoc(doc(ctx(ALICE), 'users', ALICE), {
+        displayName: 'Alice Anderson',
+        displayNameLower: 'alice anderson',
+        classes: [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  it('rejects a displayNameLower that is not the lowercase of displayName', async () => {
+    await assertFails(
+      setDoc(doc(ctx(ALICE), 'users', ALICE), {
+        displayName: 'Alice Anderson',
+        displayNameLower: 'bob',
+        classes: [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+    // displayNameLower without a displayName is also rejected.
+    await assertFails(
+      setDoc(doc(ctx(ALICE), 'users', ALICE), {
+        displayNameLower: 'alice anderson',
+        classes: [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
   it('rejects PII fields on the public doc', async () => {
     await assertFails(
       setDoc(doc(ctx(ALICE), 'users', ALICE), {
@@ -1368,6 +1401,252 @@ describe('userBlocks (D5: involved-party get, blocker-only list)', () => {
     await assertFails(setDoc(doc(ctx(ALICE), 'userBlocks', 'mismatched'), {
       blockerUserId: ALICE, blockedUserId: BOB, createdAt: serverTimestamp(),
     }));
+  });
+});
+
+// ------------------------------------------------------------ friends (PR 6)
+describe('friend requests (friendRequests/{from}__{to})', () => {
+  const reqId = (from, to) => `${from}__${to}`;
+  const seedUser = (uid) => seed(`users/${uid}`, { displayName: uid, classes: [] });
+
+  // Mirrors sendFriendRequest in lib/friends.ts: request doc + friendRequest
+  // rate-limit write in one batch.
+  function sendRequest(db, uid, fromUid, toUid) {
+    const batch = batchWithRateLimit(db, uid, 'friendRequest');
+    batch.set(doc(db, 'friendRequests', reqId(fromUid, toUid)), {
+      fromUid, toUid, createdAt: serverTimestamp(),
+    });
+    return batch.commit();
+  }
+
+  it('valid create succeeds with a fresh rate-limit write and a real target', async () => {
+    await seedUser(BOB);
+    await assertSucceeds(sendRequest(ctx(ALICE), ALICE, ALICE, BOB));
+  });
+
+  it('requires the fresh rate-limit write', async () => {
+    await seedUser(BOB);
+    await assertFails(setDoc(doc(ctx(ALICE), 'friendRequests', reqId(ALICE, BOB)), {
+      fromUid: ALICE, toUid: BOB, createdAt: serverTimestamp(),
+    }));
+  });
+
+  it('cannot friend yourself', async () => {
+    await seedUser(ALICE);
+    await assertFails(sendRequest(ctx(ALICE), ALICE, ALICE, ALICE));
+  });
+
+  it('rejects a forged fromUid', async () => {
+    await seedUser(BOB);
+    await assertFails(sendRequest(ctx(MALLORY), MALLORY, ALICE, BOB));
+  });
+
+  it('rejects a target user that does not exist', async () => {
+    await assertFails(sendRequest(ctx(ALICE), ALICE, ALICE, 'ghostUid'));
+  });
+
+  it('rejects an id that does not match from__to', async () => {
+    await seedUser(BOB);
+    const db = ctx(ALICE);
+    const batch = batchWithRateLimit(db, ALICE, 'friendRequest');
+    batch.set(doc(db, 'friendRequests', 'wrongId'), {
+      fromUid: ALICE, toUid: BOB, createdAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
+  });
+
+  it('rejects a reverse-duplicate request', async () => {
+    await seedUser(ALICE);
+    await seedUser(BOB);
+    await seed(`friendRequests/${reqId(BOB, ALICE)}`, {
+      fromUid: BOB, toUid: ALICE, createdAt: Timestamp.now(),
+    });
+    // Alice cannot send to Bob while Bob's request to Alice is pending.
+    await assertFails(sendRequest(ctx(ALICE), ALICE, ALICE, BOB));
+  });
+
+  it('rejects a request to an existing friend', async () => {
+    await seedUser(BOB);
+    const ids = [ALICE, BOB].sort();
+    await seed(`friendships/${ids.join('__')}`, {
+      userIds: ids, acceptedBy: BOB, createdAt: Timestamp.now(),
+    });
+    await assertFails(sendRequest(ctx(ALICE), ALICE, ALICE, BOB));
+  });
+
+  it('rejects a blocked pair in either direction', async () => {
+    await seedUser(BOB);
+    await seed(`userBlocks/${BOB}__${ALICE}`, {
+      blockerUserId: BOB, blockedUserId: ALICE, createdAt: Timestamp.now(),
+    });
+    await assertFails(sendRequest(ctx(ALICE), ALICE, ALICE, BOB));
+
+    await env.clearFirestore();
+    await seedUser(BOB);
+    await seed(`userBlocks/${ALICE}__${BOB}`, {
+      blockerUserId: ALICE, blockedUserId: BOB, createdAt: Timestamp.now(),
+    });
+    await assertFails(sendRequest(ctx(ALICE), ALICE, ALICE, BOB));
+  });
+
+  it('only the two involved users can read a request; outsiders cannot', async () => {
+    await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
+      fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
+    });
+    await assertSucceeds(getDoc(doc(ctx(ALICE), 'friendRequests', reqId(ALICE, BOB))));
+    await assertSucceeds(getDoc(doc(ctx(BOB), 'friendRequests', reqId(ALICE, BOB))));
+    await assertFails(getDoc(doc(ctx(MALLORY), 'friendRequests', reqId(ALICE, BOB))));
+    // Recipient lists their incoming requests; an outsider cannot.
+    await assertSucceeds(getDocs(query(
+      collection(ctx(BOB), 'friendRequests'), where('toUid', '==', BOB)
+    )));
+    await assertFails(getDocs(query(
+      collection(ctx(MALLORY), 'friendRequests'), where('toUid', '==', BOB)
+    )));
+  });
+
+  it('requests are immutable (no update)', async () => {
+    await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
+      fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
+    });
+    await assertFails(updateDoc(doc(ctx(ALICE), 'friendRequests', reqId(ALICE, BOB)), {
+      toUid: MALLORY,
+    }));
+  });
+
+  it('sender cancels, recipient declines, outsider cannot delete', async () => {
+    await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
+      fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
+    });
+    await assertFails(deleteDoc(doc(ctx(MALLORY), 'friendRequests', reqId(ALICE, BOB))));
+    await assertSucceeds(deleteDoc(doc(ctx(BOB), 'friendRequests', reqId(ALICE, BOB))));
+    // Re-seed and let the sender cancel.
+    await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
+      fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
+    });
+    await assertSucceeds(deleteDoc(doc(ctx(ALICE), 'friendRequests', reqId(ALICE, BOB))));
+  });
+});
+
+describe('friendships (friendships/{sortedA}__{sortedB})', () => {
+  const reqId = (from, to) => `${from}__${to}`;
+  const pairId = (a, b) => [a, b].sort().join('__');
+
+  // Mirrors acceptFriendRequest: delete the incoming request + create the
+  // friendship in one batch (rules enforce the atomicity).
+  function acceptBatch(db, recipient, sender) {
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'friendRequests', reqId(sender, recipient)));
+    const ids = [recipient, sender].sort();
+    batch.set(doc(db, 'friendships', ids.join('__')), {
+      userIds: ids, acceptedBy: recipient, createdAt: serverTimestamp(),
+    });
+    return batch.commit();
+  }
+
+  it('recipient accepts atomically (delete request + create friendship)', async () => {
+    await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
+      fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
+    });
+    await assertSucceeds(acceptBatch(ctx(BOB), BOB, ALICE));
+  });
+
+  it('creating a friendship without deleting the request is denied', async () => {
+    await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
+      fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
+    });
+    const ids = [ALICE, BOB].sort();
+    await assertFails(setDoc(doc(ctx(BOB), 'friendships', ids.join('__')), {
+      userIds: ids, acceptedBy: BOB, createdAt: serverTimestamp(),
+    }));
+  });
+
+  it('creating a friendship with no request at all is denied', async () => {
+    const ids = [ALICE, BOB].sort();
+    await assertFails(setDoc(doc(ctx(BOB), 'friendships', ids.join('__')), {
+      userIds: ids, acceptedBy: BOB, createdAt: serverTimestamp(),
+    }));
+  });
+
+  it('the sender cannot accept their own request', async () => {
+    await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
+      fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
+    });
+    // Alice (sender) tries to accept — the required doc is BOB__ALICE, which
+    // does not exist, and deleting her own outgoing request doesn't satisfy it.
+    const db = ctx(ALICE);
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'friendRequests', reqId(ALICE, BOB)));
+    const ids = [ALICE, BOB].sort();
+    batch.set(doc(db, 'friendships', ids.join('__')), {
+      userIds: ids, acceptedBy: ALICE, createdAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
+  });
+
+  it('acceptedBy must be the caller and in the pair', async () => {
+    await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
+      fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
+    });
+    const db = ctx(BOB);
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'friendRequests', reqId(ALICE, BOB)));
+    const ids = [ALICE, BOB].sort();
+    batch.set(doc(db, 'friendships', ids.join('__')), {
+      userIds: ids, acceptedBy: ALICE, createdAt: serverTimestamp(), // wrong accepter
+    });
+    await assertFails(batch.commit());
+  });
+
+  it('a blocked pair cannot become friends', async () => {
+    await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
+      fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
+    });
+    await seed(`userBlocks/${ALICE}__${BOB}`, {
+      blockerUserId: ALICE, blockedUserId: BOB, createdAt: Timestamp.now(),
+    });
+    await assertFails(acceptBatch(ctx(BOB), BOB, ALICE));
+  });
+
+  it('id must equal the sorted pair and hold exactly two distinct sorted uids', async () => {
+    await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
+      fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
+    });
+    // Wrong doc id (unsorted / arbitrary).
+    const db = ctx(BOB);
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'friendRequests', reqId(ALICE, BOB)));
+    batch.set(doc(db, 'friendships', 'not-the-pair'), {
+      userIds: [ALICE, BOB].sort(), acceptedBy: BOB, createdAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
+  });
+
+  it('only members read; outsiders cannot', async () => {
+    const ids = [ALICE, BOB].sort();
+    await seed(`friendships/${ids.join('__')}`, {
+      userIds: ids, acceptedBy: BOB, createdAt: Timestamp.now(),
+    });
+    await assertSucceeds(getDoc(doc(ctx(ALICE), 'friendships', ids.join('__'))));
+    await assertSucceeds(getDocs(query(
+      collection(ctx(ALICE), 'friendships'), where('userIds', 'array-contains', ALICE)
+    )));
+    await assertFails(getDoc(doc(ctx(MALLORY), 'friendships', ids.join('__'))));
+    await assertFails(getDocs(query(
+      collection(ctx(MALLORY), 'friendships'), where('userIds', 'array-contains', ALICE)
+    )));
+  });
+
+  it('either friend can remove; a non-member cannot; no updates', async () => {
+    const ids = [ALICE, BOB].sort();
+    await seed(`friendships/${ids.join('__')}`, {
+      userIds: ids, acceptedBy: BOB, createdAt: Timestamp.now(),
+    });
+    await assertFails(updateDoc(doc(ctx(ALICE), 'friendships', ids.join('__')), {
+      acceptedBy: MALLORY,
+    }));
+    await assertFails(deleteDoc(doc(ctx(MALLORY), 'friendships', ids.join('__'))));
+    await assertSucceeds(deleteDoc(doc(ctx(ALICE), 'friendships', ids.join('__'))));
   });
 });
 

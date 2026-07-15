@@ -723,6 +723,30 @@ export default function ProfileScreen() {
         )}
       </View>
 
+      {/* Study Buddies entry — friends, requests, and classmate suggestions
+          live at /friends (design spec §3.9). No new bottom tab: the current
+          5-tab structure stays, with this as the entry point. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Study buddies"
+        onPress={() => router.push('/friends' as Href)}
+        style={({ pressed }) => [
+          styles.settingsRow,
+          {
+            backgroundColor: palette.surface,
+            borderColor: palette.border,
+            opacity: pressed ? 0.7 : 1,
+          },
+        ]}>
+        <View style={styles.settingsRowBody}>
+          <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Study buddies</Text>
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>
+            Friends, requests, and classmates
+          </Text>
+        </View>
+        <Text style={[TypeScale.heading, { color: palette.icon }]}>›</Text>
+      </Pressable>
+
       {/* Notifications Center entry — the activity history lives at
           /notifications; the pill is the unread count. */}
       <Pressable

@@ -81,6 +81,12 @@ export type AnalyticsEvent =
   | "group_message_sent"
   | "report_submitted"
   | "user_blocked"
+  | "friends_viewed"
+  | "friend_request_sent"
+  | "friend_request_accepted"
+  | "friend_request_declined"
+  | "friend_request_cancelled"
+  | "friend_removed"
   | "user_unblocked"
   | "account_deleted"
   | "screen_view";
