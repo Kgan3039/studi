@@ -184,6 +184,7 @@ describe('users', () => {
     await assertSucceeds(
       setDoc(doc(ctx(ALICE), 'users', ALICE), {
         displayName: 'Alice A',
+        displayNameLower: 'alice a',
         classes: ['MATH 221'],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -224,6 +225,81 @@ describe('users', () => {
     );
   });
 
+  it('rejects a new named profile that omits displayNameLower', async () => {
+    await assertFails(
+      setDoc(doc(ctx(ALICE), 'users', ALICE), {
+        displayName: 'Alice Anderson',
+        classes: [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  it('rejects a rename that does not update displayNameLower', async () => {
+    await seed(`users/${ALICE}`, {
+      displayName: 'Alice Anderson',
+      displayNameLower: 'alice anderson',
+      classes: [],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    await assertFails(
+      updateDoc(doc(ctx(ALICE), 'users', ALICE), {
+        displayName: 'Alicia Anderson',
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  it('allows a rename that updates displayNameLower to match', async () => {
+    await seed(`users/${ALICE}`, {
+      displayName: 'Alice Anderson',
+      displayNameLower: 'alice anderson',
+      classes: [],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    await assertSucceeds(
+      updateDoc(doc(ctx(ALICE), 'users', ALICE), {
+        displayName: 'Alicia Anderson',
+        displayNameLower: 'alicia anderson',
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  it('lets a legacy profile (no displayNameLower) edit unrelated fields', async () => {
+    // Legacy shape: has a displayName but predates displayNameLower.
+    await seed(`users/${ALICE}`, {
+      displayName: 'Alice Anderson',
+      classes: [],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    await assertSucceeds(
+      updateDoc(doc(ctx(ALICE), 'users', ALICE), {
+        year: 'Junior',
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
+  it('lets a legacy profile self-heal by adding a matching displayNameLower', async () => {
+    await seed(`users/${ALICE}`, {
+      displayName: 'Alice Anderson',
+      classes: [],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    await assertSucceeds(
+      updateDoc(doc(ctx(ALICE), 'users', ALICE), {
+        displayNameLower: 'alice anderson',
+        updatedAt: serverTimestamp(),
+      })
+    );
+  });
+
   it('rejects PII fields on the public doc', async () => {
     await assertFails(
       setDoc(doc(ctx(ALICE), 'users', ALICE), {
@@ -259,6 +335,7 @@ describe('users', () => {
     await assertSucceeds(
       setDoc(doc(ctx(ALICE), 'users', ALICE), {
         displayName: 'Alice A',
+        displayNameLower: 'alice a',
         classes: ['MATH 221'],
         year: 'Junior',
         major: 'Computer Science',
@@ -1505,6 +1582,23 @@ describe('friend requests (friendRequests/{from}__{to})', () => {
     )));
   });
 
+  it('outsiders cannot probe a MISSING request; pair members get exists=false', async () => {
+    // No doc seeded — the get resolves against absence.
+    // Pair members are allowed (client reads exists=false) …
+    await assertSucceeds(getDoc(doc(ctx(ALICE), 'friendRequests', reqId(ALICE, BOB))));
+    await assertSucceeds(getDoc(doc(ctx(BOB), 'friendRequests', reqId(ALICE, BOB))));
+    // … but an outsider is denied whether the doc exists or not, so "missing"
+    // and "exists" are indistinguishable to them (no existence side channel).
+    await assertFails(getDoc(doc(ctx(MALLORY), 'friendRequests', reqId(ALICE, BOB))));
+  });
+
+  it('rejects a malformed request id on get', async () => {
+    await assertFails(getDoc(doc(ctx(ALICE), 'friendRequests', 'no-separator')));
+    await assertFails(
+      getDoc(doc(ctx(ALICE), 'friendRequests', `${ALICE}__${BOB}__${MALLORY}`))
+    );
+  });
+
   it('requests are immutable (no update)', async () => {
     await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
       fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
@@ -1606,6 +1700,36 @@ describe('friendships (friendships/{sortedA}__{sortedB})', () => {
       blockerUserId: ALICE, blockedUserId: BOB, createdAt: Timestamp.now(),
     });
     await assertFails(acceptBatch(ctx(BOB), BOB, ALICE));
+  });
+
+  it('cannot block + delete request + create friendship in one batch', async () => {
+    // The same-batch race: exists() sees no pre-batch block, so only the
+    // existsAfter() check catches the block created alongside the accept.
+    await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
+      fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
+    });
+    const db = ctx(BOB);
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'userBlocks', `${BOB}__${ALICE}`), {
+      blockerUserId: BOB, blockedUserId: ALICE, createdAt: serverTimestamp(),
+    });
+    batch.delete(doc(db, 'friendRequests', reqId(ALICE, BOB)));
+    const ids = [ALICE, BOB].sort();
+    batch.set(doc(db, 'friendships', ids.join('__')), {
+      userIds: ids, acceptedBy: BOB, createdAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
+  });
+
+  it('outsiders cannot probe a MISSING friendship; members get exists=false', async () => {
+    const ids = [ALICE, BOB].sort();
+    await assertSucceeds(getDoc(doc(ctx(ALICE), 'friendships', ids.join('__'))));
+    await assertSucceeds(getDoc(doc(ctx(BOB), 'friendships', ids.join('__'))));
+    await assertFails(getDoc(doc(ctx(MALLORY), 'friendships', ids.join('__'))));
+  });
+
+  it('rejects a malformed friendship id on get', async () => {
+    await assertFails(getDoc(doc(ctx(ALICE), 'friendships', 'no-separator')));
   });
 
   it('id must equal the sorted pair and hold exactly two distinct sorted uids', async () => {

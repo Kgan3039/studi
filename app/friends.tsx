@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { User } from 'firebase/auth';
+import type { QueryDocumentSnapshot } from 'firebase/firestore';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
@@ -61,14 +62,28 @@ export default function FriendsScreen() {
   const [myClasses, setMyClasses] = useState<string[]>([]);
   const [tab, setTab] = useState<Tab>('friends');
 
-  // Per-tab data + load state.
+  // Per-tab data + load state. Cursors live in refs so onEndReached always
+  // reads the latest page boundary without re-subscribing the handler.
   const [friends, setFriends] = useState<FriendListItem[]>([]);
   const [friendsState, setFriendsState] = useState<LoadState>('loading');
+  const [friendsLoadingMore, setFriendsLoadingMore] = useState(false);
+  const friendsCursor = useRef<QueryDocumentSnapshot | null>(null);
+  const friendsHasMore = useRef(false);
+
   const [incoming, setIncoming] = useState<FriendRequestListItem[]>([]);
   const [outgoing, setOutgoing] = useState<FriendRequestListItem[]>([]);
   const [requestsState, setRequestsState] = useState<LoadState>('loading');
+  const [requestsLoadingMore, setRequestsLoadingMore] = useState(false);
+  const incomingCursor = useRef<QueryDocumentSnapshot | null>(null);
+  const incomingHasMore = useRef(false);
+  const outgoingCursor = useRef<QueryDocumentSnapshot | null>(null);
+  const outgoingHasMore = useRef(false);
+
   const [suggested, setSuggested] = useState<SuggestedClassmate[]>([]);
   const [suggestedState, setSuggestedState] = useState<LoadState>('loading');
+
+  // Guards against overlapping page fetches (onEndReached fires repeatedly).
+  const loadingMoreRef = useRef(false);
 
   // Optimistic action bookkeeping — uids we've already acted on this session.
   const [pendingUids, setPendingUids] = useState<Set<string>>(() => new Set());
@@ -104,9 +119,32 @@ export default function FriendsScreen() {
     try {
       const page = await getFriendsPage(currentUser.uid);
       setFriends(page.items);
+      friendsCursor.current = page.cursor;
+      friendsHasMore.current = page.hasMore;
       setFriendsState('ready');
     } catch {
       setFriendsState('error');
+    }
+  }, [currentUser]);
+
+  const loadMoreFriends = useCallback(async () => {
+    if (!currentUser || loadingMoreRef.current || !friendsHasMore.current) return;
+    loadingMoreRef.current = true;
+    setFriendsLoadingMore(true);
+    try {
+      const page = await getFriendsPage(currentUser.uid, friendsCursor.current);
+      friendsCursor.current = page.cursor;
+      friendsHasMore.current = page.hasMore;
+      // Dedupe by deterministic friend uid so a boundary overlap can't double a row.
+      setFriends((current) => {
+        const seen = new Set(current.map((item) => item.friendUid));
+        return [...current, ...page.items.filter((item) => !seen.has(item.friendUid))];
+      });
+    } catch {
+      // Keep the loaded rows; the next end-reach retries.
+    } finally {
+      loadingMoreRef.current = false;
+      setFriendsLoadingMore(false);
     }
   }, [currentUser]);
 
@@ -120,9 +158,47 @@ export default function FriendsScreen() {
       ]);
       setIncoming(inc.items);
       setOutgoing(out.items);
+      incomingCursor.current = inc.cursor;
+      incomingHasMore.current = inc.hasMore;
+      outgoingCursor.current = out.cursor;
+      outgoingHasMore.current = out.hasMore;
       setRequestsState('ready');
     } catch {
       setRequestsState('error');
+    }
+  }, [currentUser]);
+
+  const loadMoreRequests = useCallback(async () => {
+    if (!currentUser || loadingMoreRef.current) return;
+    if (!outgoingHasMore.current && !incomingHasMore.current) return;
+    loadingMoreRef.current = true;
+    setRequestsLoadingMore(true);
+    try {
+      // The combined list renders incoming above outgoing, so the bottom that
+      // triggers onEndReached is the outgoing tail — page that first, then
+      // fall through to incoming once outgoing is exhausted.
+      if (outgoingHasMore.current) {
+        const page = await getOutgoingRequestsPage(currentUser.uid, outgoingCursor.current);
+        outgoingCursor.current = page.cursor;
+        outgoingHasMore.current = page.hasMore;
+        setOutgoing((current) => {
+          const seen = new Set(current.map((item) => item.otherUid));
+          return [...current, ...page.items.filter((item) => !seen.has(item.otherUid))];
+        });
+      } else if (incomingHasMore.current) {
+        const page = await getIncomingRequestsPage(currentUser.uid, incomingCursor.current);
+        incomingCursor.current = page.cursor;
+        incomingHasMore.current = page.hasMore;
+        setIncoming((current) => {
+          const seen = new Set(current.map((item) => item.otherUid));
+          return [...current, ...page.items.filter((item) => !seen.has(item.otherUid))];
+        });
+      }
+    } catch {
+      // Keep the loaded rows; the next end-reach retries.
+    } finally {
+      loadingMoreRef.current = false;
+      setRequestsLoadingMore(false);
     }
   }, [currentUser]);
 
@@ -130,25 +206,16 @@ export default function FriendsScreen() {
     if (!currentUser) return;
     setSuggestedState('loading');
     try {
-      // Exclude existing friends and anyone with a pending request either way,
-      // so suggestions never repeat a relationship that already exists.
-      const [friendsPage, inc, out] = await Promise.all([
-        getFriendsPage(currentUser.uid),
-        getIncomingRequestsPage(currentUser.uid),
-        getOutgoingRequestsPage(currentUser.uid),
-      ]);
-      const exclude = new Set<string>([
-        ...friendsPage.items.map((item) => item.friendUid),
-        ...inc.items.map((item) => item.otherUid),
-        ...out.items.map((item) => item.otherUid),
-      ]);
-      const results = await getSuggestedClassmates(currentUser.uid, myClasses, exclude);
+      // The callable excludes self, friends, pending requests (either way), and
+      // blocks (both directions) server-side, and returns a bounded list — no
+      // client-side relationship scan and no leak of blocked candidates.
+      const results = await getSuggestedClassmates();
       setSuggested(results);
       setSuggestedState('ready');
     } catch {
       setSuggestedState('error');
     }
-  }, [currentUser, myClasses]);
+  }, [currentUser]);
 
   // Reload the active tab on focus and when it changes.
   useFocusEffect(
@@ -353,6 +420,8 @@ export default function FriendsScreen() {
           myClasses={myClasses}
           pendingUids={pendingUids}
           palette={palette}
+          loadingMore={friendsLoadingMore}
+          onEndReached={loadMoreFriends}
           onRetry={loadFriends}
           onOpen={openProfile}
           onRemove={handleRemove}
@@ -365,6 +434,8 @@ export default function FriendsScreen() {
           outgoing={outgoing}
           pendingUids={pendingUids}
           palette={palette}
+          loadingMore={requestsLoadingMore}
+          onEndReached={loadMoreRequests}
           onRetry={loadRequests}
           onOpen={openProfile}
           onAccept={handleAccept}
@@ -420,6 +491,17 @@ function LoadingOrError({
   );
 }
 
+function ListFooter({ loading, palette }: { loading: boolean; palette: Palette }) {
+  if (!loading) {
+    return null;
+  }
+  return (
+    <View style={styles.footerLoading}>
+      <ActivityIndicator color={palette.tint} />
+    </View>
+  );
+}
+
 function SharedClassRow({ codes }: { codes: string[] }) {
   if (codes.length === 0) {
     return null;
@@ -442,6 +524,8 @@ function FriendsList({
   myClasses,
   pendingUids,
   palette,
+  loadingMore,
+  onEndReached,
   onRetry,
   onOpen,
   onRemove,
@@ -452,6 +536,8 @@ function FriendsList({
   myClasses: string[];
   pendingUids: Set<string>;
   palette: Palette;
+  loadingMore: boolean;
+  onEndReached: () => void;
   onRetry: () => void;
   onOpen: (uid: string) => void;
   onRemove: (uid: string) => void;
@@ -466,6 +552,9 @@ function FriendsList({
       data={friends}
       keyExtractor={(item) => item.friendUid}
       contentContainerStyle={styles.listContent}
+      onEndReached={onEndReached}
+      onEndReachedThreshold={0.4}
+      ListFooterComponent={<ListFooter loading={loadingMore} palette={palette} />}
       renderItem={({ item }) => {
         const name = item.profile?.displayName || 'Student';
         const shared = sharedClasses(myClasses, item.profile?.classes ?? []);
@@ -513,6 +602,8 @@ function RequestsList({
   outgoing,
   pendingUids,
   palette,
+  loadingMore,
+  onEndReached,
   onRetry,
   onOpen,
   onAccept,
@@ -525,6 +616,8 @@ function RequestsList({
   outgoing: FriendRequestListItem[];
   pendingUids: Set<string>;
   palette: Palette;
+  loadingMore: boolean;
+  onEndReached: () => void;
   onRetry: () => void;
   onOpen: (uid: string) => void;
   onAccept: (uid: string) => void;
@@ -572,6 +665,9 @@ function RequestsList({
       data={rows}
       keyExtractor={(row) => row.id}
       contentContainerStyle={styles.listContent}
+      onEndReached={onEndReached}
+      onEndReachedThreshold={0.4}
+      ListFooterComponent={<ListFooter loading={loadingMore} palette={palette} />}
       renderItem={({ item: row }) => {
         if (row.kind === 'header') {
           return (
@@ -864,5 +960,8 @@ const styles = StyleSheet.create({
   actionCol: {
     alignItems: 'flex-end',
     gap: 2,
+  },
+  footerLoading: {
+    paddingVertical: Space.lg,
   },
 });

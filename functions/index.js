@@ -29,6 +29,11 @@ const {
   classifyDeletionRequest,
   createAccountDeletionRunner,
 } = require("./account-deletion");
+const {
+  buildFriendSuggestions,
+  CANDIDATE_SCAN_LIMIT,
+  RELATIONSHIP_SCAN_LIMIT,
+} = require("./friend-suggestions");
 
 admin.initializeApp();
 setGlobalOptions({ region: "us-central1", maxInstances: 5 });
@@ -727,6 +732,99 @@ exports.onUserBlockCreated = onDocumentCreated(
     );
   }
 );
+
+// Friend suggestions (PR 6) — a callable, not a client query, because it must
+// filter candidates that BLOCKED the caller, and userBlocks list is
+// blocker-only (a client can't discover who blocked it). The Admin SDK checks
+// both block directions in one batched getAll, so no blocked candidate ever
+// leaves the server. Every read is bounded (see friend-suggestions.js caps):
+// one class-overlap scan, three relationship scans for exclusion, one block
+// getAll — no full-collection scan, no N+1 profile reads (candidate profiles
+// come from the single overlap query and are returned inline).
+exports.getFriendSuggestions = onCall(async (request) => {
+  if (!isVerifiedUwCallable(request)) {
+    throw new HttpsError("unauthenticated", "Sign in with a verified UW account.");
+  }
+
+  const uid = request.auth.uid;
+
+  const meSnap = await db.collection("users").doc(uid).get();
+  const myClasses = Array.isArray(meSnap.data()?.classes)
+    ? meSnap.data().classes.filter((c) => typeof c === "string").slice(0, 10)
+    : [];
+
+  if (myClasses.length === 0) {
+    return { suggestions: [] };
+  }
+
+  const [candidateSnap, friendsSnap, incomingSnap, outgoingSnap] = await Promise.all([
+    db
+      .collection("users")
+      .where("classes", "array-contains-any", myClasses)
+      .limit(CANDIDATE_SCAN_LIMIT)
+      .get(),
+    db
+      .collection("friendships")
+      .where("userIds", "array-contains", uid)
+      .limit(RELATIONSHIP_SCAN_LIMIT)
+      .get(),
+    db
+      .collection("friendRequests")
+      .where("toUid", "==", uid)
+      .limit(RELATIONSHIP_SCAN_LIMIT)
+      .get(),
+    db
+      .collection("friendRequests")
+      .where("fromUid", "==", uid)
+      .limit(RELATIONSHIP_SCAN_LIMIT)
+      .get(),
+  ]);
+
+  const excludedUids = new Set([uid]);
+  friendsSnap.forEach((docSnap) => {
+    const userIds = Array.isArray(docSnap.data()?.userIds) ? docSnap.data().userIds : [];
+    userIds.forEach((memberId) => {
+      if (typeof memberId === "string" && memberId !== uid) {
+        excludedUids.add(memberId);
+      }
+    });
+  });
+  incomingSnap.forEach((docSnap) => {
+    const fromUid = docSnap.data()?.fromUid;
+    if (typeof fromUid === "string") excludedUids.add(fromUid);
+  });
+  outgoingSnap.forEach((docSnap) => {
+    const toUid = docSnap.data()?.toUid;
+    if (typeof toUid === "string") excludedUids.add(toUid);
+  });
+
+  const candidates = candidateSnap.docs
+    .filter((docSnap) => docSnap.id !== uid && !excludedUids.has(docSnap.id))
+    .map((docSnap) => ({
+      uid: docSnap.id,
+      displayName: docSnap.data()?.displayName,
+      classes: docSnap.data()?.classes,
+    }));
+
+  // Both block directions for every surviving candidate, in one getAll.
+  const blockRefs = candidates.flatMap((candidate) =>
+    blockPairIdsFor(uid, candidate.uid).map((id) => db.collection("userBlocks").doc(id))
+  );
+  const blockSnaps = blockRefs.length > 0 ? await db.getAll(...blockRefs) : [];
+  const existingBlockIds = new Set(
+    blockSnaps.filter((snap) => snap.exists).map((snap) => snap.id)
+  );
+
+  const suggestions = buildFriendSuggestions({
+    senderUid: uid,
+    myClasses,
+    candidates,
+    excludedUids,
+    existingBlockIds,
+  });
+
+  return { suggestions };
+});
 
 // ---------------------------------------------------------------------------
 // Session reminders: one fixed reminder ~30 minutes before start, for the

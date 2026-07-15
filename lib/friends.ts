@@ -28,7 +28,9 @@ import {
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
 
-import { db } from "../firebaseConfig";
+import { getFunctions, httpsCallable } from "firebase/functions";
+
+import app, { db } from "../firebaseConfig";
 import {
   buildParticipantKey,
   COLLECTIONS,
@@ -41,7 +43,6 @@ import {
 export const FRIENDS_PAGE_SIZE = 30;
 export const FRIEND_SEARCH_LIMIT = 20;
 export const FRIEND_SEARCH_MIN_QUERY_LENGTH = 2;
-export const SUGGESTED_CLASSMATES_LIMIT = 25;
 
 export type FriendRequest = {
   requestId: string;
@@ -382,15 +383,28 @@ export async function searchUsersByNamePrefix(
     }
   }
 
-  return [...byUid.values()]
+  const matches = [...byUid.values()]
     .sort((a, b) => a.displayName.localeCompare(b.displayName))
     .slice(0, FRIEND_SEARCH_LIMIT);
+
+  // Drop anyone blocked in either direction so a blocked user never appears
+  // with an actionable "Add" button. Bounded: ≤ FRIEND_SEARCH_LIMIT results,
+  // each a deterministic-ID pair of block gets (both allowed by rules since
+  // the caller is named in the block id).
+  const blockedFlags = await Promise.all(
+    matches.map((profile) => isBlockedEitherDirection(currentUid, profile.uid))
+  );
+  return matches.filter((_, index) => !blockedFlags[index]);
 }
 
 // ---------------------------------------------------------------------------
-// Suggestions — ONE bounded array-contains-any query over the viewer's
-// classes (Firestore caps the disjunction at 10 values), ranked by shared-
-// class count. Never a global user scan, never a fabricated user.
+// Suggestions — served by the getFriendSuggestions Cloud Function, NOT a
+// client query. The callable must exclude anyone who BLOCKED the caller, and
+// userBlocks list is blocker-only, so a client can't discover who blocked it —
+// filtering client-side would leak blocked candidates as actionable "Add"
+// rows. The callable checks both block directions with the Admin SDK and
+// returns a bounded, already-filtered, already-ranked list, so there is no
+// unbounded scan and no N+1 profile read on the client.
 // ---------------------------------------------------------------------------
 
 export type SuggestedClassmate = {
@@ -398,40 +412,36 @@ export type SuggestedClassmate = {
   sharedClasses: string[];
 };
 
-export async function getSuggestedClassmates(
-  currentUid: string,
-  myClasses: string[],
-  excludeUids: Iterable<string>
-): Promise<SuggestedClassmate[]> {
-  const classIds = [...new Set(myClasses.map((code) => code.trim()).filter(Boolean))].slice(
-    0,
-    10
+type FriendSuggestionDTO = {
+  uid: string;
+  displayName: string;
+  classes: string[];
+  sharedClasses: string[];
+};
+
+export async function getSuggestedClassmates(): Promise<SuggestedClassmate[]> {
+  const callable = httpsCallable<unknown, { suggestions: FriendSuggestionDTO[] }>(
+    getFunctions(app, "us-central1"),
+    "getFriendSuggestions"
   );
 
-  if (classIds.length === 0) {
-    return [];
-  }
+  const response = await callable({});
+  const suggestions = Array.isArray(response.data?.suggestions)
+    ? response.data.suggestions
+    : [];
 
-  const snapshot = await getDocs(
-    query(
-      collection(db, COLLECTIONS.users),
-      where("classes", "array-contains-any", classIds),
-      limit(SUGGESTED_CLASSMATES_LIMIT)
-    )
-  );
-
-  const excluded = new Set([currentUid, ...excludeUids]);
-
-  return snapshot.docs
-    .filter((docSnap) => !excluded.has(docSnap.id))
-    .map((docSnap) => {
-      const profile = parseUserProfile(docSnap.id, docSnap.data());
-      return { profile, sharedClasses: sharedClasses(myClasses, profile.classes) };
-    })
-    .filter((candidate) => candidate.sharedClasses.length > 0)
-    .sort(
-      (a, b) =>
-        b.sharedClasses.length - a.sharedClasses.length ||
-        a.profile.displayName.localeCompare(b.profile.displayName)
-    );
+  return suggestions
+    .filter((item): item is FriendSuggestionDTO => typeof item?.uid === "string")
+    .map((item) => ({
+      profile: {
+        uid: item.uid,
+        displayName: typeof item.displayName === "string" ? item.displayName : "",
+        classes: Array.isArray(item.classes)
+          ? item.classes.filter((code) => typeof code === "string")
+          : [],
+      },
+      sharedClasses: Array.isArray(item.sharedClasses)
+        ? item.sharedClasses.filter((code) => typeof code === "string")
+        : [],
+    }));
 }

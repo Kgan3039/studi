@@ -31,6 +31,13 @@ service cloud.firestore {
         || exists(/databases/$(database)/documents/userBlocks/$(userB + '__' + userA));
     }
 
+    // Post-batch block check: a block created in the SAME batch as an accept
+    // must still prevent the friendship (exists() only sees pre-batch state).
+    function isBlockedEitherWayAfter(userA, userB) {
+      return existsAfter(/databases/$(database)/documents/userBlocks/$(userA + '__' + userB))
+        || existsAfter(/databases/$(database)/documents/userBlocks/$(userB + '__' + userA));
+    }
+
     function rateLimitRef(userId, action) {
       return /databases/$(database)/documents/rateLimits/$(userId)/actions/$(action);
     }
@@ -145,10 +152,22 @@ service cloud.firestore {
       allow read: if isVerifiedUwUser();
       allow create: if isOwner(userId)
         && isValidPublicProfile()
-        && incoming().createdAt == request.time;
+        && incoming().createdAt == request.time
+        // A named profile must ship its search shadow field from creation so
+        // it is findable immediately (isValidPublicProfile pins the value).
+        && (!('displayName' in incoming()) || 'displayNameLower' in incoming());
       allow update: if isOwner(userId)
         && isValidPublicProfile()
-        && incoming().createdAt == resource.data.createdAt;
+        && incoming().createdAt == resource.data.createdAt
+        // A (re)named profile must carry displayNameLower in the same write.
+        // An unchanged name lets legacy docs (which may predate the field)
+        // edit unrelated fields without being forced to add it, and a legacy
+        // doc may add the field later (the sync check keeps it matching).
+        && (
+          !('displayName' in incoming())
+          || incoming().displayName == resource.data.get('displayName', null)
+          || 'displayNameLower' in incoming()
+        );
       allow delete: if false; // deletion handled by the deleteUserAccount Cloud Function
 
       // Private subcollection: owner-only. Two client-writable docs:
@@ -593,16 +612,24 @@ service cloud.firestore {
         : /databases/$(database)/documents/friendships/$(userB + '__' + userA);
     }
 
+    // Membership derived from the deterministic doc ID itself, not the doc
+    // body. Both collections key on `{uidA}__{uidB}`, so splitting the id
+    // yields the exact pair. Gating `get` on this — rather than on
+    // `resource == null || <body check>` — means a missing doc and an existing
+    // doc are BOTH denied to an outsider, closing the existence-probing side
+    // channel (a non-member can no longer tell "missing" from "denied"). A
+    // malformed id (not exactly two `__`-separated parts) is rejected.
+    function isDeterministicPairMember(docId) {
+      return docId.split('__').size() == 2
+        && request.auth.uid in docId.split('__');
+    }
+
     match /friendRequests/{requestId} {
-      // get tolerates a missing doc so getFriendStatus can probe a request
-      // that may not exist (returns exists=false) instead of being denied —
-      // same shape as the conversations get rule.
+      // Involved-party only, by id membership — so getFriendStatus can probe a
+      // request that may not exist (returns exists=false) without leaking to
+      // outsiders whether any given pair has one.
       allow get: if isVerifiedUwUser()
-        && (
-          resource == null
-          || request.auth.uid == resource.data.fromUid
-          || request.auth.uid == resource.data.toUid
-        );
+        && isDeterministicPairMember(requestId);
       allow list: if isVerifiedUwUser()
         && (
           request.auth.uid == resource.data.fromUid
@@ -647,10 +674,12 @@ service cloud.firestore {
           : incoming().userIds[0];
       }
 
-      // get tolerates a missing doc (getFriendStatus probes the sorted-pair
-      // id before it knows whether a friendship exists).
+      // Member only, by id membership (getFriendStatus probes the sorted-pair
+      // id before it knows whether a friendship exists) — a missing doc and an
+      // existing one are alike denied to outsiders, so neither reveals the
+      // friendship's existence.
       allow get: if isVerifiedUwUser()
-        && (resource == null || request.auth.uid in resource.data.userIds);
+        && isDeterministicPairMember(pairId);
       allow list: if isVerifiedUwUser()
         && request.auth.uid in resource.data.userIds;
       allow create: if isVerifiedUwUser()
@@ -668,7 +697,11 @@ service cloud.firestore {
         && exists(friendRequestRef(otherMember(), request.auth.uid))
         // …and the same batch deletes it.
         && !existsAfter(friendRequestRef(otherMember(), request.auth.uid))
-        && !isBlockedEitherWay(incoming().userIds[0], incoming().userIds[1]);
+        // No block in either direction, judged BOTH before and after the
+        // batch — so a recipient can't create a block and the friendship in
+        // one batch (exists() alone would miss the same-batch block write).
+        && !isBlockedEitherWay(incoming().userIds[0], incoming().userIds[1])
+        && !isBlockedEitherWayAfter(incoming().userIds[0], incoming().userIds[1]);
       allow update: if false;
       // Either friend may end the friendship.
       allow delete: if isVerifiedUwUser()
