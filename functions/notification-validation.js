@@ -6,6 +6,8 @@
 // The client mirrors the URL rules in lib/notifications.ts
 // (isAllowedNotificationUrl) — change both together.
 
+const { directedPairId, sortedPairId } = require("./pair-id");
+
 const NOTIFICATION_TYPES = new Set([
   "dm_message",
   "session_joined",
@@ -31,8 +33,8 @@ function isSafeId(value) {
 
 /**
  * Strict allowlist for notification navigation targets. Valid forms:
- *   /notifications
- *   /conversation/{id}   /session/{id}   /session-chat/{id}
+ *   /notifications   /friends
+ *   /conversation/{id}   /session/{id}   /session-chat/{id}   /user/{id}
  * where {id} must be a safe internal ID (see SAFE_ID_PATTERN). The segment is
  * also run through decodeURIComponent and must decode to itself, so
  * percent-encoded separators (%2F, %5C), traversal (`.`/`..`), external
@@ -43,11 +45,11 @@ function isAllowedNotificationUrl(url) {
     return false;
   }
 
-  if (url === "/notifications") {
+  if (url === "/notifications" || url === "/friends") {
     return true;
   }
 
-  const match = /^\/(conversation|session|session-chat)\/([^/]+)$/.exec(url);
+  const match = /^\/(conversation|session|session-chat|user)\/([^/]+)$/.exec(url);
   if (!match) {
     return false;
   }
@@ -137,6 +139,36 @@ function groupMessageNotificationId(sessionId, eventId) {
   return `gm_${sanitizeIdPart(sessionId)}_${sanitizeIdPart(eventId)}`;
 }
 
+/** One record per friend-request create event; retries of that event dedupe. */
+function friendRequestNotificationId(eventId) {
+  return `fr_${sanitizeIdPart(eventId)}`;
+}
+
+/** One record per friendship create (accept) event; retries dedupe. */
+function friendAcceptedNotificationId(eventId) {
+  return `fa_${sanitizeIdPart(eventId)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Friend cleanup on block. Creating a block must sever the pair server-side:
+// both pending request directions and the friendship, all at deterministic
+// IDs — three targeted deletes, no queries. Pure so tests can pin the exact
+// paths the onUserBlockCreated trigger deletes.
+// ---------------------------------------------------------------------------
+
+/**
+ * Doc paths (collection/docId) removed when userA and userB become blocked:
+ * friendRequests in both directions plus the sorted-pair friendship. IDs come
+ * from the shared pair-id helpers so client, Functions, and rules agree.
+ */
+function friendCleanupPathsForBlock(blockerUserId, blockedUserId) {
+  return [
+    { collection: "friendRequests", id: directedPairId(blockerUserId, blockedUserId) },
+    { collection: "friendRequests", id: directedPairId(blockedUserId, blockerUserId) },
+    { collection: "friendships", id: sortedPairId(blockerUserId, blockedUserId) },
+  ];
+}
+
 // Group-chat fanout ceiling. New sessions are capacity-capped at 20 already,
 // but legacy sessions have no capacity field and unbounded participantIds —
 // the ceiling is judged on the ACTUAL participant count, never on capacity.
@@ -163,7 +195,10 @@ function isWithinGroupChatFanoutLimit(participantCount) {
 
 /** Both directions of the deterministic userBlocks/{blocker}__{blocked} doc ID. */
 function blockPairIdsFor(senderId, recipientId) {
-  return [`${senderId}__${recipientId}`, `${recipientId}__${senderId}`];
+  return [
+    directedPairId(senderId, recipientId),
+    directedPairId(recipientId, senderId),
+  ];
 }
 
 /**
@@ -195,6 +230,9 @@ module.exports = {
   blockPairIdsFor,
   dmNotificationId,
   filterBlockedRecipients,
+  friendAcceptedNotificationId,
+  friendCleanupPathsForBlock,
+  friendRequestNotificationId,
   groupMessageNotificationId,
   isAllowedNotificationUrl,
   isSafeId,

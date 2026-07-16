@@ -183,6 +183,8 @@ function RootLayout() {
           <Stack.Screen name="rate-location" options={{ title: 'Rate This Spot' }} />
           <Stack.Screen name="settings" options={{ title: 'Settings' }} />
           <Stack.Screen name="notifications" options={{ title: 'Notifications' }} />
+          <Stack.Screen name="friends" options={{ title: 'Study Buddies' }} />
+          <Stack.Screen name="user/[userId]" options={{ title: 'Profile' }} />
         </Stack.Protected>
       </Stack>
       <StatusBar style="auto" />

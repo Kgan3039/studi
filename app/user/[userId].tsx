@@ -1,0 +1,301 @@
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { User } from 'firebase/auth';
+
+import { Avatar } from '@/components/ui/Avatar';
+import { Button } from '@/components/ui/Button';
+import { CourseChip } from '@/components/ui/CourseChip';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { subscribeToAuthState } from '@/lib/auth';
+import {
+  getOrCreateDirectConversation,
+  getUserProfile,
+  type UserProfile,
+} from '@/lib/firestore';
+import {
+  acceptFriendRequest,
+  cancelFriendRequest,
+  getFriendStatus,
+  isBlockedEitherDirection,
+  removeFriend,
+  sendFriendRequest,
+  sharedClasses,
+  type FriendStatus,
+} from '@/lib/friends';
+import { track } from '@/lib/analytics';
+
+type LoadState = 'loading' | 'ready' | 'error' | 'blocked';
+
+export default function PublicProfileScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+  const { userId } = useLocalSearchParams<{ userId: string }>();
+
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [myClasses, setMyClasses] = useState<string[]>([]);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [status, setStatus] = useState<FriendStatus>('none');
+  const [loadState, setLoadState] = useState<LoadState>('loading');
+  const [actionPending, setActionPending] = useState(false);
+  const [openingChat, setOpeningChat] = useState(false);
+
+  useEffect(() => subscribeToAuthState(setCurrentUser), []);
+
+  const load = useCallback(async () => {
+    if (!currentUser || !userId) {
+      return;
+    }
+    setLoadState('loading');
+    try {
+      if (userId === currentUser.uid) {
+        // Own profile is edited on the You tab; nothing to friend here.
+        const me = await getUserProfile(userId);
+        setProfile(me);
+        setStatus('self');
+        setLoadState('ready');
+        return;
+      }
+
+      const blocked = await isBlockedEitherDirection(currentUser.uid, userId);
+      if (blocked) {
+        setLoadState('blocked');
+        return;
+      }
+
+      const [otherProfile, mine, relation] = await Promise.all([
+        getUserProfile(userId),
+        getUserProfile(currentUser.uid),
+        getFriendStatus(currentUser.uid, userId),
+      ]);
+
+      if (!otherProfile) {
+        setLoadState('error');
+        return;
+      }
+
+      setProfile(otherProfile);
+      setMyClasses(mine?.classes ?? []);
+      setStatus(relation);
+      setLoadState('ready');
+    } catch {
+      setLoadState('error');
+    }
+  }, [currentUser, userId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function runAction(action: () => Promise<void>, nextStatus: FriendStatus) {
+    setActionPending(true);
+    try {
+      await action();
+      setStatus(nextStatus);
+    } catch {
+      // Leave the current status so the button can be retried.
+    } finally {
+      setActionPending(false);
+    }
+  }
+
+  function handleFriendAction() {
+    if (!currentUser || !userId) return;
+
+    if (status === 'none') {
+      runAction(async () => {
+        await sendFriendRequest(currentUser.uid, userId);
+        track('friend_request_sent', { source: 'profile' });
+      }, 'outgoing');
+    } else if (status === 'outgoing') {
+      runAction(async () => {
+        await cancelFriendRequest(currentUser.uid, userId);
+        track('friend_request_cancelled');
+      }, 'none');
+    } else if (status === 'incoming') {
+      runAction(async () => {
+        await acceptFriendRequest(currentUser.uid, userId);
+        track('friend_request_accepted');
+      }, 'friends');
+    } else if (status === 'friends') {
+      runAction(async () => {
+        await removeFriend(currentUser.uid, userId);
+        track('friend_removed');
+      }, 'none');
+    }
+  }
+
+  async function handleMessage() {
+    if (!currentUser || !userId || !profile) return;
+    try {
+      setOpeningChat(true);
+      const conversationId = await getOrCreateDirectConversation(currentUser.uid, userId);
+      router.push({
+        pathname: '/conversation/[conversationId]',
+        params: {
+          conversationId,
+          otherUserId: userId,
+          otherUserName: profile.displayName || '',
+        },
+      });
+    } catch {
+      // no-op; the button re-enables
+    } finally {
+      setOpeningChat(false);
+    }
+  }
+
+  const friendActionLabel: Record<FriendStatus, string> = {
+    self: '',
+    none: 'Add study buddy',
+    outgoing: 'Requested',
+    incoming: 'Accept request',
+    friends: 'Study buddies ✓',
+  };
+
+  if (loadState === 'loading') {
+    return (
+      <View style={[styles.center, { backgroundColor: palette.background }]}>
+        <Stack.Screen options={{ title: 'Profile' }} />
+        <ActivityIndicator color={palette.tint} />
+      </View>
+    );
+  }
+
+  if (loadState === 'blocked') {
+    return (
+      <View style={[styles.screen, { backgroundColor: palette.background }]}>
+        <Stack.Screen options={{ title: 'Profile' }} />
+        <EmptyState
+          headline="This profile isn't available"
+          body="You can't view this student's profile."
+        />
+      </View>
+    );
+  }
+
+  if (loadState === 'error' || !profile) {
+    return (
+      <View style={[styles.screen, { backgroundColor: palette.background }]}>
+        <Stack.Screen options={{ title: 'Profile' }} />
+        <EmptyState
+          headline="Couldn't load this profile"
+          body="They may have deleted their account, or the connection dropped."
+          actionLabel="Try again"
+          onAction={load}
+        />
+      </View>
+    );
+  }
+
+  const name = profile.displayName || 'Student';
+  const academicLine = [profile.year, profile.major, profile.pronouns]
+    .filter(Boolean)
+    .join(' · ');
+  const shared = sharedClasses(myClasses, profile.classes);
+  const isSelf = status === 'self';
+
+  return (
+    <ScrollView
+      style={[styles.screen, { backgroundColor: palette.background }]}
+      contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Space.xxl }]}>
+      <Stack.Screen options={{ title: 'Profile' }} />
+
+      <View style={styles.identity}>
+        <Avatar name={name} size="xl" verified tone="accent" />
+        <Text style={[styles.name, { color: palette.text }]} numberOfLines={2}>
+          {name}
+        </Text>
+        {academicLine ? (
+          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{academicLine}</Text>
+        ) : null}
+        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Verified @wisc.edu</Text>
+      </View>
+
+      {profile.bio ? (
+        <Text style={[TypeScale.body, styles.bio, { color: palette.text }]}>{profile.bio}</Text>
+      ) : null}
+
+      {!isSelf ? (
+        <View style={styles.actions}>
+          <Button
+            label={openingChat ? 'Opening…' : 'Message'}
+            fullWidth
+            loading={openingChat}
+            onPress={handleMessage}
+          />
+          <Button
+            label={friendActionLabel[status]}
+            variant="secondary"
+            fullWidth
+            loading={actionPending}
+            onPress={handleFriendAction}
+          />
+        </View>
+      ) : (
+        <Text style={[TypeScale.caption, styles.selfNote, { color: palette.icon }]}>
+          This is you. Edit your profile from the You tab.
+        </Text>
+      )}
+
+      {profile.classes.length > 0 ? (
+        <View style={styles.section}>
+          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
+            {shared.length > 0 ? `Classes · ${shared.length} shared` : 'Classes'}
+          </Text>
+          <View style={styles.chipWrap}>
+            {profile.classes.map((code) => (
+              <CourseChip key={code} code={code} size="md" selected={shared.includes(code)} />
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1 },
+  center: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+  },
+  content: {
+    gap: Space.xl,
+    padding: Space.lg + 4,
+    paddingTop: Space.xl,
+  },
+  identity: {
+    alignItems: 'center',
+    gap: Space.sm,
+  },
+  name: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 28,
+    lineHeight: 34,
+    textAlign: 'center',
+  },
+  bio: {
+    textAlign: 'center',
+  },
+  actions: {
+    gap: Space.sm,
+  },
+  selfNote: {
+    textAlign: 'center',
+  },
+  section: {
+    gap: Space.md,
+  },
+  chipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+});

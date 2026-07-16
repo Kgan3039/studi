@@ -15,6 +15,9 @@ const {
   blockPairIdsFor,
   dmNotificationId,
   filterBlockedRecipients,
+  friendAcceptedNotificationId,
+  friendCleanupPathsForBlock,
+  friendRequestNotificationId,
   groupMessageNotificationId,
   isAllowedNotificationUrl,
   isWithinGroupChatFanoutLimit,
@@ -38,11 +41,28 @@ function validPayload(overrides = {}) {
 }
 
 describe('notification URL allowlist', () => {
-  it('accepts the four internal route shapes', () => {
+  it('accepts every internal route shape', () => {
     assert.equal(isAllowedNotificationUrl('/notifications'), true);
+    assert.equal(isAllowedNotificationUrl('/friends'), true);
     assert.equal(isAllowedNotificationUrl(`/conversation/${CONVO}`), true);
     assert.equal(isAllowedNotificationUrl('/session/AbC123_x-9'), true);
     assert.equal(isAllowedNotificationUrl('/session-chat/AbC123_x-9'), true);
+    assert.equal(isAllowedNotificationUrl('/user/AbC123_x-9'), true);
+  });
+
+  it('holds /user to the same segment rules as the other routes', () => {
+    assert.equal(isAllowedNotificationUrl('/user/..'), false);
+    assert.equal(isAllowedNotificationUrl('/user/../admin'), false);
+    assert.equal(isAllowedNotificationUrl('/user/a%2Fb'), false);
+    assert.equal(isAllowedNotificationUrl('/user/'), false);
+    assert.equal(isAllowedNotificationUrl('/user'), false);
+    assert.equal(isAllowedNotificationUrl('/user/a/b'), false);
+    assert.equal(isAllowedNotificationUrl(`/user/${'a'.repeat(201)}`), false);
+  });
+
+  it('/friends is exact — no trailing segment', () => {
+    assert.equal(isAllowedNotificationUrl('/friends/'), false);
+    assert.equal(isAllowedNotificationUrl('/friends/x'), false);
   });
 
   it('holds /session-chat to the same segment rules as the other routes', () => {
@@ -223,6 +243,47 @@ describe('idempotent record IDs (CloudEvent-keyed)', () => {
   it('sanitizes unexpected characters out of doc IDs', () => {
     const id = dmNotificationId('a/b', 'e.v/t');
     assert.equal(/^[A-Za-z0-9_-]+$/.test(id), true);
+  });
+
+  it('friend request/accepted: retries dedupe, distinct events notify again', () => {
+    assert.equal(
+      friendRequestNotificationId('event-1'),
+      friendRequestNotificationId('event-1')
+    );
+    assert.notEqual(
+      friendRequestNotificationId('event-1'),
+      friendRequestNotificationId('event-2')
+    );
+    assert.equal(
+      friendAcceptedNotificationId('event-1'),
+      friendAcceptedNotificationId('event-1')
+    );
+    // request and accepted IDs never collide even on the same event id.
+    assert.notEqual(
+      friendRequestNotificationId('event-1'),
+      friendAcceptedNotificationId('event-1')
+    );
+    assert.equal(/^[A-Za-z0-9_-]+$/.test(friendRequestNotificationId('e.v/t')), true);
+  });
+});
+
+describe('friend cleanup on block (deterministic paths)', () => {
+  it('removes both request directions and the sorted-pair friendship', () => {
+    // blocker < blocked lexically
+    assert.deepEqual(friendCleanupPathsForBlock('aaa', 'bbb'), [
+      { collection: 'friendRequests', id: 'aaa__bbb' },
+      { collection: 'friendRequests', id: 'bbb__aaa' },
+      { collection: 'friendships', id: 'aaa__bbb' },
+    ]);
+  });
+
+  it('friendship id is always the sorted pair, regardless of block direction', () => {
+    // blocker > blocked lexically — friendship id must still be sorted.
+    assert.deepEqual(friendCleanupPathsForBlock('zzz', 'aaa'), [
+      { collection: 'friendRequests', id: 'zzz__aaa' },
+      { collection: 'friendRequests', id: 'aaa__zzz' },
+      { collection: 'friendships', id: 'aaa__zzz' },
+    ]);
   });
 });
 

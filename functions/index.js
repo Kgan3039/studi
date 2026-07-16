@@ -16,6 +16,9 @@ const {
   blockPairIdsFor,
   dmNotificationId,
   filterBlockedRecipients,
+  friendAcceptedNotificationId,
+  friendCleanupPathsForBlock,
+  friendRequestNotificationId,
   groupMessageNotificationId,
   isWithinGroupChatFanoutLimit,
   normalizeNotificationPayload,
@@ -26,6 +29,12 @@ const {
   classifyDeletionRequest,
   createAccountDeletionRunner,
 } = require("./account-deletion");
+const {
+  buildFriendSuggestions,
+  CANDIDATE_SCAN_LIMIT,
+  isCandidateExcludedByExistence,
+  relationshipDocRefsForCandidate,
+} = require("./friend-suggestions");
 
 admin.initializeApp();
 setGlobalOptions({ region: "us-central1", maxInstances: 5 });
@@ -619,6 +628,224 @@ exports.onSessionParticipantsUpdated = onDocumentUpdated(
     );
   }
 );
+
+// ---------------------------------------------------------------------------
+// Friends / Study Buddies (PR 6). Two notification triggers and one cleanup
+// trigger. Both notification triggers re-check the block relationship at fire
+// time (Admin SDK read of both userBlocks directions) so a block that lands
+// between the client write and the trigger still suppresses the record and
+// the push — the notification pipeline's block guarantee, matching group chat.
+// ---------------------------------------------------------------------------
+
+/** True if either direction of the block exists — one batched getAll. */
+async function isPairBlocked(userA, userB) {
+  const refs = blockPairIdsFor(userA, userB).map((id) =>
+    db.collection("userBlocks").doc(id)
+  );
+  const snaps = await db.getAll(...refs);
+  return snaps.some((snap) => snap.exists);
+}
+
+exports.onFriendRequestCreated = onDocumentCreated(
+  "friendRequests/{requestId}",
+  async (event) => {
+    const request = event.data?.data();
+    const fromUid = request?.fromUid;
+    const toUid = request?.toUid;
+
+    if (typeof fromUid !== "string" || typeof toUid !== "string" || fromUid === toUid) {
+      return;
+    }
+
+    // A block landing between the client write and this trigger still stops
+    // the notification — no record, no push for a blocked pair.
+    if (await isPairBlocked(fromUid, toUid)) {
+      return;
+    }
+
+    const senderName = (await getDisplayName(fromUid)) || "Someone";
+    await notifyUser(toUid, {
+      id: friendRequestNotificationId(event.id),
+      type: "friend_request",
+      title: "New study buddy request",
+      body: `${senderName} wants to be study buddies`,
+      url: "/friends",
+      actorId: fromUid,
+    });
+  }
+);
+
+exports.onFriendshipCreated = onDocumentCreated(
+  "friendships/{pairId}",
+  async (event) => {
+    const friendship = event.data?.data();
+    const acceptedBy = friendship?.acceptedBy;
+    const userIds = Array.isArray(friendship?.userIds)
+      ? friendship.userIds.filter((id) => typeof id === "string")
+      : [];
+
+    if (typeof acceptedBy !== "string" || userIds.length !== 2) {
+      return;
+    }
+
+    // Notify the ORIGINAL SENDER — the member who didn't click accept — that
+    // their request went through.
+    const originalSender = userIds.find((uid) => uid !== acceptedBy);
+    if (!originalSender) {
+      return;
+    }
+
+    if (await isPairBlocked(originalSender, acceptedBy)) {
+      return;
+    }
+
+    const accepterName = (await getDisplayName(acceptedBy)) || "Someone";
+    await notifyUser(originalSender, {
+      id: friendAcceptedNotificationId(event.id),
+      type: "friend_accepted",
+      title: "Study buddy request accepted",
+      body: `${accepterName} accepted your study buddy request`,
+      url: `/user/${acceptedBy}`,
+      actorId: acceptedBy,
+    });
+  }
+);
+
+// Block cleanup: creating a block severs any friendship and pending requests
+// between the pair, at deterministic IDs (no queries). Idempotent — deleting
+// an absent doc is a no-op — so an Eventarc retry is safe.
+exports.onUserBlockCreated = onDocumentCreated(
+  "userBlocks/{blockId}",
+  async (event) => {
+    const block = event.data?.data();
+    const blockerUserId = block?.blockerUserId;
+    const blockedUserId = block?.blockedUserId;
+
+    if (typeof blockerUserId !== "string" || typeof blockedUserId !== "string") {
+      return;
+    }
+
+    const paths = friendCleanupPathsForBlock(blockerUserId, blockedUserId);
+    await Promise.all(
+      paths.map(({ collection, id }) =>
+        db.collection(collection).doc(id).delete()
+      )
+    );
+  }
+);
+
+// Per-invocation rate limit for read-heavy friend-suggestion calls. Reuses the
+// rateLimits/{uid}/actions/{action} pattern (Admin write bypasses client
+// rules), mirroring enforceDeleteAccountRateLimit. Throttled, not blocked:
+// clients refresh suggestions occasionally, not in a loop.
+const FRIEND_SUGGESTIONS_RATE_LIMIT_SECONDS = 3;
+
+async function enforceCallableRateLimit(uid, action, minIntervalSeconds) {
+  const ref = db.collection("rateLimits").doc(uid).collection("actions").doc(action);
+  const now = admin.firestore.Timestamp.now();
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const previous = snap.exists ? snap.data()?.updatedAt : null;
+
+    if (
+      previous?.toMillis &&
+      now.toMillis() - previous.toMillis() < minIntervalSeconds * 1000
+    ) {
+      throw new HttpsError("resource-exhausted", "You're doing that too fast. Try again shortly.");
+    }
+
+    tx.set(ref, { updatedAt: now }, { merge: true });
+  });
+}
+
+// Friend suggestions (PR 6) — a callable, not a client query, because it must
+// exclude candidates that BLOCKED the caller, and userBlocks list is
+// blocker-only (a client can't discover who blocked it), so client filtering
+// would leak blocked candidates as actionable Add rows. Exclusion is PER
+// CANDIDATE and deterministic: for each of ≤40 class-overlap candidates the
+// server checks exactly five docs (friendship + both request directions + both
+// block directions) in ONE batched getAll — never a scan of the caller's whole
+// friendships/requests, so a relationship beyond any page cap can't reappear.
+// Worst-case reads per call = 1 + 40 + 40*5 = 241 (MAX_SUGGESTION_READS). Only
+// public allowlisted fields (uid, displayName, classes, sharedClasses) are
+// returned. Verified-only + rate-limited; no App Check (no existing callable in
+// this project enforces it, so a half-configured requirement would be worse).
+exports.getFriendSuggestions = onCall(async (request) => {
+  if (!isVerifiedUwCallable(request)) {
+    throw new HttpsError("unauthenticated", "Sign in with a verified UW account.");
+  }
+
+  const uid = request.auth.uid;
+
+  try {
+    await enforceCallableRateLimit(
+      uid,
+      "friendSuggestions",
+      FRIEND_SUGGESTIONS_RATE_LIMIT_SECONDS
+    );
+
+    const meSnap = await db.collection("users").doc(uid).get();
+    const myClasses = Array.isArray(meSnap.data()?.classes)
+      ? meSnap.data().classes.filter((c) => typeof c === "string").slice(0, 10)
+      : [];
+
+    if (myClasses.length === 0) {
+      return { suggestions: [] };
+    }
+
+    // Bounded class-overlap candidate scan.
+    const candidateSnap = await db
+      .collection("users")
+      .where("classes", "array-contains-any", myClasses)
+      .limit(CANDIDATE_SCAN_LIMIT)
+      .get();
+
+    const candidates = candidateSnap.docs
+      .filter((docSnap) => docSnap.id !== uid)
+      .map((docSnap) => ({
+        uid: docSnap.id,
+        displayName: docSnap.data()?.displayName,
+        classes: docSnap.data()?.classes,
+      }));
+
+    // One getAll over each candidate's five deterministic relationship/block
+    // docs — the only reads used for exclusion (no relationship scans).
+    const refPlans = candidates.flatMap((candidate) =>
+      relationshipDocRefsForCandidate(uid, candidate.uid)
+    );
+    const refs = refPlans.map((plan) => db.collection(plan.collection).doc(plan.id));
+    const snaps = refs.length > 0 ? await db.getAll(...refs) : [];
+    const existingDocKeys = new Set(
+      snaps
+        .filter((snap) => snap.exists)
+        .map((snap) => `${snap.ref.parent.id}/${snap.id}`)
+    );
+
+    const excludedUids = new Set([uid]);
+    for (const candidate of candidates) {
+      if (isCandidateExcludedByExistence(uid, candidate.uid, existingDocKeys)) {
+        excludedUids.add(candidate.uid);
+      }
+    }
+
+    const suggestions = buildFriendSuggestions({
+      senderUid: uid,
+      myClasses,
+      candidates,
+      excludedUids,
+      existingBlockIds: new Set(), // block exclusion already folded into excludedUids
+    });
+
+    return { suggestions };
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error; // already-normalized (unauthenticated, resource-exhausted)
+    }
+    console.warn("getFriendSuggestions failed", error);
+    throw new HttpsError("internal", "Couldn't load suggestions. Try again.");
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Session reminders: one fixed reminder ~30 minutes before start, for the

@@ -30,6 +30,8 @@ const EXPECTED_STEP_ORDER = [
   'conversations',
   'sent-messages',
   'user-blocks',
+  'friend-requests',
+  'friendships',
   'location-ratings',
   'user-tree',
 ];

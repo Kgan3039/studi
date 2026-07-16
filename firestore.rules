@@ -31,12 +31,20 @@ service cloud.firestore {
         || exists(/databases/$(database)/documents/userBlocks/$(userB + '__' + userA));
     }
 
+    // Post-batch block check: a block created in the SAME batch as an accept
+    // must still prevent the friendship (exists() only sees pre-batch state).
+    function isBlockedEitherWayAfter(userA, userB) {
+      return existsAfter(/databases/$(database)/documents/userBlocks/$(userA + '__' + userB))
+        || existsAfter(/databases/$(database)/documents/userBlocks/$(userB + '__' + userA));
+    }
+
     function rateLimitRef(userId, action) {
       return /databases/$(database)/documents/rateLimits/$(userId)/actions/$(action);
     }
 
     function isKnownRateLimitedAction(action) {
-      return action in ['sendMessage', 'createSession', 'reportUser', 'locationRating'];
+      return action in ['sendMessage', 'createSession', 'reportUser', 'locationRating',
+                        'friendRequest'];
     }
 
     function respectsRateLimit(userId, action, previousUpdatedAt) {
@@ -49,6 +57,8 @@ service cloud.firestore {
           || (action == 'reportUser'
             && previousUpdatedAt <= request.time - duration.value(10, 'm'))
           || (action == 'locationRating'
+            && previousUpdatedAt <= request.time - duration.value(10, 's'))
+          || (action == 'friendRequest'
             && previousUpdatedAt <= request.time - duration.value(10, 's'))
         );
     }
@@ -77,12 +87,21 @@ service cloud.firestore {
 
     function isValidPublicProfile() {
       return incoming().keys().hasOnly([
-          'displayName', 'classes', 'year', 'major', 'pronouns', 'bio',
-          'createdAt', 'updatedAt'
+          'displayName', 'displayNameLower', 'classes', 'year', 'major',
+          'pronouns', 'bio', 'createdAt', 'updatedAt'
         ])
         && (!('displayName' in incoming()) ||
               (incoming().displayName is string
                && incoming().displayName.size() <= 60))
+        // displayNameLower powers case-insensitive prefix search (Firestore
+        // range queries are case-sensitive, so a normalized shadow field is
+        // required). Optional — legacy docs predate it — but when present it
+        // must be the exact lowercase of displayName, so the two can never
+        // drift once the field exists on a doc.
+        && (!('displayNameLower' in incoming()) ||
+              ('displayName' in incoming()
+               && incoming().displayNameLower is string
+               && incoming().displayNameLower == incoming().displayName.lower()))
         && (!('classes' in incoming()) ||
               (incoming().classes is list
                && incoming().classes.size() <= 12))
@@ -131,6 +150,14 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isVerifiedUwUser();
+      // displayNameLower rollout — PHASE 1 (this release): the field is
+      // OPTIONAL on create and update so already-shipped clients (which don't
+      // write it) keep working; when present, isValidPublicProfile pins it to
+      // displayName.lower() so it can never drift. The new app always writes
+      // it, and scripts/backfill-display-name-lower.mjs fills legacy docs after
+      // deploy. PHASE 2 (follow-up hardening, see docs/friends-rollout.md):
+      // make it mandatory on named create/rename once the minimum supported app
+      // version writes it. Do NOT tighten this before that version ships.
       allow create: if isOwner(userId)
         && isValidPublicProfile()
         && incoming().createdAt == request.time;
@@ -559,6 +586,143 @@ service cloud.firestore {
         && incoming().createdAt == request.time
         && hasFreshRateLimit(request.auth.uid, 'reportUser');
       allow read, update, delete: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // Friend requests — friendRequests/{fromUid}__{toUid} (PR 6). The doc's
+    // existence IS the pending state: create = send, delete by sender =
+    // cancel, delete by recipient = decline (or the accept batch below).
+    // Deterministic IDs make duplicates structurally impossible (a resend is
+    // an update, and update is denied), and the reverse-direction exists()
+    // check stops mutual pending pairs. Only the two involved users can
+    // read a request — nobody can enumerate someone else's social graph.
+    // ------------------------------------------------------------------
+
+    function friendRequestRef(fromUid, toUid) {
+      return /databases/$(database)/documents/friendRequests/$(fromUid + '__' + toUid);
+    }
+
+    function friendshipRef(userA, userB) {
+      return userA < userB
+        ? /databases/$(database)/documents/friendships/$(userA + '__' + userB)
+        : /databases/$(database)/documents/friendships/$(userB + '__' + userA);
+    }
+
+    // A safe pair-ID component. Studi accounts are created ONLY through
+    // Firebase email/password auth (no Admin createUser / importUsers / custom
+    // tokens anywhere in the codebase), so every uid is a Firebase-generated
+    // [A-Za-z0-9] string — it never contains `_`, `-`, or `__`. Enforcing this
+    // at write makes `{a}__{b}` an unambiguous, non-empty, delimiter-free
+    // encoding (mirrors functions/pair-id.js SAFE_UID_PATTERN and the client).
+    function isSafeUidComponent(value) {
+      return value is string && value.matches('^[A-Za-z0-9]{1,128}$');
+    }
+
+    // Membership derived from the deterministic doc ID itself, not the doc
+    // body. Both collections key on `{uidA}__{uidB}`, so splitting the id
+    // yields the exact pair. Gating `get` on this — rather than on
+    // `resource == null || <body check>` — means a missing doc and an existing
+    // doc are BOTH denied to an outsider, closing the existence-probing side
+    // channel (a non-member can no longer tell "missing" from "denied").
+    // Malformed ids are rejected: exactly two segments, each a safe non-empty
+    // uid component, and the two members must be DISTINCT (so a self-pair id
+    // like `uid__uid` fails closed — no real request/friendship pairs a user
+    // with themselves). So empty segments (`__x`), `>2`-part ids, and self-pairs
+    // are all denied.
+    function isDeterministicPairMember(docId) {
+      return docId.split('__').size() == 2
+        && isSafeUidComponent(docId.split('__')[0])
+        && isSafeUidComponent(docId.split('__')[1])
+        && docId.split('__')[0] != docId.split('__')[1]
+        && request.auth.uid in docId.split('__');
+    }
+
+    match /friendRequests/{requestId} {
+      // Involved-party only, by id membership — so getFriendStatus can probe a
+      // request that may not exist (returns exists=false) without leaking to
+      // outsiders whether any given pair has one.
+      allow get: if isVerifiedUwUser()
+        && isDeterministicPairMember(requestId);
+      allow list: if isVerifiedUwUser()
+        && (
+          request.auth.uid == resource.data.fromUid
+          || request.auth.uid == resource.data.toUid
+        );
+      allow create: if isVerifiedUwUser()
+        && incoming().keys().hasOnly(['fromUid', 'toUid', 'createdAt'])
+        && incoming().fromUid == request.auth.uid
+        && incoming().toUid is string
+        && incoming().toUid != request.auth.uid
+        // Both components must be safe uids so the `__` id is unambiguous.
+        && isSafeUidComponent(incoming().fromUid)
+        && isSafeUidComponent(incoming().toUid)
+        && requestId == incoming().fromUid + '__' + incoming().toUid
+        && incoming().createdAt == request.time
+        // Requests only go to real accounts — no junk docs at made-up uids.
+        && exists(/databases/$(database)/documents/users/$(incoming().toUid))
+        // No reverse duplicate: if they already asked you, accept instead.
+        && !exists(friendRequestRef(incoming().toUid, incoming().fromUid))
+        // Already friends — nothing to request.
+        && !exists(friendshipRef(incoming().fromUid, incoming().toUid))
+        && !isBlockedEitherWay(incoming().fromUid, incoming().toUid)
+        && hasFreshRateLimit(request.auth.uid, 'friendRequest');
+      allow update: if false;
+      // Sender cancels; recipient declines (or deletes as part of accepting).
+      allow delete: if isVerifiedUwUser()
+        && request.auth.uid in [resource.data.fromUid, resource.data.toUid];
+    }
+
+    // ------------------------------------------------------------------
+    // Friendships — friendships/{sortedUidA}__{sortedUidB} (PR 6). Created
+    // ONLY by the request recipient, atomically with the request deletion:
+    // the incoming request must exist before this batch and be gone after it
+    // (existsAfter), so a friendship can never appear while its request
+    // survives, and a bare create with no request is impossible. The sender
+    // structurally cannot self-accept — the required doc is {other}__{me},
+    // and the sender only ever holds {me}__{other}.
+    // ------------------------------------------------------------------
+
+    match /friendships/{pairId} {
+      // otherMember(): the friendship member who is not the caller.
+      function otherMember() {
+        return incoming().userIds[0] == request.auth.uid
+          ? incoming().userIds[1]
+          : incoming().userIds[0];
+      }
+
+      // Member only, by id membership (getFriendStatus probes the sorted-pair
+      // id before it knows whether a friendship exists) — a missing doc and an
+      // existing one are alike denied to outsiders, so neither reveals the
+      // friendship's existence.
+      allow get: if isVerifiedUwUser()
+        && isDeterministicPairMember(pairId);
+      allow list: if isVerifiedUwUser()
+        && request.auth.uid in resource.data.userIds;
+      allow create: if isVerifiedUwUser()
+        && incoming().keys().hasOnly(['userIds', 'acceptedBy', 'createdAt'])
+        && incoming().userIds is list
+        && incoming().userIds.size() == 2
+        // Safe uid components make the sorted `__` pair id unambiguous.
+        && isSafeUidComponent(incoming().userIds[0])
+        && isSafeUidComponent(incoming().userIds[1])
+        && incoming().userIds[0] < incoming().userIds[1]
+        && request.auth.uid in incoming().userIds
+        && pairId == incoming().userIds[0] + '__' + incoming().userIds[1]
+        && incoming().acceptedBy == request.auth.uid
+        && incoming().createdAt == request.time
+        // Accept is atomic: the incoming request existed before the batch…
+        && exists(friendRequestRef(otherMember(), request.auth.uid))
+        // …and the same batch deletes it.
+        && !existsAfter(friendRequestRef(otherMember(), request.auth.uid))
+        // No block in either direction, judged BOTH before and after the
+        // batch — so a recipient can't create a block and the friendship in
+        // one batch (exists() alone would miss the same-batch block write).
+        && !isBlockedEitherWay(incoming().userIds[0], incoming().userIds[1])
+        && !isBlockedEitherWayAfter(incoming().userIds[0], incoming().userIds[1]);
+      allow update: if false;
+      // Either friend may end the friendship.
+      allow delete: if isVerifiedUwUser()
+        && request.auth.uid in resource.data.userIds;
     }
 
     // ------------------------------------------------------------------

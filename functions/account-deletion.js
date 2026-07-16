@@ -217,6 +217,22 @@ function createAccountDeletionRunner({ db, auth, FieldValue }) {
         },
       },
       {
+        // Pending requests in both directions (deterministic-ID docs, but
+        // queried by field so a partially-deleted page resumes cleanly).
+        name: "friend-requests",
+        run: async () => {
+          await deleteQueryBatch(db.collection("friendRequests").where("fromUid", "==", uid));
+          await deleteQueryBatch(db.collection("friendRequests").where("toUid", "==", uid));
+        },
+      },
+      {
+        // Friendships name both members in userIds — the counterpart loses the
+        // friendship too, same as the DM-conversation model above.
+        name: "friendships",
+        run: () =>
+          deleteQueryBatch(db.collection("friendships").where("userIds", "array-contains", uid)),
+      },
+      {
         // The aggregate trigger decrements location counts per delete.
         name: "location-ratings",
         run: () => deleteQueryBatch(db.collection("locationRatings").where("userId", "==", uid)),

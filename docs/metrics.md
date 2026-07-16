@@ -32,6 +32,12 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 | `group_message_sent` | `sendSessionMessage()` succeeds | `length` (number, not content) |
 | `report_submitted` | Report saved | `reason`, `context` |
 | `user_blocked` | Block saved | `context` |
+| `friends_viewed` | Friends screen gains focus or switches tab | `tab` (`friends` \| `requests` \| `suggested`) |
+| `friend_request_sent` | `sendFriendRequest()` succeeds | `source` (`search` \| `suggested` \| `profile`) |
+| `friend_request_accepted` | `acceptFriendRequest()` succeeds | — |
+| `friend_request_declined` | `declineFriendRequest()` succeeds | — |
+| `friend_request_cancelled` | `cancelFriendRequest()` succeeds | — |
+| `friend_removed` | `removeFriend()` succeeds | — |
 | `account_deleted` | Deletion callable succeeds | — |
 | `screen_view` | expo-router pathname change | `pathname` |
 
