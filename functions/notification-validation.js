@@ -6,6 +6,8 @@
 // The client mirrors the URL rules in lib/notifications.ts
 // (isAllowedNotificationUrl) — change both together.
 
+const { directedPairId, sortedPairId } = require("./pair-id");
+
 const NOTIFICATION_TYPES = new Set([
   "dm_message",
   "session_joined",
@@ -156,14 +158,14 @@ function friendAcceptedNotificationId(eventId) {
 
 /**
  * Doc paths (collection/docId) removed when userA and userB become blocked:
- * friendRequests in both directions plus the sorted-pair friendship.
+ * friendRequests in both directions plus the sorted-pair friendship. IDs come
+ * from the shared pair-id helpers so client, Functions, and rules agree.
  */
 function friendCleanupPathsForBlock(blockerUserId, blockedUserId) {
-  const sorted = [blockerUserId, blockedUserId].sort();
   return [
-    { collection: "friendRequests", id: `${blockerUserId}__${blockedUserId}` },
-    { collection: "friendRequests", id: `${blockedUserId}__${blockerUserId}` },
-    { collection: "friendships", id: `${sorted[0]}__${sorted[1]}` },
+    { collection: "friendRequests", id: directedPairId(blockerUserId, blockedUserId) },
+    { collection: "friendRequests", id: directedPairId(blockedUserId, blockerUserId) },
+    { collection: "friendships", id: sortedPairId(blockerUserId, blockedUserId) },
   ];
 }
 
@@ -193,7 +195,10 @@ function isWithinGroupChatFanoutLimit(participantCount) {
 
 /** Both directions of the deterministic userBlocks/{blocker}__{blocked} doc ID. */
 function blockPairIdsFor(senderId, recipientId) {
-  return [`${senderId}__${recipientId}`, `${recipientId}__${senderId}`];
+  return [
+    directedPairId(senderId, recipientId),
+    directedPairId(recipientId, senderId),
+  ];
 }
 
 /**

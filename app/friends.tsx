@@ -70,19 +70,25 @@ export default function FriendsScreen() {
   const friendsCursor = useRef<QueryDocumentSnapshot | null>(null);
   const friendsHasMore = useRef(false);
 
+  // Incoming and outgoing requests paginate FULLY independently (own cursor,
+  // hasMore, loading flag, in-flight guard, and Load-more control) so neither
+  // section can starve the other.
   const [incoming, setIncoming] = useState<FriendRequestListItem[]>([]);
   const [outgoing, setOutgoing] = useState<FriendRequestListItem[]>([]);
   const [requestsState, setRequestsState] = useState<LoadState>('loading');
-  const [requestsLoadingMore, setRequestsLoadingMore] = useState(false);
+  const [incomingLoadingMore, setIncomingLoadingMore] = useState(false);
+  const [outgoingLoadingMore, setOutgoingLoadingMore] = useState(false);
+  const [incomingCanLoadMore, setIncomingCanLoadMore] = useState(false);
+  const [outgoingCanLoadMore, setOutgoingCanLoadMore] = useState(false);
   const incomingCursor = useRef<QueryDocumentSnapshot | null>(null);
-  const incomingHasMore = useRef(false);
   const outgoingCursor = useRef<QueryDocumentSnapshot | null>(null);
-  const outgoingHasMore = useRef(false);
+  const incomingInFlight = useRef(false);
+  const outgoingInFlight = useRef(false);
 
   const [suggested, setSuggested] = useState<SuggestedClassmate[]>([]);
   const [suggestedState, setSuggestedState] = useState<LoadState>('loading');
 
-  // Guards against overlapping page fetches (onEndReached fires repeatedly).
+  // Guards against overlapping page fetches (Friends onEndReached fires repeatedly).
   const loadingMoreRef = useRef(false);
 
   // Optimistic action bookkeeping — uids we've already acted on this session.
@@ -159,46 +165,52 @@ export default function FriendsScreen() {
       setIncoming(inc.items);
       setOutgoing(out.items);
       incomingCursor.current = inc.cursor;
-      incomingHasMore.current = inc.hasMore;
       outgoingCursor.current = out.cursor;
-      outgoingHasMore.current = out.hasMore;
+      setIncomingCanLoadMore(inc.hasMore);
+      setOutgoingCanLoadMore(out.hasMore);
       setRequestsState('ready');
     } catch {
       setRequestsState('error');
     }
   }, [currentUser]);
 
-  const loadMoreRequests = useCallback(async () => {
-    if (!currentUser || loadingMoreRef.current) return;
-    if (!outgoingHasMore.current && !incomingHasMore.current) return;
-    loadingMoreRef.current = true;
-    setRequestsLoadingMore(true);
+  const loadMoreIncoming = useCallback(async () => {
+    if (!currentUser || incomingInFlight.current || !incomingCursor.current) return;
+    incomingInFlight.current = true;
+    setIncomingLoadingMore(true);
     try {
-      // The combined list renders incoming above outgoing, so the bottom that
-      // triggers onEndReached is the outgoing tail — page that first, then
-      // fall through to incoming once outgoing is exhausted.
-      if (outgoingHasMore.current) {
-        const page = await getOutgoingRequestsPage(currentUser.uid, outgoingCursor.current);
-        outgoingCursor.current = page.cursor;
-        outgoingHasMore.current = page.hasMore;
-        setOutgoing((current) => {
-          const seen = new Set(current.map((item) => item.otherUid));
-          return [...current, ...page.items.filter((item) => !seen.has(item.otherUid))];
-        });
-      } else if (incomingHasMore.current) {
-        const page = await getIncomingRequestsPage(currentUser.uid, incomingCursor.current);
-        incomingCursor.current = page.cursor;
-        incomingHasMore.current = page.hasMore;
-        setIncoming((current) => {
-          const seen = new Set(current.map((item) => item.otherUid));
-          return [...current, ...page.items.filter((item) => !seen.has(item.otherUid))];
-        });
-      }
+      const page = await getIncomingRequestsPage(currentUser.uid, incomingCursor.current);
+      incomingCursor.current = page.cursor;
+      setIncomingCanLoadMore(page.hasMore);
+      setIncoming((current) => {
+        const seen = new Set(current.map((item) => item.otherUid));
+        return [...current, ...page.items.filter((item) => !seen.has(item.otherUid))];
+      });
     } catch {
-      // Keep the loaded rows; the next end-reach retries.
+      // Keep loaded rows; the button stays available to retry.
     } finally {
-      loadingMoreRef.current = false;
-      setRequestsLoadingMore(false);
+      incomingInFlight.current = false;
+      setIncomingLoadingMore(false);
+    }
+  }, [currentUser]);
+
+  const loadMoreOutgoing = useCallback(async () => {
+    if (!currentUser || outgoingInFlight.current || !outgoingCursor.current) return;
+    outgoingInFlight.current = true;
+    setOutgoingLoadingMore(true);
+    try {
+      const page = await getOutgoingRequestsPage(currentUser.uid, outgoingCursor.current);
+      outgoingCursor.current = page.cursor;
+      setOutgoingCanLoadMore(page.hasMore);
+      setOutgoing((current) => {
+        const seen = new Set(current.map((item) => item.otherUid));
+        return [...current, ...page.items.filter((item) => !seen.has(item.otherUid))];
+      });
+    } catch {
+      // Keep loaded rows; the button stays available to retry.
+    } finally {
+      outgoingInFlight.current = false;
+      setOutgoingLoadingMore(false);
     }
   }, [currentUser]);
 
@@ -434,8 +446,12 @@ export default function FriendsScreen() {
           outgoing={outgoing}
           pendingUids={pendingUids}
           palette={palette}
-          loadingMore={requestsLoadingMore}
-          onEndReached={loadMoreRequests}
+          incomingCanLoadMore={incomingCanLoadMore}
+          outgoingCanLoadMore={outgoingCanLoadMore}
+          incomingLoadingMore={incomingLoadingMore}
+          outgoingLoadingMore={outgoingLoadingMore}
+          onLoadMoreIncoming={loadMoreIncoming}
+          onLoadMoreOutgoing={loadMoreOutgoing}
           onRetry={loadRequests}
           onOpen={openProfile}
           onAccept={handleAccept}
@@ -602,8 +618,12 @@ function RequestsList({
   outgoing,
   pendingUids,
   palette,
-  loadingMore,
-  onEndReached,
+  incomingCanLoadMore,
+  outgoingCanLoadMore,
+  incomingLoadingMore,
+  outgoingLoadingMore,
+  onLoadMoreIncoming,
+  onLoadMoreOutgoing,
   onRetry,
   onOpen,
   onAccept,
@@ -616,8 +636,12 @@ function RequestsList({
   outgoing: FriendRequestListItem[];
   pendingUids: Set<string>;
   palette: Palette;
-  loadingMore: boolean;
-  onEndReached: () => void;
+  incomingCanLoadMore: boolean;
+  outgoingCanLoadMore: boolean;
+  incomingLoadingMore: boolean;
+  outgoingLoadingMore: boolean;
+  onLoadMoreIncoming: () => void;
+  onLoadMoreOutgoing: () => void;
   onRetry: () => void;
   onOpen: (uid: string) => void;
   onAccept: (uid: string) => void;
@@ -644,20 +668,30 @@ function RequestsList({
   type Section =
     | { kind: 'header'; id: string; label: string }
     | { kind: 'incoming'; id: string; item: FriendRequestListItem }
-    | { kind: 'outgoing'; id: string; item: FriendRequestListItem };
+    | { kind: 'outgoing'; id: string; item: FriendRequestListItem }
+    | { kind: 'loadmore'; id: string; section: 'incoming' | 'outgoing'; loading: boolean };
 
+  // Each section gets its OWN Load-more row, so incoming and outgoing paginate
+  // independently — neither can starve the other (a combined onEndReached
+  // could exhaust one side before ever reaching the other).
   const rows: Section[] = [];
   if (incoming.length > 0) {
     rows.push({ kind: 'header', id: 'h-in', label: `Requests · ${incoming.length}` });
     incoming.forEach((item) =>
       rows.push({ kind: 'incoming', id: `in-${item.otherUid}`, item })
     );
+    if (incomingCanLoadMore) {
+      rows.push({ kind: 'loadmore', id: 'more-in', section: 'incoming', loading: incomingLoadingMore });
+    }
   }
   if (outgoing.length > 0) {
     rows.push({ kind: 'header', id: 'h-out', label: `Sent · ${outgoing.length}` });
     outgoing.forEach((item) =>
       rows.push({ kind: 'outgoing', id: `out-${item.otherUid}`, item })
     );
+    if (outgoingCanLoadMore) {
+      rows.push({ kind: 'loadmore', id: 'more-out', section: 'outgoing', loading: outgoingLoadingMore });
+    }
   }
 
   return (
@@ -665,15 +699,25 @@ function RequestsList({
       data={rows}
       keyExtractor={(row) => row.id}
       contentContainerStyle={styles.listContent}
-      onEndReached={onEndReached}
-      onEndReachedThreshold={0.4}
-      ListFooterComponent={<ListFooter loading={loadingMore} palette={palette} />}
       renderItem={({ item: row }) => {
         if (row.kind === 'header') {
           return (
             <Text style={[TypeScale.eyebrow, styles.sectionHeader, { color: palette.icon }]}>
               {row.label}
             </Text>
+          );
+        }
+        if (row.kind === 'loadmore') {
+          return (
+            <View style={styles.loadMoreRow}>
+              <Button
+                label="Load more"
+                variant="secondary"
+                size="sm"
+                loading={row.loading}
+                onPress={row.section === 'incoming' ? onLoadMoreIncoming : onLoadMoreOutgoing}
+              />
+            </View>
           );
         }
         const item = row.item;
@@ -963,5 +1007,9 @@ const styles = StyleSheet.create({
   },
   footerLoading: {
     paddingVertical: Space.lg,
+  },
+  loadMoreRow: {
+    alignItems: 'center',
+    paddingVertical: Space.sm,
   },
 });

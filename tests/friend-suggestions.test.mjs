@@ -7,8 +7,18 @@
 
 import { strict as assert } from 'node:assert';
 import suggestions from '../functions/friend-suggestions.js';
+import pairId from '../functions/pair-id.js';
 
-const { buildFriendSuggestions, MAX_SUGGESTIONS } = suggestions;
+const {
+  buildFriendSuggestions,
+  MAX_SUGGESTIONS,
+  MAX_SUGGESTION_READS,
+  CANDIDATE_SCAN_LIMIT,
+  RELATIONSHIP_DOCS_PER_CANDIDATE,
+  isCandidateExcludedByExistence,
+  relationshipDocRefsForCandidate,
+} = suggestions;
+const { isSafeUid, directedPairId, sortedPairId, parsePairMembers } = pairId;
 
 const SENDER = 'senderUid';
 const MY_CLASSES = ['CS 300', 'MATH 221', 'STAT 240'];
@@ -125,5 +135,113 @@ describe('friend suggestions — exclusions and bounds', () => {
       existingBlockIds: new Set(),
     });
     assert.equal(out.length, MAX_SUGGESTIONS);
+  });
+});
+
+describe('friend suggestions — per-candidate deterministic exclusion (bounded)', () => {
+  const CAND = 'candidateUid';
+
+  it('checks exactly five deterministic docs per candidate', () => {
+    const refs = relationshipDocRefsForCandidate(SENDER, CAND);
+    assert.equal(refs.length, RELATIONSHIP_DOCS_PER_CANDIDATE);
+    assert.deepEqual(refs, [
+      { collection: 'friendships', id: sortedPairId(SENDER, CAND) },
+      { collection: 'friendRequests', id: directedPairId(SENDER, CAND) },
+      { collection: 'friendRequests', id: directedPairId(CAND, SENDER) },
+      { collection: 'userBlocks', id: directedPairId(SENDER, CAND) },
+      { collection: 'userBlocks', id: directedPairId(CAND, SENDER) },
+    ]);
+  });
+
+  it('documented worst-case read bound is 1 + 40 + 40*5 = 241', () => {
+    assert.equal(CANDIDATE_SCAN_LIMIT, 40);
+    assert.equal(RELATIONSHIP_DOCS_PER_CANDIDATE, 5);
+    assert.equal(MAX_SUGGESTION_READS, 241);
+  });
+
+  // The exclusion is per-pair, so a friend/request/block is caught by the
+  // candidate's OWN five docs — independent of how many OTHER relationships the
+  // caller has (e.g. 500+ friends beyond any page cap).
+  it('excludes when the friendship doc exists (even with 500+ unrelated rels)', () => {
+    const unrelated = new Set(
+      Array.from({ length: 600 }, (_, i) => `friendships/${sortedPairId(SENDER, `other${i}`)}`)
+    );
+    unrelated.add(`friendships/${sortedPairId(SENDER, CAND)}`);
+    assert.equal(isCandidateExcludedByExistence(SENDER, CAND, unrelated), true);
+  });
+
+  it('excludes when an outgoing OR incoming request doc exists', () => {
+    assert.equal(
+      isCandidateExcludedByExistence(SENDER, CAND, new Set([`friendRequests/${directedPairId(SENDER, CAND)}`])),
+      true
+    );
+    assert.equal(
+      isCandidateExcludedByExistence(SENDER, CAND, new Set([`friendRequests/${directedPairId(CAND, SENDER)}`])),
+      true
+    );
+  });
+
+  it('excludes when a block doc exists in either direction', () => {
+    assert.equal(
+      isCandidateExcludedByExistence(SENDER, CAND, new Set([`userBlocks/${directedPairId(SENDER, CAND)}`])),
+      true
+    );
+    assert.equal(
+      isCandidateExcludedByExistence(SENDER, CAND, new Set([`userBlocks/${directedPairId(CAND, SENDER)}`])),
+      true
+    );
+  });
+
+  it('does NOT exclude when only unrelated docs exist', () => {
+    const unrelated = new Set([
+      `friendships/${sortedPairId(SENDER, 'someoneElse')}`,
+      `friendRequests/${directedPairId(SENDER, 'anotherPerson')}`,
+      `userBlocks/${directedPairId('x', 'y')}`,
+    ]);
+    assert.equal(isCandidateExcludedByExistence(SENDER, CAND, unrelated), false);
+  });
+});
+
+describe('pair-id encoding (shared helper)', () => {
+  it('rejects empty components', () => {
+    assert.equal(parsePairMembers('__x'), null);
+    assert.equal(parsePairMembers('x__'), null);
+    assert.equal(parsePairMembers('__'), null);
+  });
+
+  it('rejects malformed ids (no separator, >2 parts)', () => {
+    assert.equal(parsePairMembers('nosep'), null);
+    assert.equal(parsePairMembers('a__b__c'), null);
+    assert.equal(parsePairMembers(42), null);
+  });
+
+  it('rejects self-pairs', () => {
+    assert.equal(parsePairMembers('x__x'), null);
+  });
+
+  it('parses a well-formed pair id into its two members', () => {
+    assert.deepEqual(parsePairMembers('aaa__bbb'), ['aaa', 'bbb']);
+  });
+
+  it('constrains uids to [A-Za-z0-9] so `__` can never be ambiguous', () => {
+    // Documented decision: Studi uids are Firebase [A-Za-z0-9] email/password
+    // uids. `_` and `-` are rejected, so a component can never contain `__`.
+    assert.equal(isSafeUid('AbC123'), true);
+    assert.equal(isSafeUid('a_b'), false);
+    assert.equal(isSafeUid('a-b'), false);
+    assert.equal(isSafeUid('a__b'), false);
+    assert.equal(isSafeUid(''), false);
+    assert.equal(isSafeUid('x'.repeat(129)), false);
+    assert.equal(isSafeUid('x'.repeat(128)), true);
+  });
+
+  it('sorted friendship id is stable regardless of argument order', () => {
+    assert.equal(sortedPairId('aaa', 'bbb'), sortedPairId('bbb', 'aaa'));
+    assert.equal(sortedPairId('bbb', 'aaa'), 'aaa__bbb');
+  });
+
+  it('directed request id preserves direction', () => {
+    assert.equal(directedPairId('aaa', 'bbb'), 'aaa__bbb');
+    assert.notEqual(directedPairId('aaa', 'bbb'), directedPairId('bbb', 'aaa'));
   });
 });

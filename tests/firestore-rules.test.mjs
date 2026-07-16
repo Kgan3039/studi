@@ -225,8 +225,10 @@ describe('users', () => {
     );
   });
 
-  it('rejects a new named profile that omits displayNameLower', async () => {
-    await assertFails(
+  // Rollout PHASE 1: old clients that don't write displayNameLower must keep
+  // working (see docs/friends-rollout.md). PHASE 2 makes these mandatory.
+  it('allows a new named profile without displayNameLower (rollout phase 1, old client)', async () => {
+    await assertSucceeds(
       setDoc(doc(ctx(ALICE), 'users', ALICE), {
         displayName: 'Alice Anderson',
         classes: [],
@@ -236,15 +238,16 @@ describe('users', () => {
     );
   });
 
-  it('rejects a rename that does not update displayNameLower', async () => {
+  it('allows a rename that omits displayNameLower (rollout phase 1, legacy doc)', async () => {
+    // Legacy/old-client doc: no displayNameLower present, so the rename doesn't
+    // strand a stale lower value (the sync check only fires when it's present).
     await seed(`users/${ALICE}`, {
       displayName: 'Alice Anderson',
-      displayNameLower: 'alice anderson',
       classes: [],
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
     });
-    await assertFails(
+    await assertSucceeds(
       updateDoc(doc(ctx(ALICE), 'users', ALICE), {
         displayName: 'Alicia Anderson',
         updatedAt: serverTimestamp(),
@@ -1532,6 +1535,18 @@ describe('friend requests (friendRequests/{from}__{to})', () => {
     await assertFails(batch.commit());
   });
 
+  it('rejects a toUid that is not a safe [A-Za-z0-9] uid (unambiguous __ id)', async () => {
+    // A uid containing `_` would make `from__to` ambiguous — denied at create.
+    const unsafe = 'bad__uid';
+    await seed(`users/${unsafe}`, { displayName: 'Weird', classes: [] });
+    const db = ctx(ALICE);
+    const batch = batchWithRateLimit(db, ALICE, 'friendRequest');
+    batch.set(doc(db, 'friendRequests', `${ALICE}__${unsafe}`), {
+      fromUid: ALICE, toUid: unsafe, createdAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
+  });
+
   it('rejects a reverse-duplicate request', async () => {
     await seedUser(ALICE);
     await seedUser(BOB);
@@ -1592,11 +1607,14 @@ describe('friend requests (friendRequests/{from}__{to})', () => {
     await assertFails(getDoc(doc(ctx(MALLORY), 'friendRequests', reqId(ALICE, BOB))));
   });
 
-  it('rejects a malformed request id on get', async () => {
+  it('rejects a malformed request id on get (no separator, >2 parts, empty/unsafe segments)', async () => {
     await assertFails(getDoc(doc(ctx(ALICE), 'friendRequests', 'no-separator')));
     await assertFails(
       getDoc(doc(ctx(ALICE), 'friendRequests', `${ALICE}__${BOB}__${MALLORY}`))
     );
+    // Empty segments (`__x`, `x__`) and unsafe components are rejected.
+    await assertFails(getDoc(doc(ctx(ALICE), 'friendRequests', `__${ALICE}`)));
+    await assertFails(getDoc(doc(ctx(ALICE), 'friendRequests', `${ALICE}__`)));
   });
 
   it('requests are immutable (no update)', async () => {

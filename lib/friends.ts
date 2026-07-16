@@ -86,6 +86,26 @@ export type FriendStatus =
   | "incoming" // they sent us a pending request
   | "none";
 
+// Mirrors functions/pair-id.js SAFE_UID_PATTERN and firestore.rules
+// isSafeUidComponent. Studi uids are Firebase email/password uids ([A-Za-z0-9]),
+// so `{a}__{b}` is an unambiguous, delimiter-free deterministic id. Validated
+// here for fail-fast friendly errors; the rules are the actual enforcement.
+const SAFE_UID_PATTERN = /^[A-Za-z0-9]{1,128}$/;
+
+export function isSafeUid(uid: string): boolean {
+  return typeof uid === "string" && SAFE_UID_PATTERN.test(uid);
+}
+
+function assertSafePair(uidA: string, uidB: string) {
+  if (!isSafeUid(uidA) || !isSafeUid(uidB)) {
+    throw new Error("That account can't be added right now.");
+  }
+  if (uidA === uidB) {
+    throw new Error("You can't add yourself.");
+  }
+}
+
+/** Directed pair id (friend requests: from → to). */
 export function buildFriendRequestId(fromUid: string, toUid: string) {
   return `${fromUid}__${toUid}`;
 }
@@ -129,9 +149,7 @@ function parseFriendRequest(id: string, data: Record<string, unknown>): FriendRe
 // ---------------------------------------------------------------------------
 
 export async function sendFriendRequest(fromUid: string, toUid: string) {
-  if (fromUid === toUid) {
-    throw new Error("You can't send yourself a friend request.");
-  }
+  assertSafePair(fromUid, toUid);
 
   const batch = writeBatch(db);
   batch.set(friendRequestDoc(fromUid, toUid), {
@@ -159,6 +177,7 @@ export async function declineFriendRequest(currentUid: string, fromUid: string) 
  * deleted in the same batch.
  */
 export async function acceptFriendRequest(currentUid: string, fromUid: string) {
+  assertSafePair(currentUid, fromUid);
   const outgoing = await getDoc(friendRequestDoc(currentUid, fromUid));
 
   const batch = writeBatch(db);

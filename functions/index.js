@@ -32,7 +32,8 @@ const {
 const {
   buildFriendSuggestions,
   CANDIDATE_SCAN_LIMIT,
-  RELATIONSHIP_SCAN_LIMIT,
+  isCandidateExcludedByExistence,
+  relationshipDocRefsForCandidate,
 } = require("./friend-suggestions");
 
 admin.initializeApp();
@@ -733,14 +734,43 @@ exports.onUserBlockCreated = onDocumentCreated(
   }
 );
 
+// Per-invocation rate limit for read-heavy friend-suggestion calls. Reuses the
+// rateLimits/{uid}/actions/{action} pattern (Admin write bypasses client
+// rules), mirroring enforceDeleteAccountRateLimit. Throttled, not blocked:
+// clients refresh suggestions occasionally, not in a loop.
+const FRIEND_SUGGESTIONS_RATE_LIMIT_SECONDS = 3;
+
+async function enforceCallableRateLimit(uid, action, minIntervalSeconds) {
+  const ref = db.collection("rateLimits").doc(uid).collection("actions").doc(action);
+  const now = admin.firestore.Timestamp.now();
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const previous = snap.exists ? snap.data()?.updatedAt : null;
+
+    if (
+      previous?.toMillis &&
+      now.toMillis() - previous.toMillis() < minIntervalSeconds * 1000
+    ) {
+      throw new HttpsError("resource-exhausted", "You're doing that too fast. Try again shortly.");
+    }
+
+    tx.set(ref, { updatedAt: now }, { merge: true });
+  });
+}
+
 // Friend suggestions (PR 6) — a callable, not a client query, because it must
-// filter candidates that BLOCKED the caller, and userBlocks list is
-// blocker-only (a client can't discover who blocked it). The Admin SDK checks
-// both block directions in one batched getAll, so no blocked candidate ever
-// leaves the server. Every read is bounded (see friend-suggestions.js caps):
-// one class-overlap scan, three relationship scans for exclusion, one block
-// getAll — no full-collection scan, no N+1 profile reads (candidate profiles
-// come from the single overlap query and are returned inline).
+// exclude candidates that BLOCKED the caller, and userBlocks list is
+// blocker-only (a client can't discover who blocked it), so client filtering
+// would leak blocked candidates as actionable Add rows. Exclusion is PER
+// CANDIDATE and deterministic: for each of ≤40 class-overlap candidates the
+// server checks exactly five docs (friendship + both request directions + both
+// block directions) in ONE batched getAll — never a scan of the caller's whole
+// friendships/requests, so a relationship beyond any page cap can't reappear.
+// Worst-case reads per call = 1 + 40 + 40*5 = 241 (MAX_SUGGESTION_READS). Only
+// public allowlisted fields (uid, displayName, classes, sharedClasses) are
+// returned. Verified-only + rate-limited; no App Check (no existing callable in
+// this project enforces it, so a half-configured requirement would be worse).
 exports.getFriendSuggestions = onCall(async (request) => {
   if (!isVerifiedUwCallable(request)) {
     throw new HttpsError("unauthenticated", "Sign in with a verified UW account.");
@@ -748,82 +778,73 @@ exports.getFriendSuggestions = onCall(async (request) => {
 
   const uid = request.auth.uid;
 
-  const meSnap = await db.collection("users").doc(uid).get();
-  const myClasses = Array.isArray(meSnap.data()?.classes)
-    ? meSnap.data().classes.filter((c) => typeof c === "string").slice(0, 10)
-    : [];
+  try {
+    await enforceCallableRateLimit(
+      uid,
+      "friendSuggestions",
+      FRIEND_SUGGESTIONS_RATE_LIMIT_SECONDS
+    );
 
-  if (myClasses.length === 0) {
-    return { suggestions: [] };
-  }
+    const meSnap = await db.collection("users").doc(uid).get();
+    const myClasses = Array.isArray(meSnap.data()?.classes)
+      ? meSnap.data().classes.filter((c) => typeof c === "string").slice(0, 10)
+      : [];
 
-  const [candidateSnap, friendsSnap, incomingSnap, outgoingSnap] = await Promise.all([
-    db
+    if (myClasses.length === 0) {
+      return { suggestions: [] };
+    }
+
+    // Bounded class-overlap candidate scan.
+    const candidateSnap = await db
       .collection("users")
       .where("classes", "array-contains-any", myClasses)
       .limit(CANDIDATE_SCAN_LIMIT)
-      .get(),
-    db
-      .collection("friendships")
-      .where("userIds", "array-contains", uid)
-      .limit(RELATIONSHIP_SCAN_LIMIT)
-      .get(),
-    db
-      .collection("friendRequests")
-      .where("toUid", "==", uid)
-      .limit(RELATIONSHIP_SCAN_LIMIT)
-      .get(),
-    db
-      .collection("friendRequests")
-      .where("fromUid", "==", uid)
-      .limit(RELATIONSHIP_SCAN_LIMIT)
-      .get(),
-  ]);
+      .get();
 
-  const excludedUids = new Set([uid]);
-  friendsSnap.forEach((docSnap) => {
-    const userIds = Array.isArray(docSnap.data()?.userIds) ? docSnap.data().userIds : [];
-    userIds.forEach((memberId) => {
-      if (typeof memberId === "string" && memberId !== uid) {
-        excludedUids.add(memberId);
+    const candidates = candidateSnap.docs
+      .filter((docSnap) => docSnap.id !== uid)
+      .map((docSnap) => ({
+        uid: docSnap.id,
+        displayName: docSnap.data()?.displayName,
+        classes: docSnap.data()?.classes,
+      }));
+
+    // One getAll over each candidate's five deterministic relationship/block
+    // docs — the only reads used for exclusion (no relationship scans).
+    const refPlans = candidates.flatMap((candidate) =>
+      relationshipDocRefsForCandidate(uid, candidate.uid)
+    );
+    const refs = refPlans.map((plan) => db.collection(plan.collection).doc(plan.id));
+    const snaps = refs.length > 0 ? await db.getAll(...refs) : [];
+    const existingDocKeys = new Set(
+      snaps
+        .filter((snap) => snap.exists)
+        .map((snap) => `${snap.ref.parent.id}/${snap.id}`)
+    );
+
+    const excludedUids = new Set([uid]);
+    for (const candidate of candidates) {
+      if (isCandidateExcludedByExistence(uid, candidate.uid, existingDocKeys)) {
+        excludedUids.add(candidate.uid);
       }
+    }
+
+    const suggestions = buildFriendSuggestions({
+      senderUid: uid,
+      myClasses,
+      candidates,
+      excludedUids,
+      existingBlockIds: new Set(), // block exclusion already folded into excludedUids
     });
-  });
-  incomingSnap.forEach((docSnap) => {
-    const fromUid = docSnap.data()?.fromUid;
-    if (typeof fromUid === "string") excludedUids.add(fromUid);
-  });
-  outgoingSnap.forEach((docSnap) => {
-    const toUid = docSnap.data()?.toUid;
-    if (typeof toUid === "string") excludedUids.add(toUid);
-  });
 
-  const candidates = candidateSnap.docs
-    .filter((docSnap) => docSnap.id !== uid && !excludedUids.has(docSnap.id))
-    .map((docSnap) => ({
-      uid: docSnap.id,
-      displayName: docSnap.data()?.displayName,
-      classes: docSnap.data()?.classes,
-    }));
-
-  // Both block directions for every surviving candidate, in one getAll.
-  const blockRefs = candidates.flatMap((candidate) =>
-    blockPairIdsFor(uid, candidate.uid).map((id) => db.collection("userBlocks").doc(id))
-  );
-  const blockSnaps = blockRefs.length > 0 ? await db.getAll(...blockRefs) : [];
-  const existingBlockIds = new Set(
-    blockSnaps.filter((snap) => snap.exists).map((snap) => snap.id)
-  );
-
-  const suggestions = buildFriendSuggestions({
-    senderUid: uid,
-    myClasses,
-    candidates,
-    excludedUids,
-    existingBlockIds,
-  });
-
-  return { suggestions };
+    return { suggestions };
+  } catch (error) {
+    if (error instanceof HttpsError) {
+      throw error; // already-normalized (unauthenticated, resource-exhausted)
+    }
+    console.warn("getFriendSuggestions failed", error);
+    throw new HttpsError("internal", "Couldn't load suggestions. Try again.");
+  }
 });
 
 // ---------------------------------------------------------------------------

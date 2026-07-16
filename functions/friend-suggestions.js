@@ -4,12 +4,49 @@
 // the bounded Admin reads to it.
 
 const { blockPairIdsFor } = require("./notification-validation");
+const { directedPairId, sortedPairId } = require("./pair-id");
 
 // Hard caps — every value the callable reads is bounded by one of these, so a
 // suggestion request can never fan out into an unbounded scan.
 const CANDIDATE_SCAN_LIMIT = 40; // users pulled from the class overlap query
-const RELATIONSHIP_SCAN_LIMIT = 500; // friends / requests loaded for exclusion
+// Deterministic relationship/block docs checked PER candidate — friendship,
+// both request directions, both block directions. Exclusion is per-pair, not a
+// scan of the caller's whole relationship set, so a friend/request/block beyond
+// any page cap can never leak back in as an actionable suggestion.
+const RELATIONSHIP_DOCS_PER_CANDIDATE = 5;
 const MAX_SUGGESTIONS = 15; // rows actually returned
+
+// Worst-case reads per getFriendSuggestions invocation:
+//   1 (caller profile)
+// + CANDIDATE_SCAN_LIMIT (class-overlap query)
+// + CANDIDATE_SCAN_LIMIT * RELATIONSHIP_DOCS_PER_CANDIDATE (one batched getAll)
+// = 1 + 40 + 200 = 241. No full-collection or full-relationship scan.
+const MAX_SUGGESTION_READS =
+  1 + CANDIDATE_SCAN_LIMIT + CANDIDATE_SCAN_LIMIT * RELATIONSHIP_DOCS_PER_CANDIDATE;
+
+/**
+ * The exactly-five deterministic docs whose existence means "already related"
+ * for one caller/candidate pair. Returned as {collection, id} so the caller can
+ * build refs and, from a set of existing "collection/id" keys, decide exclusion
+ * WITHOUT reading the caller's full friendships/requests.
+ */
+function relationshipDocRefsForCandidate(caller, candidate) {
+  return [
+    { collection: "friendships", id: sortedPairId(caller, candidate) },
+    { collection: "friendRequests", id: directedPairId(caller, candidate) },
+    { collection: "friendRequests", id: directedPairId(candidate, caller) },
+    { collection: "userBlocks", id: directedPairId(caller, candidate) },
+    { collection: "userBlocks", id: directedPairId(candidate, caller) },
+  ];
+}
+
+/** A candidate is excluded iff any of its five deterministic docs exists. */
+function isCandidateExcludedByExistence(caller, candidate, existingDocKeys) {
+  const keys = existingDocKeys instanceof Set ? existingDocKeys : new Set(existingDocKeys || []);
+  return relationshipDocRefsForCandidate(caller, candidate).some((ref) =>
+    keys.has(`${ref.collection}/${ref.id}`)
+  );
+}
 
 function sharedClassCodes(mine, theirs) {
   const theirSet = new Set(
@@ -80,8 +117,11 @@ function buildFriendSuggestions({
 
 module.exports = {
   CANDIDATE_SCAN_LIMIT,
-  RELATIONSHIP_SCAN_LIMIT,
+  RELATIONSHIP_DOCS_PER_CANDIDATE,
   MAX_SUGGESTIONS,
+  MAX_SUGGESTION_READS,
   buildFriendSuggestions,
+  isCandidateExcludedByExistence,
+  relationshipDocRefsForCandidate,
   sharedClassCodes,
 };
