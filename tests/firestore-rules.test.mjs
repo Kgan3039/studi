@@ -1617,6 +1617,16 @@ describe('friend requests (friendRequests/{from}__{to})', () => {
     await assertFails(getDoc(doc(ctx(ALICE), 'friendRequests', `${ALICE}__`)));
   });
 
+  it('a self-pair request id fails closed, even for that user, missing or not', async () => {
+    // ALICE cannot get friendRequests/{ALICE__ALICE} — the two members must be
+    // distinct, so a self-pair id is denied (no legitimate self-request exists).
+    await assertFails(getDoc(doc(ctx(ALICE), 'friendRequests', `${ALICE}__${ALICE}`)));
+    // A distinct pair the user belongs to still behaves as intended (exists=false).
+    await assertSucceeds(getDoc(doc(ctx(ALICE), 'friendRequests', reqId(ALICE, BOB))));
+    // And an outsider is still denied a distinct missing pair.
+    await assertFails(getDoc(doc(ctx(MALLORY), 'friendRequests', reqId(ALICE, BOB))));
+  });
+
   it('requests are immutable (no update)', async () => {
     await seed(`friendRequests/${reqId(ALICE, BOB)}`, {
       fromUid: ALICE, toUid: BOB, createdAt: Timestamp.now(),
@@ -1748,6 +1758,16 @@ describe('friendships (friendships/{sortedA}__{sortedB})', () => {
 
   it('rejects a malformed friendship id on get', async () => {
     await assertFails(getDoc(doc(ctx(ALICE), 'friendships', 'no-separator')));
+  });
+
+  it('a self-pair friendship id fails closed, even for that user, missing or not', async () => {
+    // ALICE cannot get friendships/{ALICE__ALICE} — members must be distinct.
+    await assertFails(getDoc(doc(ctx(ALICE), 'friendships', `${ALICE}__${ALICE}`)));
+    // A distinct pair the user belongs to still behaves as intended (exists=false).
+    const ids = [ALICE, BOB].sort();
+    await assertSucceeds(getDoc(doc(ctx(ALICE), 'friendships', ids.join('__'))));
+    // And an outsider is still denied the distinct missing pair.
+    await assertFails(getDoc(doc(ctx(MALLORY), 'friendships', ids.join('__'))));
   });
 
   it('id must equal the sorted pair and hold exactly two distinct sorted uids', async () => {

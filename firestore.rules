@@ -625,11 +625,15 @@ service cloud.firestore {
     // doc are BOTH denied to an outsider, closing the existence-probing side
     // channel (a non-member can no longer tell "missing" from "denied").
     // Malformed ids are rejected: exactly two segments, each a safe non-empty
-    // uid component (so empty segments like `__x` and `>2`-part ids fail).
+    // uid component, and the two members must be DISTINCT (so a self-pair id
+    // like `uid__uid` fails closed — no real request/friendship pairs a user
+    // with themselves). So empty segments (`__x`), `>2`-part ids, and self-pairs
+    // are all denied.
     function isDeterministicPairMember(docId) {
       return docId.split('__').size() == 2
         && isSafeUidComponent(docId.split('__')[0])
         && isSafeUidComponent(docId.split('__')[1])
+        && docId.split('__')[0] != docId.split('__')[1]
         && request.auth.uid in docId.split('__');
     }
 
