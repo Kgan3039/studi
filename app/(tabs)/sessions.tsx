@@ -14,14 +14,15 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SessionCard } from '@/components/session-card';
-import { CourseChip } from '@/components/ui/CourseChip';
 import { Button } from '@/components/ui/Button';
+import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
+import { getStudyLocationDisplayName } from '@/lib/catalog';
 import {
     getLocations,
     getProfilesByIds,
@@ -32,7 +33,7 @@ import {
     SessionFullError,
     type StudySession,
 } from '@/lib/firestore';
-import { getStudyLocationDisplayName } from '@/lib/catalog';
+import { searchSessionsInList } from '@/lib/session-search';
 import type { User } from 'firebase/auth';
 
 type SessionListEntry = StudySession & {
@@ -77,17 +78,10 @@ export default function SessionsScreen() {
 
   // All filtering is client-side over the already-fetched list.
   const visibleSessions = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
     const todayString = new Date().toDateString();
+    const searchedSessions = searchSessionsInList(sessions, searchQuery);
 
-    return sessions.filter((session) => {
-      if (normalizedQuery) {
-        const searchText =
-          `${session.classId} ${session.title} ${session.locationName} ${session.hostName}`.toLowerCase();
-        if (!searchText.includes(normalizedQuery)) {
-          return false;
-        }
-      }
+    return searchedSessions.filter((session) => {
       if (
         selectedDept &&
         (session.classId.trim().split(/\s+/)[0]?.toUpperCase() ?? '') !== selectedDept
