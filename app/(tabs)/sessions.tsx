@@ -33,6 +33,7 @@ import {
     type StudySession,
 } from '@/lib/firestore';
 import { getStudyLocationDisplayName } from '@/lib/catalog';
+import { matchesSessionSearch } from '@/lib/session-search';
 import type { User } from 'firebase/auth';
 
 type SessionListEntry = StudySession & {
@@ -77,16 +78,16 @@ export default function SessionsScreen() {
 
   // All filtering is client-side over the already-fetched list.
   const visibleSessions = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
     const todayString = new Date().toDateString();
 
     return sessions.filter((session) => {
-      if (normalizedQuery) {
-        const searchText =
-          `${session.classId} ${session.title} ${session.locationName} ${session.hostName}`.toLowerCase();
-        if (!searchText.includes(normalizedQuery)) {
-          return false;
-        }
+      if (
+        !matchesSessionSearch(
+          [session.classId, session.title, session.locationName, session.hostName],
+          searchQuery
+        )
+      ) {
+        return false;
       }
       if (
         selectedDept &&
