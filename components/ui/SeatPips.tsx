@@ -61,7 +61,7 @@ export function SeatPips({ going, capacity, showLabel = true, style }: SeatPipsP
         </View>
       ) : null}
       {showLabel ? (
-        <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+        <Text style={[TypeScale.caption, styles.label, { color: palette.icon }]}>
           <Text style={[styles.count, { color: palette.text }]}>{countLabel}</Text>
           {suffix}
         </Text>
@@ -74,7 +74,13 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
+    // Long labels ("19 of 20 going · 1 spot left") wrap below the pips
+    // instead of overflowing into whatever sits beside the component.
+    flexWrap: 'wrap',
     gap: Space.sm,
+  },
+  label: {
+    flexShrink: 1,
   },
   pips: {
     flexDirection: 'row',

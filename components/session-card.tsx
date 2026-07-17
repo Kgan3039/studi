@@ -318,24 +318,30 @@ export function SessionCard({
             {metaLine}
           </Text>
           <View style={styles.heroFooter}>
-            {attendeeNames && attendeeNames.length > 0 ? (
-              <AvatarStack names={attendeeNames} totalCount={going} size="sm" />
-            ) : hostFirstName ? (
-              <View style={styles.hostRow}>
-                <Avatar name={hostName ?? 'Student'} size="sm" verified />
-                <Text style={[TypeScale.meta, { color: palette.icon }]} numberOfLines={1}>
-                  Hosted by{' '}
-                  <Text style={{ color: palette.text, fontFamily: FontFamily.bodySemiBold }}>
-                    {hostFirstName}
+            <View style={styles.footerMeta}>
+              {attendeeNames && attendeeNames.length > 0 ? (
+                <AvatarStack names={attendeeNames} totalCount={going} size="sm" />
+              ) : hostFirstName ? (
+                <View style={styles.hostRow}>
+                  <Avatar name={hostName ?? 'Student'} size="sm" verified />
+                  <Text
+                    style={[TypeScale.meta, styles.hostText, { color: palette.icon }]}
+                    numberOfLines={1}>
+                    Hosted by{' '}
+                    <Text style={{ color: palette.text, fontFamily: FontFamily.bodySemiBold }}>
+                      {hostFirstName}
+                    </Text>
                   </Text>
-                </Text>
-              </View>
-            ) : (
-              <SeatPips going={going} capacity={capacity} />
-            )}
-            {joinAction ?? (
-              <Text style={[TypeScale.meta, { color: palette.icon }]}>{goingLabel}</Text>
-            )}
+                </View>
+              ) : (
+                <SeatPips going={going} capacity={capacity} />
+              )}
+            </View>
+            <View style={styles.actionSlot}>
+              {joinAction ?? (
+                <Text style={[TypeScale.meta, { color: palette.icon }]}>{goingLabel}</Text>
+              )}
+            </View>
           </View>
         </View>
       </Pressable>
@@ -380,13 +386,15 @@ export function SessionCard({
           {hostFirstName ? (
             <View style={styles.hostRow}>
               <Avatar name={hostName ?? 'Student'} size="xs" />
-              <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+              <Text
+                style={[TypeScale.caption, styles.hostText, { color: palette.icon }]}
+                numberOfLines={1}>
                 Hosted by {hostFirstName}
               </Text>
             </View>
           ) : null}
         </View>
-        {joinAction}
+        {joinAction ? <View style={styles.actionSlot}>{joinAction}</View> : null}
       </View>
     </Pressable>
   );
@@ -458,13 +466,24 @@ const styles = StyleSheet.create({
     gap: Space.md,
   },
   peopleBlock: {
-    flexShrink: 1,
+    flex: 1,
+    minWidth: 0,
     gap: Space.xs + 1,
+  },
+  footerMeta: {
+    flex: 1,
+    minWidth: 0,
+  },
+  actionSlot: {
+    flexShrink: 0,
   },
   hostRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Space.sm,
+  },
+  hostText: {
+    flexShrink: 1,
   },
   listRow: {
     flexDirection: 'row',
@@ -495,6 +514,7 @@ const styles = StyleSheet.create({
   },
   listBody: {
     flex: 1,
+    minWidth: 0,
     gap: 2,
   },
   compactTitle: {
