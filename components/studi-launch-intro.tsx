@@ -10,15 +10,13 @@ type StudiLaunchIntroProps = {
 
 /**
  * A short brand moment that takes over from the native splash screen. The
- * pin settles into the same oval ring used by the website mark, then the
- * Studi wordmark appears.
+ * pin lands cleanly, then a faint oval ripple spreads from its visible tip
+ * before the Studi wordmark appears.
  */
 export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
   const pinOffset = useRef(new Animated.Value(-180)).current;
   const pinOpacity = useRef(new Animated.Value(0)).current;
   const pinScale = useRef(new Animated.Value(0.92)).current;
-  const ringOpacity = useRef(new Animated.Value(0)).current;
-  const ringScale = useRef(new Animated.Value(0.76)).current;
   const rippleOpacity = useRef(new Animated.Value(0)).current;
   const rippleScale = useRef(new Animated.Value(1.02)).current;
   const wordmarkOpacity = useRef(new Animated.Value(0)).current;
@@ -31,20 +29,6 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
         duration: 120,
         useNativeDriver: true,
       }),
-      Animated.parallel([
-        Animated.timing(ringOpacity, {
-          toValue: 0.54,
-          duration: 180,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(ringScale, {
-          toValue: 1,
-          duration: 240,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]),
       Animated.timing(pinOffset, {
         toValue: 8,
         duration: 500,
@@ -59,20 +43,6 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
           mass: 0.72,
           useNativeDriver: true,
         }),
-        Animated.sequence([
-          Animated.timing(ringScale, {
-            toValue: 0.84,
-            duration: 80,
-            useNativeDriver: true,
-          }),
-          Animated.spring(ringScale, {
-            toValue: 1,
-            damping: 10,
-            stiffness: 190,
-            mass: 0.55,
-            useNativeDriver: true,
-          }),
-        ]),
         Animated.sequence([
           Animated.timing(rippleOpacity, {
             toValue: 0.3,
@@ -128,7 +98,7 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
 
     const hapticTimeout = setTimeout(() => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-    }, 875);
+    }, 650);
 
     animation.start(({ finished }) => {
       if (finished) {
@@ -145,8 +115,6 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
     pinOffset,
     pinOpacity,
     pinScale,
-    ringOpacity,
-    ringScale,
     rippleOpacity,
     rippleScale,
     wordmarkOffset,
@@ -162,16 +130,7 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
         <View style={styles.mark}>
           <Animated.View
             style={[
-              styles.ring,
-              {
-                opacity: ringOpacity,
-                transform: [{ scale: ringScale }, { scaleY: 0.29 }],
-              },
-            ]}
-          />
-          <Animated.View
-            style={[
-              styles.ring,
+              styles.ripple,
               {
                 opacity: rippleOpacity,
                 transform: [{ scale: rippleScale }, { scaleY: 0.29 }],
@@ -233,7 +192,7 @@ const styles = StyleSheet.create({
     resizeMode: 'contain',
     width: 118,
   },
-  ring: {
+  ripple: {
     borderColor: Brand.accent,
     // Start as a real circle, then flatten it with scaleY. A wide view with a
     // large radius becomes a capsule; this keeps the website's true ellipse.
