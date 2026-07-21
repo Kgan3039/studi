@@ -10,14 +10,14 @@ type StudiLaunchIntroProps = {
 
 /**
  * A short brand moment that takes over from the native splash screen. The
- * pin lands in its ring first, then the Studi wordmark settles in beside it.
+ * pin lands on its target first, then the Studi wordmark settles in beside it.
  */
 export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
   const pinOffset = useRef(new Animated.Value(-180)).current;
   const pinOpacity = useRef(new Animated.Value(0)).current;
   const pinScale = useRef(new Animated.Value(0.92)).current;
-  const ringOpacity = useRef(new Animated.Value(0)).current;
-  const ringScale = useRef(new Animated.Value(0.6)).current;
+  const targetOpacity = useRef(new Animated.Value(0)).current;
+  const targetScale = useRef(new Animated.Value(0.7)).current;
   const glowOpacity = useRef(new Animated.Value(0)).current;
   const glowScale = useRef(new Animated.Value(0.7)).current;
   const firstRippleOpacity = useRef(new Animated.Value(0)).current;
@@ -35,27 +35,27 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
           duration: 120,
           useNativeDriver: true,
         }),
-        Animated.timing(ringOpacity, {
-          toValue: 0.58,
-          duration: 220,
+        Animated.timing(targetOpacity, {
+          toValue: 0.68,
+          duration: 180,
           easing: Easing.out(Easing.quad),
           useNativeDriver: true,
         }),
-        Animated.timing(ringScale, {
+        Animated.timing(targetScale, {
           toValue: 1,
-          duration: 360,
+          duration: 280,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
         Animated.timing(glowOpacity, {
-          toValue: 0.12,
-          duration: 300,
+          toValue: 0.055,
+          duration: 220,
           easing: Easing.out(Easing.quad),
           useNativeDriver: true,
         }),
         Animated.timing(glowScale, {
           toValue: 1,
-          duration: 360,
+          duration: 280,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
@@ -75,35 +75,35 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
           useNativeDriver: true,
         }),
         Animated.sequence([
-          Animated.timing(ringScale, {
-            toValue: 1.16,
-            duration: 100,
+          Animated.timing(targetScale, {
+            toValue: 0.9,
+            duration: 75,
             useNativeDriver: true,
           }),
-          Animated.spring(ringScale, {
+          Animated.spring(targetScale, {
             toValue: 1,
-            damping: 10,
-            stiffness: 180,
-            mass: 0.7,
+            damping: 11,
+            stiffness: 220,
+            mass: 0.6,
             useNativeDriver: true,
           }),
         ]),
         Animated.sequence([
           Animated.timing(glowOpacity, {
-            toValue: 0.25,
-            duration: 90,
+            toValue: 0.13,
+            duration: 80,
             useNativeDriver: true,
           }),
           Animated.parallel([
             Animated.timing(glowOpacity, {
               toValue: 0.08,
-              duration: 340,
+              duration: 180,
               easing: Easing.out(Easing.quad),
               useNativeDriver: true,
             }),
             Animated.timing(glowScale, {
               toValue: 1.38,
-              duration: 340,
+              duration: 280,
               easing: Easing.out(Easing.cubic),
               useNativeDriver: true,
             }),
@@ -111,42 +111,42 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
         ]),
         Animated.sequence([
           Animated.timing(firstRippleOpacity, {
-            toValue: 0.5,
-            duration: 60,
+            toValue: 0.34,
+            duration: 50,
             useNativeDriver: true,
           }),
           Animated.parallel([
             Animated.timing(firstRippleOpacity, {
               toValue: 0,
-              duration: 360,
+              duration: 300,
               easing: Easing.out(Easing.quad),
               useNativeDriver: true,
             }),
             Animated.timing(firstRippleScale, {
-              toValue: 1.75,
-              duration: 420,
+              toValue: 2.15,
+              duration: 350,
               easing: Easing.out(Easing.cubic),
               useNativeDriver: true,
             }),
           ]),
         ]),
         Animated.sequence([
-          Animated.delay(90),
+          Animated.delay(75),
           Animated.timing(secondRippleOpacity, {
-            toValue: 0.3,
-            duration: 60,
+            toValue: 0.2,
+            duration: 50,
             useNativeDriver: true,
           }),
           Animated.parallel([
             Animated.timing(secondRippleOpacity, {
               toValue: 0,
-              duration: 330,
+              duration: 280,
               easing: Easing.out(Easing.quad),
               useNativeDriver: true,
             }),
             Animated.timing(secondRippleScale, {
-              toValue: 1.55,
-              duration: 390,
+              toValue: 1.7,
+              duration: 330,
               easing: Easing.out(Easing.cubic),
               useNativeDriver: true,
             }),
@@ -207,8 +207,8 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
     pinOffset,
     pinOpacity,
     pinScale,
-    ringOpacity,
-    ringScale,
+    targetOpacity,
+    targetScale,
     secondRippleOpacity,
     secondRippleScale,
     wordmarkOffset,
@@ -220,48 +220,41 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
       accessibilityLabel="Studi is loading"
       accessibilityRole="progressbar"
       style={styles.screen}>
-      <View pointerEvents="none" style={styles.wash} />
       <View style={styles.brand}>
         <View style={styles.mark}>
           <Animated.View
             style={[
-              styles.glow,
+              styles.landingGlow,
               {
                 opacity: glowOpacity,
-                transform: [{ scaleX: glowScale }, { scaleY: Animated.multiply(glowScale, 0.42) }],
+                transform: [{ scale: glowScale }],
               },
             ]}
           />
           <Animated.View
             style={[
-              styles.ripple,
+              styles.landingRipple,
               {
                 opacity: firstRippleOpacity,
-                transform: [
-                  { scaleX: firstRippleScale },
-                  { scaleY: Animated.multiply(firstRippleScale, 0.46) },
-                ],
+                transform: [{ scale: firstRippleScale }],
               },
             ]}
           />
           <Animated.View
             style={[
-              styles.ripple,
+              styles.landingRipple,
               {
                 opacity: secondRippleOpacity,
-                transform: [
-                  { scaleX: secondRippleScale },
-                  { scaleY: Animated.multiply(secondRippleScale, 0.46) },
-                ],
+                transform: [{ scale: secondRippleScale }],
               },
             ]}
           />
           <Animated.View
             style={[
-              styles.ring,
+              styles.landingTarget,
               {
-                opacity: ringOpacity,
-                transform: [{ scaleX: ringScale }, { scaleY: Animated.multiply(ringScale, 0.46) }],
+                opacity: targetOpacity,
+                transform: [{ scale: targetScale }],
               },
             ]}
           />
@@ -304,15 +297,6 @@ const styles = StyleSheet.create({
     top: 0,
     zIndex: 100,
   },
-  wash: {
-    backgroundColor: Brand.accentSoft,
-    borderRadius: 9999,
-    height: 340,
-    opacity: 0.65,
-    position: 'absolute',
-    transform: [{ scaleX: 1.65 }],
-    width: 340,
-  },
   brand: {
     alignItems: 'center',
     gap: 18,
@@ -329,31 +313,32 @@ const styles = StyleSheet.create({
     resizeMode: 'contain',
     width: 118,
   },
-  ring: {
-    borderColor: Brand.accent,
-    borderRadius: 9999,
-    borderWidth: 2,
-    bottom: 2,
-    height: 18,
-    position: 'absolute',
-    width: 54,
-  },
-  glow: {
-    backgroundColor: Brand.accent,
-    borderRadius: 9999,
-    bottom: -5,
-    height: 36,
-    position: 'absolute',
-    width: 78,
-  },
-  ripple: {
+  landingTarget: {
+    backgroundColor: Brand.surface,
     borderColor: Brand.accent,
     borderRadius: 9999,
     borderWidth: 1.5,
-    bottom: 2,
-    height: 18,
+    bottom: -10,
+    height: 28,
     position: 'absolute',
-    width: 54,
+    width: 28,
+  },
+  landingGlow: {
+    backgroundColor: Brand.accent,
+    borderRadius: 9999,
+    bottom: -18,
+    height: 44,
+    position: 'absolute',
+    width: 44,
+  },
+  landingRipple: {
+    borderColor: Brand.accent,
+    borderRadius: 9999,
+    borderWidth: 1,
+    bottom: -10,
+    height: 28,
+    position: 'absolute',
+    width: 28,
   },
   wordmark: {
     color: Brand.text,
