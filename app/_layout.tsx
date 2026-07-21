@@ -13,6 +13,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import 'react-native-reanimated';
 
+import { StudiLaunchIntro } from '@/components/studi-launch-intro';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initAnalytics, track } from '@/lib/analytics';
 import { subscribeToAuthState, waitForAuthReady } from '@/lib/auth';
@@ -52,6 +53,7 @@ function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   const [authState, setAuthState] = useState<AuthGateState>('pending');
+  const [isLaunchIntroVisible, setIsLaunchIntroVisible] = useState(true);
   const [fontsLoaded, fontError] = useFonts({
     CormorantGaramond_500Medium,
     CormorantGaramond_500Medium_Italic,
@@ -188,6 +190,7 @@ function RootLayout() {
         </Stack.Protected>
       </Stack>
       <StatusBar style="auto" />
+      {isLaunchIntroVisible ? <StudiLaunchIntro onFinish={() => setIsLaunchIntroVisible(false)} /> : null}
     </ThemeProvider>
   );
 }
