@@ -130,7 +130,7 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
   ]);
 
   return (
-    <View
+    <Animated.View
       accessibilityLabel="Studi is loading"
       accessibilityRole="progressbar"
       style={[styles.screen, { opacity: screenOpacity }]}>
@@ -168,7 +168,7 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
           Studi
         </Animated.Text>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
