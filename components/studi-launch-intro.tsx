@@ -10,27 +10,24 @@ type StudiLaunchIntroProps = {
 
 /**
  * A short brand moment that takes over from the native splash screen. The
- * pin settles with a small impact burst, then the Studi wordmark appears.
+ * pin settles with a single ripple, then the Studi wordmark appears.
  */
 export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
   const pinOffset = useRef(new Animated.Value(-180)).current;
   const pinOpacity = useRef(new Animated.Value(0)).current;
   const pinScale = useRef(new Animated.Value(0.92)).current;
-  const impactOpacity = useRef(new Animated.Value(0)).current;
-  const impactScale = useRef(new Animated.Value(0.45)).current;
-  const impactSpread = useRef(new Animated.Value(0)).current;
+  const rippleOpacity = useRef(new Animated.Value(0)).current;
+  const rippleScale = useRef(new Animated.Value(0.38)).current;
   const wordmarkOpacity = useRef(new Animated.Value(0)).current;
   const wordmarkOffset = useRef(new Animated.Value(10)).current;
 
   useEffect(() => {
     const animation = Animated.sequence([
-      Animated.parallel([
-        Animated.timing(pinOpacity, {
-          toValue: 1,
-          duration: 120,
-          useNativeDriver: true,
-        }),
-      ]),
+      Animated.timing(pinOpacity, {
+        toValue: 1,
+        duration: 120,
+        useNativeDriver: true,
+      }),
       Animated.timing(pinOffset, {
         toValue: 8,
         duration: 500,
@@ -46,27 +43,21 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
           useNativeDriver: true,
         }),
         Animated.sequence([
-          Animated.timing(impactOpacity, {
-            toValue: 0.72,
-            duration: 50,
+          Animated.timing(rippleOpacity, {
+            toValue: 0.68,
+            duration: 70,
             useNativeDriver: true,
           }),
           Animated.parallel([
-            Animated.timing(impactOpacity, {
+            Animated.timing(rippleOpacity, {
               toValue: 0,
-              duration: 260,
+              duration: 430,
               easing: Easing.out(Easing.quad),
               useNativeDriver: true,
             }),
-            Animated.timing(impactScale, {
-              toValue: 1.18,
-              duration: 280,
-              easing: Easing.out(Easing.cubic),
-              useNativeDriver: true,
-            }),
-            Animated.timing(impactSpread, {
-              toValue: 1,
-              duration: 260,
+            Animated.timing(rippleScale, {
+              toValue: 2.35,
+              duration: 460,
               easing: Easing.out(Easing.cubic),
               useNativeDriver: true,
             }),
@@ -119,13 +110,12 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
       animation.stop();
     };
   }, [
-    impactOpacity,
-    impactScale,
-    impactSpread,
     onFinish,
     pinOffset,
     pinOpacity,
     pinScale,
+    rippleOpacity,
+    rippleScale,
     wordmarkOffset,
     wordmarkOpacity,
   ]);
@@ -139,30 +129,10 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
         <View style={styles.mark}>
           <Animated.View
             style={[
-              styles.impactLine,
+              styles.ripple,
               {
-                opacity: impactOpacity,
-                transform: [{ scaleX: impactScale }],
-              },
-            ]}
-          />
-          <Animated.View
-            style={[
-              styles.impactTick,
-              styles.impactTickLeft,
-              {
-                opacity: impactOpacity,
-                transform: [{ translateX: Animated.multiply(impactSpread, -8) }, { rotate: '-25deg' }],
-              },
-            ]}
-          />
-          <Animated.View
-            style={[
-              styles.impactTick,
-              styles.impactTickRight,
-              {
-                opacity: impactOpacity,
-                transform: [{ translateX: Animated.multiply(impactSpread, 8) }, { rotate: '25deg' }],
+                opacity: rippleOpacity,
+                transform: [{ scale: rippleScale }],
               },
             ]}
           />
@@ -221,27 +191,14 @@ const styles = StyleSheet.create({
     resizeMode: 'contain',
     width: 118,
   },
-  impactLine: {
-    backgroundColor: Brand.accent,
+  ripple: {
+    borderColor: Brand.accent,
     borderRadius: 9999,
-    bottom: -2,
-    height: 2,
+    borderWidth: 2,
+    bottom: -12,
+    height: 32,
     position: 'absolute',
-    width: 18,
-  },
-  impactTick: {
-    backgroundColor: Brand.accent,
-    borderRadius: 9999,
-    bottom: 2,
-    height: 2,
-    position: 'absolute',
-    width: 7,
-  },
-  impactTickLeft: {
-    left: 36,
-  },
-  impactTickRight: {
-    right: 36,
+    width: 32,
   },
   wordmark: {
     color: Brand.text,
