@@ -5,12 +5,13 @@ import {
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-google-fonts/inter';
 import { SpaceGrotesk_500Medium } from '@expo-google-fonts/space-grotesk';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sentry from '@sentry/react-native';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import 'react-native-reanimated';
 
 import { StudiLaunchIntro } from '@/components/studi-launch-intro';
@@ -20,6 +21,7 @@ import { subscribeToAuthState, waitForAuthReady } from '@/lib/auth';
 import { addNotificationResponseListener } from '@/lib/notifications';
 
 type AuthGateState = 'pending' | 'signed-out' | 'unverified' | 'signed-in';
+type LaunchIntroState = 'checking' | 'showing' | 'finished';
 
 // Routes reachable without a verified session. Everything else is gated below.
 // (auth) onboarding leaves classes/profile-setup are NOT public — they sit
@@ -31,6 +33,7 @@ const UNVERIFIED_LEAVES = new Set(['verify-email', 'privacy', 'support']);
 
 // DSN is a public client key; set EXPO_PUBLIC_SENTRY_DSN from Sentry project settings.
 const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
+const LAUNCH_INTRO_STORAGE_KEY = '@studi/launch-intro-seen';
 
 Sentry.init({
   dsn: SENTRY_DSN,
@@ -53,7 +56,7 @@ function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   const [authState, setAuthState] = useState<AuthGateState>('pending');
-  const [isLaunchIntroVisible, setIsLaunchIntroVisible] = useState(true);
+  const [launchIntroState, setLaunchIntroState] = useState<LaunchIntroState>('checking');
   const [fontsLoaded, fontError] = useFonts({
     CormorantGaramond_500Medium,
     CormorantGaramond_500Medium_Italic,
@@ -88,8 +91,35 @@ function RootLayout() {
     };
   }, []);
 
+  // The native splash still appears on every cold start. This lighter brand
+  // moment is reserved for a fresh install, before a person has seen Studi.
+  useEffect(() => {
+    let active = true;
+
+    AsyncStorage.getItem(LAUNCH_INTRO_STORAGE_KEY)
+      .then((hasSeenIntro) => {
+        if (active) {
+          setLaunchIntroState(hasSeenIntro ? 'finished' : 'showing');
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setLaunchIntroState('showing');
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const fontsReady = fontsLoaded || fontError;
-  const ready = fontsReady && authState !== 'pending';
+  const ready = fontsReady && authState !== 'pending' && launchIntroState !== 'checking';
+
+  const finishLaunchIntro = useCallback(() => {
+    setLaunchIntroState('finished');
+    AsyncStorage.setItem(LAUNCH_INTRO_STORAGE_KEY, 'true').catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     if (!ready || authState !== 'signed-in') {
@@ -190,7 +220,7 @@ function RootLayout() {
         </Stack.Protected>
       </Stack>
       <StatusBar style="auto" />
-      {isLaunchIntroVisible ? <StudiLaunchIntro onFinish={() => setIsLaunchIntroVisible(false)} /> : null}
+      {launchIntroState === 'showing' ? <StudiLaunchIntro onFinish={finishLaunchIntro} /> : null}
     </ThemeProvider>
   );
 }
