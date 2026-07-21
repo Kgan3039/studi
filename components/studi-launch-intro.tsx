@@ -20,7 +20,7 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
   const ringOpacity = useRef(new Animated.Value(0)).current;
   const ringScale = useRef(new Animated.Value(0.76)).current;
   const rippleOpacity = useRef(new Animated.Value(0)).current;
-  const rippleScale = useRef(new Animated.Value(0.82)).current;
+  const rippleScale = useRef(new Animated.Value(1.02)).current;
   const wordmarkOpacity = useRef(new Animated.Value(0)).current;
   const wordmarkOffset = useRef(new Animated.Value(10)).current;
 
@@ -75,20 +75,20 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
         ]),
         Animated.sequence([
           Animated.timing(rippleOpacity, {
-            toValue: 0.56,
+            toValue: 0.3,
             duration: 50,
             useNativeDriver: true,
           }),
           Animated.parallel([
             Animated.timing(rippleOpacity, {
               toValue: 0,
-              duration: 430,
+              duration: 520,
               easing: Easing.out(Easing.quad),
               useNativeDriver: true,
             }),
             Animated.timing(rippleScale, {
-              toValue: 2.3,
-              duration: 450,
+              toValue: 1.62,
+              duration: 540,
               easing: Easing.out(Easing.cubic),
               useNativeDriver: true,
             }),
@@ -239,7 +239,9 @@ const styles = StyleSheet.create({
     // large radius becomes a capsule; this keeps the website's true ellipse.
     borderRadius: 21,
     borderWidth: 2,
-    bottom: -21,
+    // The PNG has transparent space below its point. This places the oval's
+    // true center at the visible tip, while the pin itself stays on top.
+    bottom: -15,
     height: 42,
     position: 'absolute',
     width: 42,
