@@ -165,7 +165,7 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
               styles.ring,
               {
                 opacity: ringOpacity,
-                transform: [{ scale: ringScale }],
+                transform: [{ scale: ringScale }, { scaleY: 0.29 }],
               },
             ]}
           />
@@ -174,7 +174,7 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
               styles.ring,
               {
                 opacity: rippleOpacity,
-                transform: [{ scale: rippleScale }],
+                transform: [{ scale: rippleScale }, { scaleY: 0.29 }],
               },
             ]}
           />
@@ -235,10 +235,12 @@ const styles = StyleSheet.create({
   },
   ring: {
     borderColor: Brand.accent,
-    borderRadius: 9999,
+    // Start as a real circle, then flatten it with scaleY. A wide view with a
+    // large radius becomes a capsule; this keeps the website's true ellipse.
+    borderRadius: 21,
     borderWidth: 2,
-    bottom: -1,
-    height: 12,
+    bottom: -21,
+    height: 42,
     position: 'absolute',
     width: 42,
   },
