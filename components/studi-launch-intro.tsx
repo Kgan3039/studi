@@ -21,6 +21,7 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
   const rippleScale = useRef(new Animated.Value(1.02)).current;
   const wordmarkOpacity = useRef(new Animated.Value(0)).current;
   const wordmarkOffset = useRef(new Animated.Value(10)).current;
+  const screenOpacity = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     const animation = Animated.sequence([
@@ -93,7 +94,13 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
           useNativeDriver: true,
         }),
       ]),
-      Animated.delay(520),
+      Animated.delay(420),
+      Animated.timing(screenOpacity, {
+        toValue: 0,
+        duration: 280,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
     ]);
 
     const hapticTimeout = setTimeout(() => {
@@ -117,6 +124,7 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
     pinScale,
     rippleOpacity,
     rippleScale,
+    screenOpacity,
     wordmarkOffset,
     wordmarkOpacity,
   ]);
@@ -125,7 +133,7 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
     <View
       accessibilityLabel="Studi is loading"
       accessibilityRole="progressbar"
-      style={styles.screen}>
+      style={[styles.screen, { opacity: screenOpacity }]}>
       <View style={styles.brand}>
         <View style={styles.mark}>
           <Animated.View
