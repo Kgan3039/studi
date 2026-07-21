@@ -18,6 +18,12 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
   const pinScale = useRef(new Animated.Value(0.92)).current;
   const ringOpacity = useRef(new Animated.Value(0)).current;
   const ringScale = useRef(new Animated.Value(0.6)).current;
+  const glowOpacity = useRef(new Animated.Value(0)).current;
+  const glowScale = useRef(new Animated.Value(0.7)).current;
+  const firstRippleOpacity = useRef(new Animated.Value(0)).current;
+  const firstRippleScale = useRef(new Animated.Value(0.75)).current;
+  const secondRippleOpacity = useRef(new Animated.Value(0)).current;
+  const secondRippleScale = useRef(new Animated.Value(0.75)).current;
   const wordmarkOpacity = useRef(new Animated.Value(0)).current;
   const wordmarkOffset = useRef(new Animated.Value(10)).current;
 
@@ -41,6 +47,18 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
+        Animated.timing(glowOpacity, {
+          toValue: 0.12,
+          duration: 300,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(glowScale, {
+          toValue: 1,
+          duration: 360,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
       ]),
       Animated.timing(pinOffset, {
         toValue: 8,
@@ -58,8 +76,8 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
         }),
         Animated.sequence([
           Animated.timing(ringScale, {
-            toValue: 1.35,
-            duration: 120,
+            toValue: 1.16,
+            duration: 100,
             useNativeDriver: true,
           }),
           Animated.spring(ringScale, {
@@ -69,6 +87,70 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
             mass: 0.7,
             useNativeDriver: true,
           }),
+        ]),
+        Animated.sequence([
+          Animated.timing(glowOpacity, {
+            toValue: 0.25,
+            duration: 90,
+            useNativeDriver: true,
+          }),
+          Animated.parallel([
+            Animated.timing(glowOpacity, {
+              toValue: 0.08,
+              duration: 340,
+              easing: Easing.out(Easing.quad),
+              useNativeDriver: true,
+            }),
+            Animated.timing(glowScale, {
+              toValue: 1.38,
+              duration: 340,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+          ]),
+        ]),
+        Animated.sequence([
+          Animated.timing(firstRippleOpacity, {
+            toValue: 0.5,
+            duration: 60,
+            useNativeDriver: true,
+          }),
+          Animated.parallel([
+            Animated.timing(firstRippleOpacity, {
+              toValue: 0,
+              duration: 360,
+              easing: Easing.out(Easing.quad),
+              useNativeDriver: true,
+            }),
+            Animated.timing(firstRippleScale, {
+              toValue: 1.75,
+              duration: 420,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+          ]),
+        ]),
+        Animated.sequence([
+          Animated.delay(90),
+          Animated.timing(secondRippleOpacity, {
+            toValue: 0.3,
+            duration: 60,
+            useNativeDriver: true,
+          }),
+          Animated.parallel([
+            Animated.timing(secondRippleOpacity, {
+              toValue: 0,
+              duration: 330,
+              easing: Easing.out(Easing.quad),
+              useNativeDriver: true,
+            }),
+            Animated.timing(secondRippleScale, {
+              toValue: 1.55,
+              duration: 390,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+          ]),
         ]),
         Animated.sequence([
           Animated.timing(pinScale, {
@@ -99,12 +181,12 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
           useNativeDriver: true,
         }),
       ]),
-      Animated.delay(700),
+      Animated.delay(520),
     ]);
 
     const hapticTimeout = setTimeout(() => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-    }, 620);
+    }, 875);
 
     animation.start(({ finished }) => {
       if (finished) {
@@ -116,7 +198,22 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
       clearTimeout(hapticTimeout);
       animation.stop();
     };
-  }, [onFinish, pinOffset, pinOpacity, pinScale, ringOpacity, ringScale, wordmarkOffset, wordmarkOpacity]);
+  }, [
+    firstRippleOpacity,
+    firstRippleScale,
+    glowOpacity,
+    glowScale,
+    onFinish,
+    pinOffset,
+    pinOpacity,
+    pinScale,
+    ringOpacity,
+    ringScale,
+    secondRippleOpacity,
+    secondRippleScale,
+    wordmarkOffset,
+    wordmarkOpacity,
+  ]);
 
   return (
     <View
@@ -126,6 +223,39 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
       <View pointerEvents="none" style={styles.wash} />
       <View style={styles.brand}>
         <View style={styles.mark}>
+          <Animated.View
+            style={[
+              styles.glow,
+              {
+                opacity: glowOpacity,
+                transform: [{ scaleX: glowScale }, { scaleY: Animated.multiply(glowScale, 0.42) }],
+              },
+            ]}
+          />
+          <Animated.View
+            style={[
+              styles.ripple,
+              {
+                opacity: firstRippleOpacity,
+                transform: [
+                  { scaleX: firstRippleScale },
+                  { scaleY: Animated.multiply(firstRippleScale, 0.46) },
+                ],
+              },
+            ]}
+          />
+          <Animated.View
+            style={[
+              styles.ripple,
+              {
+                opacity: secondRippleOpacity,
+                transform: [
+                  { scaleX: secondRippleScale },
+                  { scaleY: Animated.multiply(secondRippleScale, 0.46) },
+                ],
+              },
+            ]}
+          />
           <Animated.View
             style={[
               styles.ring,
@@ -202,11 +332,28 @@ const styles = StyleSheet.create({
   ring: {
     borderColor: Brand.accent,
     borderRadius: 9999,
-    borderWidth: 3,
+    borderWidth: 2,
     bottom: 2,
-    height: 22,
+    height: 18,
     position: 'absolute',
-    width: 76,
+    width: 54,
+  },
+  glow: {
+    backgroundColor: Brand.accent,
+    borderRadius: 9999,
+    bottom: -5,
+    height: 36,
+    position: 'absolute',
+    width: 78,
+  },
+  ripple: {
+    borderColor: Brand.accent,
+    borderRadius: 9999,
+    borderWidth: 1.5,
+    bottom: 2,
+    height: 18,
+    position: 'absolute',
+    width: 54,
   },
   wordmark: {
     color: Brand.text,
