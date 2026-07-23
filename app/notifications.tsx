@@ -1,5 +1,5 @@
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -63,6 +63,7 @@ function isToday(value: Timestamp | null) {
 }
 
 type LoadState = 'loading' | 'ready' | 'error';
+type NotificationFilter = 'all' | 'unread';
 
 export default function NotificationsScreen() {
   const router = useRouter();
@@ -75,6 +76,7 @@ export default function NotificationsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<NotificationFilter>('all');
   const cursorRef = useRef<NotificationsPage['cursor']>(null);
   const shouldTrackView = useRef(false);
 
@@ -201,9 +203,14 @@ export default function NotificationsScreen() {
     }
   }
 
+  const visibleItems = useMemo(
+    () => (activeFilter === 'unread' ? items.filter((item) => !item.readAt) : items),
+    [activeFilter, items]
+  );
+
   const sections = [
-    { title: 'Today', data: items.filter((n) => isToday(n.createdAt)) },
-    { title: 'Earlier', data: items.filter((n) => !isToday(n.createdAt)) },
+    { title: 'Today', data: visibleItems.filter((item) => isToday(item.createdAt)) },
+    { title: 'Earlier', data: visibleItems.filter((item) => !isToday(item.createdAt)) },
   ].filter((section) => section.data.length > 0);
 
   return (
@@ -255,6 +262,37 @@ export default function NotificationsScreen() {
               {section.title}
             </Text>
           )}
+          ListHeaderComponent={
+            <View style={styles.filterRow}>
+              {(
+                [
+                  { id: 'all', label: 'All' },
+                  { id: 'unread', label: unreadCount > 0 ? `Unread ${unreadCount}` : 'Unread' },
+                ] as const
+              ).map((filter) => {
+                const selected = activeFilter === filter.id;
+                return (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    key={filter.id}
+                    onPress={() => setActiveFilter(filter.id)}
+                    style={({ pressed }) => [
+                      styles.filterChip,
+                      {
+                        backgroundColor: selected ? palette.tint : palette.surface,
+                        borderColor: selected ? palette.tint : palette.border,
+                        opacity: pressed ? 0.7 : 1,
+                      },
+                    ]}>
+                    <Text style={[TypeScale.label, { color: selected ? '#FFFFFF' : palette.icon }]}>
+                      {filter.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          }
           renderItem={({ item }) => {
             const unread = !item.readAt;
             const isReminder = item.type === 'session_reminder';
@@ -305,13 +343,23 @@ export default function NotificationsScreen() {
             );
           }}
           ListEmptyComponent={
-            <EmptyState
-              icon="dot"
-              headline="You're all caught up"
-              body="Session updates, reminders, and new messages will land here."
-              actionLabel="Browse sessions"
-              onAction={() => router.push('/sessions')}
-            />
+            activeFilter === 'unread' ? (
+              <EmptyState
+                icon="dot"
+                headline="You're all caught up"
+                body="There are no unread notifications right now."
+                actionLabel="View all"
+                onAction={() => setActiveFilter('all')}
+              />
+            ) : (
+              <EmptyState
+                icon="dot"
+                headline="You're all caught up"
+                body="Session updates, reminders, and new messages will land here."
+                actionLabel="Browse sessions"
+                onAction={() => router.push('/sessions')}
+              />
+            )
           }
           ListFooterComponent={
             isLoadingMore ? (
@@ -340,6 +388,18 @@ const styles = StyleSheet.create({
   sectionHeader: {
     marginBottom: Space.sm,
     marginTop: Space.md,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: Space.sm,
+    marginBottom: Space.xs,
+  },
+  filterChip: {
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    minHeight: 34,
+    paddingHorizontal: Space.md + 2,
+    justifyContent: 'center',
   },
   row: {
     alignItems: 'flex-start',
