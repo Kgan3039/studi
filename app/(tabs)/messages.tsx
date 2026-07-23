@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -111,6 +112,7 @@ export default function MessagesScreen() {
       {/* Utility screen — sans-only header (handoff §1.3). */}
       <View style={styles.header}>
         <Text style={[TypeScale.h2, { color: palette.text }]}>Messages</Text>
+        <NotificationCenterButton />
       </View>
 
       {conversations.length > 0 ? (
@@ -208,7 +210,10 @@ const styles = StyleSheet.create({
     paddingBottom: Space.xxl + 4,
   },
   header: {
+    alignItems: 'center',
+    flexDirection: 'row',
     gap: Space.xs,
+    justifyContent: 'space-between',
   },
   search: {
     borderRadius: Radius.xl,

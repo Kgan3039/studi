@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -24,7 +25,6 @@ import { UW_COURSE_CATALOG, UW_COURSE_COUNT, searchCourses } from '@/lib/catalog
 import {
     getLocationRatingAggregates,
     getLocations,
-    getUnreadNotificationCount,
     getUpcomingSessions,
     getUserProfile,
     invalidateProfileCache,
@@ -107,7 +107,6 @@ export default function ProfileScreen() {
     Map<string, LocationRatingAggregate>
   >(() => new Map());
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [nameStatus, setNameStatus] = useState('Save your name so Studi looks more personal.');
   const [classesStatus, setClassesStatus] = useState('Update the classes you take.');
   const courseResults = useMemo(() => {
@@ -204,30 +203,6 @@ export default function ProfileScreen() {
 
       return () => {};
     }, [loadProfile])
-  );
-
-  // Unread badge for the Notifications row — an aggregation count (no doc
-  // reads), refreshed whenever the tab regains focus. Failure just leaves
-  // the last known badge.
-  useFocusEffect(
-    useCallback(() => {
-      if (!currentUser) {
-        return;
-      }
-
-      let cancelled = false;
-      getUnreadNotificationCount(currentUser.uid)
-        .then((count) => {
-          if (!cancelled) {
-            setUnreadNotifications(count);
-          }
-        })
-        .catch(() => {});
-
-      return () => {
-        cancelled = true;
-      };
-    }, [currentUser])
   );
 
   async function handleRefresh() {
@@ -413,6 +388,9 @@ export default function ProfileScreen() {
         <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
       }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.xl }]}>
+      <View style={styles.profileTopAction}>
+        <NotificationCenterButton />
+      </View>
       {/* Avatar header + name / class-year block (board ProfileScreen ~1761). */}
       <View style={styles.identity}>
         <Avatar name={displayName || currentUser?.email || 'Student'} size="xl" verified />
@@ -747,40 +725,6 @@ export default function ProfileScreen() {
         <Text style={[TypeScale.heading, { color: palette.icon }]}>›</Text>
       </Pressable>
 
-      {/* Notifications Center entry — the activity history lives at
-          /notifications; the pill is the unread count. */}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={
-          unreadNotifications > 0
-            ? `Notifications, ${unreadNotifications} unread`
-            : 'Notifications'
-        }
-        onPress={() => router.push('/notifications' as Href)}
-        style={({ pressed }) => [
-          styles.settingsRow,
-          {
-            backgroundColor: palette.surface,
-            borderColor: palette.border,
-            opacity: pressed ? 0.7 : 1,
-          },
-        ]}>
-        <View style={styles.settingsRowBody}>
-          <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Notifications</Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            Session updates, reminders, and messages
-          </Text>
-        </View>
-        {unreadNotifications > 0 ? (
-          <View style={[styles.unreadBadge, { backgroundColor: palette.tint }]}>
-            <Text style={[TypeScale.label, styles.unreadBadgeText]}>
-              {unreadNotifications > 99 ? '99+' : unreadNotifications}
-            </Text>
-          </View>
-        ) : null}
-        <Text style={[TypeScale.heading, { color: palette.icon }]}>›</Text>
-      </Pressable>
-
       {/* Settings entry (design spec §3.12 footer Settings link). Privacy,
           support, sign out, and delete account live there now. */}
       <Pressable
@@ -820,6 +764,10 @@ const styles = StyleSheet.create({
     gap: Space.xl,
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
+  },
+  profileTopAction: {
+    alignSelf: 'flex-end',
+    marginBottom: -Space.md,
   },
   identity: {
     alignItems: 'center',

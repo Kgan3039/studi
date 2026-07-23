@@ -17,6 +17,7 @@ import { SessionCard } from '@/components/session-card';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -298,16 +299,19 @@ export default function SessionsScreen() {
           <Text style={[TypeScale.title, { color: palette.text }]}>Sessions</Text>
           <Text style={[TypeScale.meta, { color: palette.icon }]}>{status}</Text>
         </View>
-        <Pressable
-          accessibilityRole="button"
-          disabled={isLoading || isRefreshing}
-          onPress={handleRefresh}
-          style={({ pressed }) => ({ opacity: pressed || isLoading || isRefreshing ? 0.5 : 1 })}>
-          <View style={styles.refreshButtonContent}>
-            {isLoading || isRefreshing ? <ActivityIndicator size="small" color={palette.tint} /> : null}
-            <Text style={[TypeScale.label, { color: palette.tint }]}>Refresh</Text>
-          </View>
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isLoading || isRefreshing}
+            onPress={handleRefresh}
+            style={({ pressed }) => ({ opacity: pressed || isLoading || isRefreshing ? 0.5 : 1 })}>
+            <View style={styles.refreshButtonContent}>
+              {isLoading || isRefreshing ? <ActivityIndicator size="small" color={palette.tint} /> : null}
+              <Text style={[TypeScale.label, { color: palette.tint }]}>Refresh</Text>
+            </View>
+          </Pressable>
+          <NotificationCenterButton />
+        </View>
       </View>
 
       <TextInput
@@ -465,6 +469,11 @@ const styles = StyleSheet.create({
   headerText: {
     flexShrink: 1,
     gap: Space.xs,
+  },
+  headerActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
   },
   refreshButtonContent: {
     alignItems: 'center',
