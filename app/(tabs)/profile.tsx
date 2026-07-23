@@ -960,16 +960,4 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     gap: 2,
   },
-  unreadBadge: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    justifyContent: 'center',
-    marginLeft: 'auto',
-    minWidth: 24,
-    paddingHorizontal: Space.sm - 2,
-    paddingVertical: 2,
-  },
-  unreadBadgeText: {
-    color: '#FFFFFF',
-  },
 });
