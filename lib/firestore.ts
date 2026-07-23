@@ -637,18 +637,22 @@ export type NotificationsPage = {
 /** Newest-first page; never an unbounded read. */
 export async function getNotificationsPage(
   userId: string,
-  cursor?: QueryDocumentSnapshot | null
+  cursor?: QueryDocumentSnapshot | null,
+  pageSize = NOTIFICATIONS_PAGE_SIZE
 ): Promise<NotificationsPage> {
+  // The header preview needs only a few rows. Keep callers from turning the
+  // regular notification inbox into an accidental unbounded read.
+  const safePageSize = Math.min(Math.max(pageSize, 1), NOTIFICATIONS_PAGE_SIZE);
   const snapshot = await getDocs(
     query(
       notificationsCollection(userId),
       orderBy("createdAt", "desc"),
       ...(cursor ? [startAfter(cursor)] : []),
-      limit(NOTIFICATIONS_PAGE_SIZE)
+      limit(safePageSize)
     )
   );
 
-  const hasMore = snapshot.size === NOTIFICATIONS_PAGE_SIZE;
+  const hasMore = snapshot.size === safePageSize;
 
   return {
     notifications: snapshot.docs.map((d) => parseNotification(d.id, d.data())),

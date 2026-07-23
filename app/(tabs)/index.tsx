@@ -17,6 +17,7 @@ import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { Colors, Elevation, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
@@ -446,9 +447,15 @@ export default function HomeScreen() {
               {savedName.firstName ? `, ${savedName.firstName}` : ''}
             </Text>
           </View>
-          <Pressable accessibilityRole="button" onPress={() => router.push('/profile')}>
-            <Avatar name={profile?.displayName || currentUser?.email || 'S'} size="md" />
-          </Pressable>
+          <View style={styles.headerActions}>
+            <NotificationCenterButton />
+            <Pressable
+              accessibilityLabel="Open your profile"
+              accessibilityRole="button"
+              onPress={() => router.push('/profile')}>
+              <Avatar name={profile?.displayName || currentUser?.email || 'S'} size="md" />
+            </Pressable>
+          </View>
         </View>
 
         {hero ? (
@@ -556,6 +563,11 @@ const styles = StyleSheet.create({
   headerText: {
     flexShrink: 1,
     gap: Space.xs + 1,
+  },
+  headerActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
   },
   greeting: {
     fontFamily: FontFamily.serifItalic,
