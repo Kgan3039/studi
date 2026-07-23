@@ -752,7 +752,7 @@ const styles = StyleSheet.create({
     paddingBottom: Space.xxl + 8,
   },
   header: {
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
     flexDirection: 'row',
     justifyContent: 'space-between',
   },

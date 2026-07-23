@@ -12,7 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { formatSessionStart, formatSessionWindow } from '@/components/session-card';
-import { Avatar, AvatarStack } from '@/components/ui/Avatar';
+import { AvatarStack } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
@@ -447,15 +447,7 @@ export default function HomeScreen() {
               {savedName.firstName ? `, ${savedName.firstName}` : ''}
             </Text>
           </View>
-          <View style={styles.headerActions}>
-            <NotificationCenterButton />
-            <Pressable
-              accessibilityLabel="Open your profile"
-              accessibilityRole="button"
-              onPress={() => router.push('/profile')}>
-              <Avatar name={profile?.displayName || currentUser?.email || 'S'} size="md" />
-            </Pressable>
-          </View>
+          <NotificationCenterButton />
         </View>
 
         {hero ? (
@@ -555,19 +547,14 @@ const styles = StyleSheet.create({
     paddingBottom: Space.xxl + 4,
   },
   header: {
+    alignItems: 'flex-start',
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
     gap: Space.md,
   },
   headerText: {
     flexShrink: 1,
     gap: Space.xs + 1,
-  },
-  headerActions: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.sm,
   },
   greeting: {
     fontFamily: FontFamily.serifItalic,

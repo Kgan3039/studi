@@ -187,7 +187,11 @@ export function NotificationCenterButton() {
         ]}>
         <MaterialIcons color={palette.text} name="notifications-none" size={22} />
         {unreadCount > 0 ? (
-          <View style={[styles.countBadge, { backgroundColor: palette.tint }]}>
+          <View
+            style={[
+              styles.countBadge,
+              { backgroundColor: palette.tint, borderColor: palette.background },
+            ]}>
             <Text style={styles.countText}>{badgeLabel}</Text>
           </View>
         ) : null}

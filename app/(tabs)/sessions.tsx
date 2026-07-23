@@ -461,8 +461,8 @@ const styles = StyleSheet.create({
     paddingBottom: Space.xxl + 4,
   },
   header: {
+    alignItems: 'flex-start',
     flexDirection: 'row',
-    alignItems: 'flex-end',
     justifyContent: 'space-between',
     gap: Space.md,
   },

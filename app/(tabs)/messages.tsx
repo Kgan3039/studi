@@ -210,7 +210,7 @@ const styles = StyleSheet.create({
     paddingBottom: Space.xxl + 4,
   },
   header: {
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flexDirection: 'row',
     gap: Space.xs,
     justifyContent: 'space-between',

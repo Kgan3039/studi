@@ -387,7 +387,7 @@ export default function ProfileScreen() {
       refreshControl={
         <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
       }
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.xl }]}>
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <View style={styles.profileTopAction}>
         <NotificationCenterButton />
       </View>
