@@ -5,9 +5,9 @@
  * (Kgan3039/studi-your-campus-study-hub → docs/studi-expo-handoff.md §1).
  * This supersedes the earlier Sora/dog-ear Direction D tokens.
  *
- * Serif (Cormorant Garamond) is reserved for editorial hero moments:
- * onboarding, page heroes, session-detail title, profile name, empty-state
- * headlines. Utility surfaces (Messages, settings-like screens) are sans-only.
+ * Serif (Cormorant Garamond) is reserved for major screen titles and selected
+ * editorial headings. Body copy, controls, list content, metadata, tabs, form
+ * labels, and chat content remain sans-serif.
  */
 
 import { Platform } from 'react-native';
@@ -85,6 +85,15 @@ export const Colors = {
     badge: Brand.surfaceAlt,
     border: 'rgba(31, 27, 22, 0.08)',
     outline: 'rgba(31, 27, 22, 0.16)',
+    // Semantic aliases for shared UI. Existing keys remain supported while
+    // product screens migrate incrementally.
+    accent: accentLight,
+    primaryText: Brand.text,
+    secondaryText: Brand.textMuted,
+    mutedSurface: Brand.surfaceAlt,
+    destructive: accentLight,
+    success: Brand.success,
+    warning: Brand.warning,
   },
   // Hand-converted from the handoff's .dark oklch values (src/styles.css).
   dark: {
@@ -100,6 +109,13 @@ export const Colors = {
     badge: '#2E2620',
     border: 'rgba(255, 255, 255, 0.10)',
     outline: 'rgba(255, 255, 255, 0.14)',
+    accent: accentDark,
+    primaryText: '#F7F2E9',
+    secondaryText: '#A89F92',
+    mutedSurface: '#2E2620',
+    destructive: accentDark,
+    success: '#8FBF9F',
+    warning: '#D9A45C',
   },
 };
 
@@ -120,15 +136,19 @@ export const FontFamily = {
  * Type scale (handoff §1.3). Legacy keys (title, heading, label, caption)
  * remain for existing screens; handoff-named roles added alongside.
  */
+const screenTitleType = {
+  fontFamily: FontFamily.serifItalic,
+  fontSize: 28,
+  lineHeight: 34,
+} as const;
+
 export const TypeScale = {
   /** Onboarding hero, brand moments — serif italic. */
   display: { fontFamily: FontFamily.serifItalic, fontSize: 34, lineHeight: 40 },
-  /**
-   * Page hero / h1. The Lovable boards render screen titles (Sessions,
-   * Study spots, create-session questions) in serif *italic* — the board is
-   * the pixel source of truth (handoff §0), so this is italic, not upright.
-   */
-  title: { fontFamily: FontFamily.serifItalic, fontSize: 28, lineHeight: 34 },
+  /** Legacy top-level title alias; kept compatible during migration. */
+  title: screenTitleType,
+  /** Canonical top-level screen title. Every major route uses this role. */
+  screenTitle: screenTitleType,
   /** Section titles / h2 — sans. */
   h2: { fontFamily: FontFamily.bodySemiBold, fontSize: 22, lineHeight: 28 },
   /** Card titles / h3 — sans. (Legacy name "heading".) */
