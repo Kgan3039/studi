@@ -1,4 +1,4 @@
-import { Children, Fragment, type ReactNode } from 'react';
+import { Children, Fragment, isValidElement, type ReactNode } from 'react';
 import {
   StyleSheet,
   View,
@@ -60,14 +60,18 @@ export function GroupedList({
 
   return (
     <Card tone={tone} bordered={bordered} style={[styles.groupedList, style]}>
-      {rows.map((row, index) => (
-        <Fragment key={index}>
-          {index > 0 ? (
-            <View accessibilityElementsHidden style={[styles.separator, { backgroundColor: palette.border }]} />
-          ) : null}
-          {row}
-        </Fragment>
-      ))}
+      {rows.map((row, index) => {
+        const rowKey = isValidElement(row) && row.key != null ? row.key : `row-${index}`;
+
+        return (
+          <Fragment key={rowKey}>
+            {index > 0 ? (
+              <View accessibilityElementsHidden style={[styles.separator, { backgroundColor: palette.border }]} />
+            ) : null}
+            {row}
+          </Fragment>
+        );
+      })}
     </Card>
   );
 }

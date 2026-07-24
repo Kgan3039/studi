@@ -1,10 +1,10 @@
-import { type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   StyleSheet,
   Text,
   View,
+  type LayoutChangeEvent,
   type StyleProp,
-  type TextStyle,
   type ViewStyle,
 } from 'react-native';
 
@@ -18,7 +18,6 @@ export type ScreenHeaderProps = {
   action?: ReactNode;
   align?: 'start' | 'center';
   style?: StyleProp<ViewStyle>;
-  titleStyle?: StyleProp<TextStyle>;
 };
 
 /**
@@ -32,15 +31,30 @@ export function ScreenHeader({
   action,
   align = 'start',
   style,
-  titleStyle,
 }: ScreenHeaderProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const centered = align === 'center';
+  const [actionWidth, setActionWidth] = useState(0);
+
+  function handleActionLayout(event: LayoutChangeEvent) {
+    if (!centered) {
+      return;
+    }
+
+    setActionWidth(event.nativeEvent.layout.width);
+  }
 
   return (
     <View style={[styles.container, centered && styles.centered, style]}>
       <View style={[styles.headingRow, centered && styles.centeredHeadingRow]}>
+        {centered && action ? (
+          <View
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[styles.actionMirror, { width: actionWidth }]}
+          />
+        ) : null}
         <View style={[styles.copy, centered && styles.centeredCopy]}>
           <Text
             accessibilityRole="header"
@@ -49,7 +63,6 @@ export function ScreenHeader({
               styles.title,
               centered && styles.centeredText,
               { color: palette.primaryText },
-              titleStyle,
             ]}>
             {title}
           </Text>
@@ -77,7 +90,11 @@ export function ScreenHeader({
             </Text>
           ) : null}
         </View>
-        {action ? <View style={styles.action}>{action}</View> : null}
+        {action ? (
+          <View onLayout={centered ? handleActionLayout : undefined} style={styles.action}>
+            {action}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -100,6 +117,9 @@ const styles = StyleSheet.create({
   },
   centeredHeadingRow: {
     justifyContent: 'center',
+  },
+  actionMirror: {
+    flexShrink: 0,
   },
   copy: {
     flex: 1,

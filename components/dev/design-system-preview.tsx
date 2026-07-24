@@ -1,6 +1,6 @@
 import { Timestamp } from 'firebase/firestore';
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { SessionCard } from '@/components/session-card';
 import { BadgeChip } from '@/components/ui/BadgeChip';
@@ -9,6 +9,7 @@ import { Card, GroupedList, GroupedListRow } from '@/components/ui/Card';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { SearchBar } from '@/components/ui/SearchBar';
@@ -48,6 +49,44 @@ export function DesignSystemPreview() {
         title="Studi foundations"
         subtitle="Shared building blocks for consistent product screens."
         action={<Button label="Action" variant="ghost" size="sm" onPress={() => {}} />}
+      />
+
+      <Text style={[TypeScale.heading, { color: palette.text }]}>Header layouts</Text>
+      <ScreenHeader
+        align="center"
+        title="Centered title"
+        subtitle="No action"
+      />
+      <ScreenHeader
+        action={
+          <Pressable
+            accessibilityLabel="Close preview"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={() => {}}
+            style={styles.iconAction}>
+            <IconSymbol
+              color={palette.secondaryText}
+              name="xmark.circle.fill"
+              size={24}
+            />
+          </Pressable>
+        }
+        align="center"
+        title="Centered title"
+        subtitle="Icon action"
+      />
+      <ScreenHeader
+        action={<Button label="Done" variant="ghost" size="sm" onPress={() => {}} />}
+        align="center"
+        title="Centered title"
+        subtitle="Wider text action"
+      />
+      <ScreenHeader
+        action={<Button label="Done" variant="ghost" size="sm" onPress={() => {}} />}
+        align="center"
+        title="A deliberately long centered screen title that wraps safely"
+        subtitle="Increase the system text size to inspect Dynamic Type wrapping."
       />
 
       <Text style={[TypeScale.heading, { color: palette.text }]}>Search</Text>
@@ -91,10 +130,10 @@ export function DesignSystemPreview() {
         </Text>
       </Card>
       <GroupedList>
-        <GroupedListRow>
+        <GroupedListRow key="first-row">
           <Text style={[TypeScale.body, { color: palette.primaryText }]}>First grouped row</Text>
         </GroupedListRow>
-        <GroupedListRow>
+        <GroupedListRow key="second-row">
           <Text style={[TypeScale.body, { color: palette.primaryText }]}>Second grouped row</Text>
         </GroupedListRow>
       </GroupedList>
@@ -171,5 +210,11 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: Space.sm,
     alignItems: 'center',
+  },
+  iconAction: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 44,
   },
 });
