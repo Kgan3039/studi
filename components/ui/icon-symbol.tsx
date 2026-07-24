@@ -24,6 +24,8 @@ const MAPPING = {
   'chevron.right': 'chevron-right',
   eye: 'visibility',
   'eye.slash': 'visibility-off',
+  magnifyingglass: 'search',
+  'xmark.circle.fill': 'cancel',
 } as IconMapping;
 
 /**

@@ -1,23 +1,31 @@
 import { Timestamp } from 'firebase/firestore';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { SessionCard } from '@/components/session-card';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
+import { Card, GroupedList, GroupedListRow } from '@/components/ui/Card';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { LoadingState } from '@/components/ui/LoadingState';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { SearchBar } from '@/components/ui/SearchBar';
 import { SeatPips } from '@/components/ui/SeatPips';
 import { Colors, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 /**
- * Dev-only gallery of the Direction D primitives. Not a route — to view it,
+ * Dev-only gallery of the Studi primitives. Not a route — to view it,
  * temporarily render <DesignSystemPreview /> from any screen while
  * developing. Uses static local data only; no Firestore reads.
  */
 export function DesignSystemPreview() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
+  const [searchValue, setSearchValue] = useState('');
 
   const inFortyFiveMin = Timestamp.fromDate(new Date(Date.now() + 45 * 60 * 1000));
   const tonight = Timestamp.fromDate(new Date(Date.now() + 6 * 60 * 60 * 1000));
@@ -37,7 +45,57 @@ export function DesignSystemPreview() {
     <ScrollView
       style={{ backgroundColor: palette.background }}
       contentContainerStyle={styles.content}>
-      <Text style={[TypeScale.title, { color: palette.text }]}>Direction D</Text>
+      <ScreenHeader
+        title="Studi foundations"
+        subtitle="Shared building blocks for consistent product screens."
+        action={<Button label="Action" variant="ghost" size="sm" onPress={() => {}} />}
+      />
+
+      <Text style={[TypeScale.heading, { color: palette.text }]}>Header layouts</Text>
+      <ScreenHeader
+        align="center"
+        title="Centered title"
+        subtitle="No action"
+      />
+      <ScreenHeader
+        action={
+          <Pressable
+            accessibilityLabel="Close preview"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={() => {}}
+            style={styles.iconAction}>
+            <IconSymbol
+              color={palette.secondaryText}
+              name="xmark.circle.fill"
+              size={24}
+            />
+          </Pressable>
+        }
+        align="center"
+        title="Centered title"
+        subtitle="Icon action"
+      />
+      <ScreenHeader
+        action={<Button label="Done" variant="ghost" size="sm" onPress={() => {}} />}
+        align="center"
+        title="Centered title"
+        subtitle="Wider text action"
+      />
+      <ScreenHeader
+        action={<Button label="Done" variant="ghost" size="sm" onPress={() => {}} />}
+        align="center"
+        title="A deliberately long centered screen title that wraps safely"
+        subtitle="Increase the system text size to inspect Dynamic Type wrapping."
+      />
+
+      <Text style={[TypeScale.heading, { color: palette.text }]}>Search</Text>
+      <SearchBar
+        accessibilityLabel="Search design system examples"
+        onChangeText={setSearchValue}
+        placeholder="Search sessions"
+        value={searchValue}
+      />
 
       <Text style={[TypeScale.heading, { color: palette.text }]}>Buttons</Text>
       <View style={styles.row}>
@@ -63,6 +121,29 @@ export function DesignSystemPreview() {
       <SeatPips going={5} capacity={5} />
       <SeatPips going={4} />
       <SeatPips going={12} capacity={20} />
+
+      <Text style={[TypeScale.heading, { color: palette.text }]}>Surfaces</Text>
+      <Card>
+        <Text style={[TypeScale.bodyStrong, { color: palette.primaryText }]}>Standard card</Text>
+        <Text style={[TypeScale.body, { color: palette.secondaryText }]}>
+          A small composable surface with standard padding.
+        </Text>
+      </Card>
+      <GroupedList>
+        <GroupedListRow key="first-row">
+          <Text style={[TypeScale.body, { color: palette.primaryText }]}>First grouped row</Text>
+        </GroupedListRow>
+        <GroupedListRow key="second-row">
+          <Text style={[TypeScale.body, { color: palette.primaryText }]}>Second grouped row</Text>
+        </GroupedListRow>
+      </GroupedList>
+
+      <Text style={[TypeScale.heading, { color: palette.text }]}>Feedback states</Text>
+      <LoadingState title="Loading sessions" body="This usually takes a moment." />
+      <ErrorState
+        body="Check your connection and try again."
+        onRetry={() => {}}
+      />
 
       <Text style={[TypeScale.heading, { color: palette.text }]}>Session cards</Text>
       <SessionCard
@@ -129,5 +210,11 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: Space.sm,
     alignItems: 'center',
+  },
+  iconAction: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 44,
   },
 });
