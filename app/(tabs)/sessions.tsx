@@ -8,7 +8,6 @@ import {
     ScrollView,
     StyleSheet,
     Text,
-    TextInput,
     View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,8 +17,10 @@ import { CourseChip } from '@/components/ui/CourseChip';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { SearchBar } from '@/components/ui/SearchBar';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
-import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -294,39 +295,34 @@ export default function SessionsScreen() {
           <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
         }
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={[TypeScale.title, { color: palette.text }]}>Sessions</Text>
-          <Text style={[TypeScale.meta, { color: palette.icon }]}>{status}</Text>
-        </View>
-        <View style={styles.headerActions}>
-          <Pressable
-            accessibilityRole="button"
-            disabled={isLoading || isRefreshing}
-            onPress={handleRefresh}
-            style={({ pressed }) => ({ opacity: pressed || isLoading || isRefreshing ? 0.5 : 1 })}>
-            <View style={styles.refreshButtonContent}>
-              {isLoading || isRefreshing ? <ActivityIndicator size="small" color={palette.tint} /> : null}
-              <Text style={[TypeScale.label, { color: palette.tint }]}>Refresh</Text>
-            </View>
-          </Pressable>
-          <NotificationCenterButton />
-        </View>
-      </View>
+      <ScreenHeader
+        title="Sessions"
+        status={status}
+        action={
+          <View style={styles.headerActions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Refresh sessions"
+              disabled={isLoading || isRefreshing}
+              onPress={handleRefresh}
+              style={({ pressed }) => ({
+                opacity: pressed || isLoading || isRefreshing ? 0.5 : 1,
+              })}>
+              <View style={styles.refreshButtonContent}>
+                {isLoading || isRefreshing ? (
+                  <ActivityIndicator size="small" color={palette.tint} />
+                ) : null}
+                <Text style={[TypeScale.label, { color: palette.tint }]}>Refresh</Text>
+              </View>
+            </Pressable>
+            <NotificationCenterButton />
+          </View>
+        }
+      />
 
-      <TextInput
-        autoCapitalize="none"
+      <SearchBar
         onChangeText={setSearchQuery}
         placeholder="Search course, title, place, or person"
-        placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
-        style={[
-          styles.searchInput,
-          {
-            backgroundColor: palette.surfaceMuted,
-            borderColor: palette.border,
-            color: palette.text,
-          },
-        ]}
         value={searchQuery}
       />
 
@@ -434,12 +430,12 @@ export default function SessionsScreen() {
           headline={
             normalizedRequestedClass
               ? `No ${normalizedRequestedClass} sessions yet`
-              : 'Quiet on State St.'
+              : 'No sessions yet'
           }
           body={
             normalizedRequestedClass
-              ? `Host the first ${normalizedRequestedClass} session, or come back later to join one.`
-              : 'No sessions for your classes right now. Someone has to set the first table.'
+              ? `Create a ${normalizedRequestedClass} session for classmates to join.`
+              : 'Create a session and invite classmates to join.'
           }
           actionLabel={normalizedRequestedClass ? 'Host one' : 'Host a session'}
           onAction={() => handleCreateSession(normalizedRequestedClass || undefined)}
@@ -460,16 +456,6 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
   },
-  header: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: Space.md,
-  },
-  headerText: {
-    flexShrink: 1,
-    gap: Space.xs,
-  },
   headerActions: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -479,14 +465,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: Space.xs,
-  },
-  searchInput: {
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    fontFamily: FontFamily.body,
-    fontSize: 14,
-    minHeight: 44,
-    paddingHorizontal: Space.lg,
   },
   filterRow: {
     flexDirection: 'row',
@@ -501,8 +479,8 @@ const styles = StyleSheet.create({
   filterPill: {
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: Radius.pill,
-    minHeight: 34,
+    borderRadius: Radius.md,
+    minHeight: 36,
     paddingHorizontal: Space.md + 2,
     paddingVertical: Space.xs + 2,
   },

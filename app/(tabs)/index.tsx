@@ -20,7 +20,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
-import { Colors, Elevation, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -72,12 +72,6 @@ function isLive(session: StudySession, nowMs: number) {
   );
 }
 
-/**
- * Board HomeScreen hero (index.tsx ~218-241): eyebrow row with live dot and
- * going count, lg course chip, sans title, location line, avatar stack +
- * one primary action. No capacity/seats data exists, so the counter shows
- * the going count instead of "3 / 5 seats".
- */
 function HeroCard({
   session,
   kind,
@@ -120,7 +114,6 @@ function HeroCard({
       onPress={onPress}
       style={({ pressed }) => [
         styles.heroCard,
-        Elevation.e1,
         {
           backgroundColor: palette.surface,
           borderColor: palette.border,
@@ -134,13 +127,13 @@ function HeroCard({
           ) : null}
           <Text
             style={[
-              TypeScale.eyebrow,
+              TypeScale.meta,
               { color: kind === 'live' ? palette.tint : palette.icon },
             ]}>
             {eyebrow}
           </Text>
         </View>
-        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
+        <Text style={[TypeScale.meta, { color: palette.icon }]}>
           {goingLabel}
         </Text>
       </View>
@@ -159,13 +152,15 @@ function HeroCard({
   );
 }
 
-/**
- * Board upcoming row (index.tsx ~247-269): standalone card, course chip +
- * title + "location · time" left, big accent count + tiny uppercase label
- * right. The board's number is seats-left — now real via capacity;
- * pre-capacity sessions fall back to the going count.
- */
-function UpcomingRow({ session, onPress }: { session: TodaySession; onPress: () => void }) {
+function UpcomingRow({
+  session,
+  onPress,
+  isLast,
+}: {
+  session: TodaySession;
+  onPress: () => void;
+  isLast: boolean;
+}) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const isFull = session.status === 'full' || isSessionAtCapacity(session);
@@ -185,8 +180,8 @@ function UpcomingRow({ session, onPress }: { session: TodaySession; onPress: () 
       style={({ pressed }) => [
         styles.upcomingCard,
         {
-          backgroundColor: palette.surface,
           borderColor: palette.border,
+          borderBottomWidth: isLast ? 0 : 1,
           opacity: pressed ? 0.85 : isFull ? 0.6 : 1,
         },
       ]}>
@@ -438,7 +433,7 @@ export default function HomeScreen() {
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
         <View style={styles.header}>
           <View style={styles.headerText}>
-            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{dateEyebrow}</Text>
+            <Text style={[TypeScale.meta, { color: palette.icon }]}>{dateEyebrow}</Text>
             <Text
               style={[styles.greeting, { color: palette.text }]}
               numberOfLines={1}
@@ -473,11 +468,12 @@ export default function HomeScreen() {
               }
             />
             <View style={styles.upcomingList}>
-              {upcoming.map((session) => (
+              {upcoming.map((session, index) => (
                 <UpcomingRow
                   key={session.sessionId}
                   session={session}
                   onPress={() => router.push(`/session/${session.sessionId}`)}
+                  isLast={index === upcoming.length - 1}
                 />
               ))}
             </View>
@@ -488,7 +484,7 @@ export default function HomeScreen() {
           sessionsError ? (
             <EmptyState
               icon="seat"
-              headline="Something went off-script."
+              headline="Sessions could not load"
               body={sessionsError}
               actionLabel="Try again"
               onAction={loadSessions}
@@ -497,8 +493,8 @@ export default function HomeScreen() {
           ) : profileClasses.length === 0 ? (
             <EmptyState
               icon="calendar"
-              headline="Make it yours"
-              body="Add your classes to see sessions that match."
+              headline="Add your classes"
+              body="Studi uses your schedule to find relevant sessions."
               actionLabel="Add classes"
               onAction={() => router.push('/profile')}
               style={styles.emptyState}
@@ -506,9 +502,9 @@ export default function HomeScreen() {
           ) : (
             <EmptyState
               icon="seat"
-              headline="Quiet on State St."
-              body="No sessions for your classes right now. Someone has to set the first table."
-              actionLabel="Host one"
+              headline="No matching sessions yet"
+              body="Create a session and invite classmates to join."
+              actionLabel="Host a session"
               onAction={() => router.push('/create-session')}
               style={styles.emptyState}
             />
@@ -562,8 +558,8 @@ const styles = StyleSheet.create({
     lineHeight: 35,
   },
   heroCard: {
-    borderRadius: Radius.xxl - 4,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
     padding: Space.lg + 4,
   },
   heroTopRow: {
@@ -601,16 +597,15 @@ const styles = StyleSheet.create({
     gap: Space.md,
   },
   upcomingList: {
-    gap: Space.md - 2,
+    gap: 0,
   },
   upcomingCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: Space.md,
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    padding: Space.lg,
+    paddingHorizontal: 0,
+    paddingVertical: Space.lg,
   },
   upcomingBody: {
     flexShrink: 1,
