@@ -21,7 +21,6 @@ import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { IconButton } from '@/components/ui/IconButton';
 import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
-import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
@@ -47,6 +46,7 @@ import {
 import type { User } from 'firebase/auth';
 
 const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+const LOCATION_PREVIEW_COUNT = 4;
 
 function startOfMonth(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), 1);
@@ -123,31 +123,48 @@ const DURATION_PRESETS = [
  */
 const CAPACITY_PRESETS = [2, 4, 6, 8, 10, 12, 16, 20];
 
-function FormStepHeader({
+/**
+ * One block of the create form. A rule and generous space separate sections —
+ * this is a single scrollable form, not a wizard, so numbered steps would
+ * promise a progression that isn't there.
+ */
+function FormSection({
   icon,
-  step,
   title,
   caption,
+  children,
 }: {
   icon: IconSymbolName;
-  step: number;
   title: string;
   caption?: string;
+  children: React.ReactNode;
 }) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
 
   return (
-    <View style={styles.stepHeader}>
-      <View style={styles.stepIcon}>
-        <IconSymbol color={palette.tint} name={icon} size={21} />
+    <View style={[styles.formSection, { borderTopColor: palette.border }]}>
+      <View style={styles.formSectionHeader}>
+        <IconSymbol color={palette.tint} name={icon} size={19} />
+        <Text style={[TypeScale.sectionTitle, styles.formSectionTitle, { color: palette.text }]}>
+          {title}
+        </Text>
+        {caption ? (
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>{caption}</Text>
+        ) : null}
       </View>
-      <View style={styles.stepCopy}>
-        <Text style={[TypeScale.caption, { color: palette.icon }]}>Step {step} of 5</Text>
-        <Text style={[styles.question, { color: palette.text }]}>{title}</Text>
-        {caption ? <Text style={[TypeScale.caption, { color: palette.icon }]}>{caption}</Text> : null}
-      </View>
+      <View style={styles.formSectionBody}>{children}</View>
     </View>
+  );
+}
+
+/** Quiet label for a group inside a section (e.g. "Duration" under Time). */
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+
+  return (
+    <Text style={[TypeScale.label, styles.fieldLabel, { color: palette.icon }]}>{children}</Text>
   );
 }
 
@@ -176,6 +193,7 @@ export default function CreateSessionScreen() {
     new Map()
   );
   const [locationQuery, setLocationQuery] = useState('');
+  const [showAllLocations, setShowAllLocations] = useState(false);
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedLocationId, setSelectedLocationId] = useState('');
   const [sessionDate, setSessionDate] = useState('');
@@ -212,6 +230,33 @@ export default function CreateSessionScreen() {
         .includes(normalizedQuery)
     );
   }, [locationQuery, locations]);
+
+  // The full spot list is long enough to bury the rest of the form, so only a
+  // few show until the person searches or asks for the rest. A selected spot is
+  // always kept visible so it never scrolls out of its own list.
+  const visibleLocations = useMemo(() => {
+    if (showAllLocations || locationQuery.trim()) {
+      return filteredLocations;
+    }
+
+    const head = filteredLocations.slice(0, LOCATION_PREVIEW_COUNT);
+
+    if (
+      selectedLocationId &&
+      !head.some((location) => location.locationId === selectedLocationId)
+    ) {
+      const selected = filteredLocations.find(
+        (location) => location.locationId === selectedLocationId
+      );
+      if (selected) {
+        return [selected, ...head];
+      }
+    }
+
+    return head;
+  }, [filteredLocations, locationQuery, selectedLocationId, showAllLocations]);
+
+  const hiddenLocationCount = filteredLocations.length - visibleLocations.length;
   const calendarDays = useMemo(() => buildMonthGrid(selectedCalendarMonth), [selectedCalendarMonth]);
   const canGoToPreviousMonth = useMemo(() => {
     const currentMonthStart = startOfMonth(new Date());
@@ -441,16 +486,14 @@ export default function CreateSessionScreen() {
           styles.content,
           { paddingBottom: insets.bottom + 56, paddingTop: Space.lg },
         ]}>
-        <ScreenHeader
-          onRefresh={handleRefresh}
-          refreshing={isRefreshing}
-          title="New session"
-          status={status}
-        />
+        {/* The modal's native header already titles this screen; repeating it
+            here would stack two titles on open. */}
+        {status ? (
+          <Text style={[TypeScale.meta, styles.formStatus, { color: palette.icon }]}>{status}</Text>
+        ) : null}
 
         <ScreenTransition style={styles.transition}>
-        <View style={styles.section}>
-          <FormStepHeader icon="book.closed" step={1} title="Which class?" />
+        <FormSection icon="book.closed" title="Class">
           {isLoading ? (
             <ActivityIndicator color={palette.tint} />
           ) : classes.length > 0 ? (
@@ -459,6 +502,7 @@ export default function CreateSessionScreen() {
                 <CourseChip
                   key={classCode}
                   code={classCode}
+                  size="lg"
                   selected={selectedClass === classCode}
                   onPress={() => setSelectedClass(classCode)}
                 />
@@ -469,10 +513,9 @@ export default function CreateSessionScreen() {
               Add classes on your Profile tab first.
             </Text>
           )}
-        </View>
+        </FormSection>
 
-        <View style={styles.section}>
-          <FormStepHeader icon="mappin.and.ellipse" step={2} title="Where are you studying?" />
+        <FormSection icon="mappin.and.ellipse" title="Place">
           <SearchBar
             accessibilityLabel="Search study spots"
             onChangeText={setLocationQuery}
@@ -483,7 +526,7 @@ export default function CreateSessionScreen() {
             <ActivityIndicator color={palette.tint} />
           ) : filteredLocations.length > 0 ? (
             <View style={[styles.locationColumn, { borderTopColor: palette.border }]}>
-              {filteredLocations.map((location) => {
+              {visibleLocations.map((location) => {
                 const isSelected = selectedLocationId === location.locationId;
                 const aggregate = ratingAggregates.get(location.locationId);
 
@@ -496,12 +539,12 @@ export default function CreateSessionScreen() {
                     style={[
                       styles.locationOption,
                       {
-                        backgroundColor: isSelected
-                          ? colorScheme === 'dark'
-                            ? `${palette.tint}26`
-                            : Brand.accentSoft
-                          : palette.surface,
+                        backgroundColor: palette.surface,
                         borderBottomColor: palette.border,
+                        // A leading rule marks the choice without flooding the
+                        // row with colour.
+                        borderLeftColor: isSelected ? palette.tint : 'transparent',
+                        borderLeftWidth: 3,
                       },
                     ]}>
                     <View style={styles.locationText}>
@@ -519,6 +562,21 @@ export default function CreateSessionScreen() {
                   </Pressable>
                 );
               })}
+              {hiddenLocationCount > 0 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setShowAllLocations(true)}
+                  style={({ pressed }) => [
+                    styles.locationOption,
+                    styles.showAllRow,
+                    { backgroundColor: palette.surface, opacity: pressed ? 0.6 : 1 },
+                  ]}>
+                  <Text style={[TypeScale.label, { color: palette.tint }]}>
+                    Show {hiddenLocationCount} more{' '}
+                    {hiddenLocationCount === 1 ? 'spot' : 'spots'}
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : locationQuery.trim() ? (
             <Text style={[TypeScale.body, { color: palette.icon }]}>
@@ -529,11 +587,12 @@ export default function CreateSessionScreen() {
               No study spots are available right now.
             </Text>
           )}
-        </View>
+        </FormSection>
 
-        <View style={styles.section}>
-          <FormStepHeader icon="calendar" step={3} title="When does it start?" />
-
+        <FormSection
+          icon="calendar"
+          title="Date"
+          caption={sessionDate ? formatDateLabel(sessionDate) : 'Choose a day'}>
           <View
             style={[
               styles.calendar,
@@ -598,13 +657,17 @@ export default function CreateSessionScreen() {
               })}
             </View>
           </View>
+        </FormSection>
 
-          <Text style={[TypeScale.label, { color: palette.text }]}>
-            {sessionDate ? formatDateLabel(sessionDate) : 'Choose a date'}
-          </Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>{scheduleHint}</Text>
-
-          <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>Quick picks</Text>
+        <FormSection
+          icon="clock"
+          title="Time"
+          caption={
+            startTime && endTime
+              ? `${formatTimeLabel(startTime)}–${formatTimeLabel(endTime)}`
+              : 'Pick a start, then how long you’ll be there'
+          }>
+          <FieldLabel>Starts at</FieldLabel>
           <View style={styles.presetGrid}>
             {TIME_PRESETS.map((presetTime) => {
               const isSelected = startTime === presetTime;
@@ -648,7 +711,7 @@ export default function CreateSessionScreen() {
             })}
           </View>
 
-          <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>Duration</Text>
+          <FieldLabel>Duration</FieldLabel>
           <View style={styles.durationRow}>
             {DURATION_PRESETS.map((duration) => {
               const computedEnd = startTime
@@ -686,6 +749,7 @@ export default function CreateSessionScreen() {
             })}
           </View>
 
+          <FieldLabel>Or set exact times</FieldLabel>
           <View style={styles.timeDropdownRow}>
             <View style={styles.flexInput}>
               <TimeDropdown
@@ -709,20 +773,13 @@ export default function CreateSessionScreen() {
             </View>
           </View>
 
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            {startTime && endTime
-              ? `Selected time: ${formatTimeLabel(startTime)}–${formatTimeLabel(endTime)}`
-              : 'Choose a start and end time.'}
-          </Text>
-        </View>
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>{scheduleHint}</Text>
+        </FormSection>
 
-        <View style={styles.section}>
-          <FormStepHeader
-            caption="The count includes you."
-            icon="person.2.fill"
-            step={4}
-            title="How many seats?"
-          />
+        <FormSection
+          caption={`Joining closes at ${capacity}. Your seat is counted.`}
+          icon="person.2.fill"
+          title="Seats">
           <View style={styles.capacityGrid}>
             {CAPACITY_PRESETS.map((seatCount) => {
               const isSelected = capacity === seatCount;
@@ -751,18 +808,9 @@ export default function CreateSessionScreen() {
               );
             })}
           </View>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            {`Joining closes when ${capacity} seats are filled. Your seat is already counted.`}
-          </Text>
-        </View>
+        </FormSection>
 
-        <View style={styles.section}>
-          <FormStepHeader
-            caption="Optional"
-            icon="square.and.pencil"
-            step={5}
-            title="What are you working on?"
-          />
+        <FormSection caption="Optional" icon="square.and.pencil" title="Focus">
           <TextInput
             onChangeText={setFocusText}
             placeholder="Pset 4: pipelines and caching"
@@ -780,16 +828,15 @@ export default function CreateSessionScreen() {
           <Text style={[TypeScale.caption, { color: palette.icon }]}>
             Leave blank to use “{selectedClass || 'CLASS'} Study Session”.
           </Text>
-        </View>
+        </FormSection>
 
         {previewSession ? (
-          <View style={styles.section}>
-            <Text style={[styles.question, { color: palette.text }]}>Looks good?</Text>
-            <Text style={[TypeScale.caption, { color: palette.icon }]}>
-              This is what classmates will see.
-            </Text>
+          <FormSection
+            caption="What classmates will see"
+            icon="eye"
+            title="Preview">
             <SessionCard session={previewSession} locationName={selectedLocation?.name} />
-          </View>
+          </FormSection>
         ) : null}
 
         <Button
@@ -824,6 +871,33 @@ const styles = StyleSheet.create({
   },
   section: {
     gap: Space.md,
+  },
+  formSection: {
+    borderTopWidth: 1,
+    gap: Space.md,
+    paddingTop: Space.lg,
+  },
+  formSectionHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  formSectionTitle: {
+    marginRight: Space.xs,
+  },
+  formSectionBody: {
+    gap: Space.md,
+  },
+  formStatus: {
+    marginBottom: Space.xs,
+  },
+  showAllRow: {
+    borderBottomWidth: 0,
+    justifyContent: 'center',
+  },
+  fieldLabel: {
+    marginBottom: -Space.xs,
   },
   stepHeader: {
     alignItems: 'flex-start',
