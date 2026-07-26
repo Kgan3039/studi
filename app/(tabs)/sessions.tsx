@@ -2,6 +2,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
+    Pressable,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -16,12 +17,13 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Sheet } from '@/components/ui/Sheet';
 import { FilterChip } from '@/components/ui/FilterChip';
 import { IconButton } from '@/components/ui/IconButton';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
-import { Colors, Space, TypeScale } from '@/constants/theme';
+import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -346,11 +348,41 @@ export default function SessionsScreen() {
       />
 
       <ScreenTransition style={styles.transition}>
-      <SearchBar
-        onChangeText={setSearchQuery}
-        placeholder="Search course, title, place, or person"
-        value={searchQuery}
-      />
+      {/* Search and its filter control share a row: one balanced band instead
+          of a full-width field with a small button stranded beneath it. */}
+      <View style={styles.searchRow}>
+        <View style={styles.searchField}>
+          <SearchBar
+            onChangeText={setSearchQuery}
+            placeholder="Search sessions"
+            value={searchQuery}
+          />
+        </View>
+        <Pressable
+          accessibilityLabel={
+            activeFilterCount > 0 ? `Filters, ${activeFilterCount} applied` : 'Filters'
+          }
+          accessibilityRole="button"
+          onPress={() => setFiltersOpen(true)}
+          style={({ pressed }) => [
+            styles.filterButton,
+            {
+              backgroundColor: activeFilterCount > 0 ? palette.tint : 'transparent',
+              borderColor: activeFilterCount > 0 ? palette.tint : palette.outline,
+              opacity: pressed ? 0.7 : 1,
+              transform: [{ scale: pressed ? 0.96 : 1 }],
+            },
+          ]}>
+          <IconSymbol
+            color={activeFilterCount > 0 ? '#FFFFFF' : palette.icon}
+            name="slider.horizontal.3"
+            size={20}
+          />
+          {activeFilterCount > 0 ? (
+            <Text style={[TypeScale.label, styles.filterCount]}>{activeFilterCount}</Text>
+          ) : null}
+        </Pressable>
+      </View>
 
       {scopeOptions.length > 0 ? (
         <SegmentedControl
@@ -365,12 +397,6 @@ export default function SessionsScreen() {
           using this, so filters live behind one button and the row only shows
           what is currently applied. */}
       <View style={styles.filterRow}>
-        <FilterChip
-          icon="slider.horizontal.3"
-          label={activeFilterCount > 0 ? `Filters · ${activeFilterCount}` : 'Filters'}
-          onPress={() => setFiltersOpen(true)}
-          selected={activeFilterCount > 0}
-        />
         {todayOnly ? (
           <FilterChip icon="xmark" label="Today" onPress={() => setTodayOnly(false)} />
         ) : null}
@@ -516,6 +542,27 @@ const styles = StyleSheet.create({
   },
   transition: {
     gap: Space.lg,
+  },
+  searchRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  searchField: {
+    flex: 1,
+  },
+  filterButton: {
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flexDirection: 'row',
+    gap: Space.xs,
+    height: 48,
+    justifyContent: 'center',
+    paddingHorizontal: Space.md,
+  },
+  filterCount: {
+    color: '#FFFFFF',
   },
   filterRow: {
     flexDirection: 'row',

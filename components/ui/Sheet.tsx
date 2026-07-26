@@ -21,8 +21,14 @@ export type SheetProps = {
   title: string;
   /** Short line under the title. Keep it concrete — what this sheet edits. */
   subtitle?: string;
+  /** Optional control beside the close button, e.g. "Mark all read". */
+  headerAction?: ReactNode;
   /** Pinned under the scroll area, e.g. a save button. */
   footer?: ReactNode;
+  /** Fires once the panel has finished dismissing (iOS Modal onDismiss). */
+  onDismissed?: () => void;
+  /** Renders children directly instead of inside a ScrollView. */
+  scroll?: boolean;
   children: ReactNode;
 };
 
@@ -32,7 +38,17 @@ export type SheetProps = {
  * an editor never looks like navigating somewhere new. Dismissal is always
  * available three ways: the close button, the scrim, and the back gesture.
  */
-export function Sheet({ visible, onClose, title, subtitle, footer, children }: SheetProps) {
+export function Sheet({
+  visible,
+  onClose,
+  title,
+  subtitle,
+  headerAction,
+  footer,
+  onDismissed,
+  scroll = true,
+  children,
+}: SheetProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
@@ -40,6 +56,7 @@ export function Sheet({ visible, onClose, title, subtitle, footer, children }: S
   return (
     <Modal
       animationType="fade"
+      onDismiss={onDismissed}
       onRequestClose={onClose}
       statusBarTranslucent
       transparent
@@ -78,6 +95,7 @@ export function Sheet({ visible, onClose, title, subtitle, footer, children }: S
                 </Text>
               ) : null}
             </View>
+            {headerAction}
             <Pressable
               accessibilityLabel="Close"
               accessibilityRole="button"
@@ -95,12 +113,16 @@ export function Sheet({ visible, onClose, title, subtitle, footer, children }: S
             </Pressable>
           </View>
 
-          <ScrollView
-            contentContainerStyle={styles.body}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}>
-            {children}
-          </ScrollView>
+          {scroll ? (
+            <ScrollView
+              contentContainerStyle={styles.body}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}>
+              {children}
+            </ScrollView>
+          ) : (
+            children
+          )}
 
           {footer ? (
             <View
@@ -133,7 +155,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   header: {
-    alignItems: 'flex-start',
+    alignItems: 'center',
     borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.md,

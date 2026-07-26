@@ -533,34 +533,40 @@ export default function HomeScreen() {
           onRefresh={handleRefresh}
           refreshing={isRefreshing}
           showNotifications
-          subtitle={`${timeOfDayGreeting()} · ${dateEyebrow}`}
+          status={dateEyebrow}
+          subtitle={timeOfDayGreeting()}
           title={savedName.firstName ? `Hi, ${savedName.firstName}` : 'Home'}
           titleStyle={styles.greetingName}
         />
 
         <ScreenTransition style={styles.transition}>
-        {hero ? (
-          <HeroCard
-            session={hero}
-            kind={heroKind}
-            attendeeNames={heroAttendeeNames}
-            joined={heroJoined}
-            joining={joiningHero}
-            onJoin={handleJoinHero}
-            onPress={() => router.push(`/session/${hero.sessionId}`)}
-          />
-        ) : null}
-
-        {upcoming.length > 0 ? (
-          <View style={styles.section}>
-            <SectionHeader
-              eyebrow="Upcoming today"
-              action={
+        {/* Every block on this screen carries a heading so the page reads as a
+            sequence of answers, not a stack of loose parts. */}
+        <View style={styles.section}>
+          <SectionHeader
+            eyebrow={hero ? 'Your next session' : 'Up next'}
+            action={
+              hero || upcoming.length > 0 ? (
                 <Pressable accessibilityRole="button" onPress={() => router.push('/sessions')}>
                   <Text style={[TypeScale.label, { color: palette.tint }]}>See all</Text>
                 </Pressable>
-              }
+              ) : null
+            }
+          />
+
+          {hero ? (
+            <HeroCard
+              session={hero}
+              kind={heroKind}
+              attendeeNames={heroAttendeeNames}
+              joined={heroJoined}
+              joining={joiningHero}
+              onJoin={handleJoinHero}
+              onPress={() => router.push(`/session/${hero.sessionId}`)}
             />
+          ) : null}
+
+          {upcoming.length > 0 ? (
             <View style={styles.upcomingList}>
               {upcoming.map((session, index) => (
                 <UpcomingRow
@@ -571,8 +577,7 @@ export default function HomeScreen() {
                 />
               ))}
             </View>
-          </View>
-        ) : null}
+          ) : null}
 
         {showEmpty && sessionsError ? (
           <EmptyState
@@ -602,15 +607,16 @@ export default function HomeScreen() {
         {showEmpty && !sessionsError && profileClasses.length > 0 ? (
           <View style={styles.quietEmpty}>
             <Text style={[TypeScale.body, { color: palette.icon }]}>
-              No sessions for your classes yet.
+              Nothing scheduled yet.
             </Text>
             <Button
               label="Host a session"
+              fullWidth
               onPress={() => router.push('/create-session')}
-              style={styles.quietEmptyAction}
             />
           </View>
         ) : null}
+        </View>
 
         {profileClasses.length > 0 ? (
           <View style={styles.section}>
@@ -771,9 +777,6 @@ const styles = StyleSheet.create({
   },
   quietEmpty: {
     gap: Space.md,
-  },
-  quietEmptyAction: {
-    alignSelf: 'flex-start',
   },
   classList: {
     borderTopWidth: 1,

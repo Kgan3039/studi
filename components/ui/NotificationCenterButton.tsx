@@ -3,17 +3,16 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { type ComponentProps, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Timestamp } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 
-import { Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
+import { Sheet } from '@/components/ui/Sheet';
+import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -62,7 +61,6 @@ export function NotificationCenterButton() {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
-  const insets = useSafeAreaInsets();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
@@ -225,58 +223,25 @@ export function NotificationCenterButton() {
         ) : null}
       </Pressable>
 
-      <Modal
-        animationType="fade"
-        onDismiss={finishPendingNavigation}
-        onRequestClose={() => setIsOpen(false)}
-        statusBarTranslucent
-        transparent
-        visible={isOpen}>
-        <View style={[styles.overlay, { backgroundColor: 'rgba(18, 24, 21, 0.14)' }]}>
-          <Pressable
-            accessibilityLabel="Close notifications"
-            accessibilityRole="button"
-            onPress={() => setIsOpen(false)}
-            style={StyleSheet.absoluteFill}
-          />
-          <View
-            accessibilityViewIsModal
-            style={[
-              styles.previewCard,
-              Elevation.e3,
-              {
-                backgroundColor: palette.background,
-                borderColor: palette.border,
-                top: insets.top + Space.md,
-              },
-            ]}>
-            <View style={styles.previewHeader}>
-              <View style={styles.previewHeaderCopy}>
-                <Text style={[TypeScale.h2, { color: palette.text }]}>Notifications</Text>
-                <Text style={[TypeScale.caption, { color: palette.icon }]}>Recent activity</Text>
-              </View>
-              {unreadCount > 0 ? (
-                <Pressable
-                  accessibilityLabel="Mark all notifications read"
-                  accessibilityRole="button"
-                  onPress={handleMarkAllRead}
-                  style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
-                  <Text style={[TypeScale.label, { color: palette.tint }]}>Mark all read</Text>
-                </Pressable>
-              ) : null}
-              <Pressable
-                accessibilityLabel="Close notifications"
-                accessibilityRole="button"
-                hitSlop={8}
-                onPress={() => setIsOpen(false)}
-                style={({ pressed }) => [
-                  styles.closeButton,
-                  { backgroundColor: palette.surfaceMuted, opacity: pressed ? 0.6 : 1 },
-                ]}>
-                <MaterialIcons color={palette.text} name="close" size={17} />
-              </Pressable>
-            </View>
-
+      <Sheet
+        visible={isOpen}
+        onClose={() => setIsOpen(false)}
+        onDismissed={finishPendingNavigation}
+        title="Notifications"
+        subtitle="Recent activity"
+        headerAction={
+          unreadCount > 0 ? (
+            <Pressable
+              accessibilityLabel="Mark all notifications read"
+              accessibilityRole="button"
+              onPress={handleMarkAllRead}
+              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+              <Text style={[TypeScale.label, { color: palette.tint }]}>Mark all read</Text>
+            </Pressable>
+          ) : null
+        }
+        scroll={false}>
+        <View style={styles.previewBodyWrap}>
             {isLoadingPreview ? (
               <View style={styles.previewLoading}>
                 <ActivityIndicator color={palette.tint} />
@@ -343,9 +308,8 @@ export function NotificationCenterButton() {
               <Text style={[TypeScale.label, { color: palette.text }]}>View all notifications</Text>
               <MaterialIcons color={palette.tint} name="arrow-forward" size={18} />
             </Pressable>
-          </View>
         </View>
-      </Modal>
+      </Sheet>
     </>
   );
 }
@@ -380,33 +344,8 @@ const styles = StyleSheet.create({
     fontSize: 9,
     lineHeight: 11,
   },
-  overlay: {
-    flex: 1,
-  },
-  previewCard: {
-    borderBottomWidth: 1,
-    left: 0,
-    padding: Space.lg,
-    position: 'absolute',
-    right: 0,
-  },
-  previewHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.md,
-    justifyContent: 'space-between',
-    marginBottom: Space.md,
-  },
-  previewHeaderCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  closeButton: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    height: 32,
-    justifyContent: 'center',
-    width: 32,
+  previewBodyWrap: {
+    paddingHorizontal: Space.lg,
   },
   previewLoading: {
     alignItems: 'center',
@@ -414,7 +353,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   previewList: {
-    borderTopWidth: 1,
+    // The sheet header already draws a rule here; a second one reads as a seam.
+    borderTopWidth: 0,
   },
   previewRow: {
     alignItems: 'center',
