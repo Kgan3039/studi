@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
@@ -118,7 +119,7 @@ export default function MessagesScreen() {
         <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
       }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      <ScreenHeader title="Messages" />
+      <ScreenHeader action={<NotificationCenterButton />} title="Messages" />
 
       {conversations.length > 0 ? (
         <SearchBar

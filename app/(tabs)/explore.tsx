@@ -19,6 +19,7 @@ import { CampusMap } from '@/components/campus-map';
 import type { MapSessionTiming } from '@/components/campus-map.types';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { Brand, Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
 import { getAtmosphereFiltersForLocationTags } from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -457,7 +458,10 @@ export default function StudyLocationsScreen() {
           <Text style={[TypeScale.title, { color: palette.text }]}>Study spots</Text>
           <Text style={[TypeScale.meta, { color: palette.icon }]}>{loadMessage}</Text>
         </View>
-        {isLoading ? <ActivityIndicator color={palette.tint} size="small" /> : null}
+        <View style={styles.headerActions}>
+          {isLoading ? <ActivityIndicator color={palette.tint} size="small" /> : null}
+          <NotificationCenterButton />
+        </View>
       </View>
 
       <View
@@ -748,12 +752,17 @@ const styles = StyleSheet.create({
     paddingBottom: Space.xxl + 8,
   },
   header: {
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
   headerCopy: {
     gap: 2,
+  },
+  headerActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
   },
   searchBar: {
     alignItems: 'center',

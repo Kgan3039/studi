@@ -12,11 +12,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { formatSessionStart, formatSessionWindow } from '@/components/session-card';
-import { Avatar, AvatarStack } from '@/components/ui/Avatar';
+import { AvatarStack } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { Colors, Elevation, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
@@ -446,9 +447,7 @@ export default function HomeScreen() {
               {savedName.firstName ? `, ${savedName.firstName}` : ''}
             </Text>
           </View>
-          <Pressable accessibilityRole="button" onPress={() => router.push('/profile')}>
-            <Avatar name={profile?.displayName || currentUser?.email || 'S'} size="md" />
-          </Pressable>
+          <NotificationCenterButton />
         </View>
 
         {hero ? (
@@ -548,8 +547,8 @@ const styles = StyleSheet.create({
     paddingBottom: Space.xxl + 4,
   },
   header: {
+    alignItems: 'flex-start',
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
     gap: Space.md,
   },
