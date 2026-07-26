@@ -24,6 +24,7 @@ import { subscribeToAuthState } from '@/lib/auth';
 import {
   blockUser,
   getBlockedUserIds,
+  getConversationPartner,
   isBlockedByUser,
   sendDirectMessage,
   subscribeToConversationMessages,
@@ -92,6 +93,42 @@ export default function ConversationScreen() {
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [isBlockedByOther, setIsBlockedByOther] = useState(false);
+  // Opening from a notification or push link carries no name/id params, so the
+  // thread resolves its own partner rather than falling back to "Student".
+  const [resolvedPartner, setResolvedPartner] = useState<{
+    userId: string;
+    name: string;
+  } | null>(null);
+
+  const partnerName = otherUserName?.trim() || resolvedPartner?.name || '';
+  const partnerId = otherUserId || resolvedPartner?.userId || '';
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!currentUser || !conversationId || (otherUserName?.trim() && otherUserId)) {
+      return;
+    }
+
+    getConversationPartner(conversationId, currentUser.uid)
+      .then((partner) => {
+        if (cancelled || !partner) {
+          return;
+        }
+        setResolvedPartner({
+          userId: partner.userId,
+          name: partner.profile?.displayName?.trim() || '',
+        });
+      })
+      .catch(() => {
+        // Keep the generic label rather than blocking the thread on a failed
+        // profile read — messages still load and send.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, currentUser, otherUserId, otherUserName]);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -114,13 +151,13 @@ export default function ConversationScreen() {
       }
       setStatus(
         loadedMessages.length > 0
-          ? `Chatting with ${otherUserName || 'Student'}.`
-          : `Start the conversation with ${otherUserName || 'Student'}.`
+          ? `Chatting with ${partnerName || 'Student'}.`
+          : `Start the conversation with ${partnerName || 'Student'}.`
       );
     });
 
     return unsubscribe;
-  }, [conversationId, currentUser, otherUserName, refreshNonce]);
+  }, [conversationId, currentUser, partnerName, refreshNonce]);
 
   useEffect(() => {
     async function loadBlocks() {
@@ -134,14 +171,14 @@ export default function ConversationScreen() {
 
       const [loadedBlockedUserIds, blockedByOther] = await Promise.all([
         getBlockedUserIds(currentUser.uid),
-        otherUserId ? isBlockedByUser(currentUser.uid, otherUserId) : false,
+        partnerId ? isBlockedByUser(currentUser.uid, partnerId) : false,
       ]);
       setBlockedUserIds(loadedBlockedUserIds);
       setIsBlockedByOther(blockedByOther);
     }
 
     loadBlocks();
-  }, [currentUser, otherUserId, refreshNonce]);
+  }, [currentUser, partnerId, refreshNonce]);
 
   async function handleSendMessage() {
     if (!currentUser || !conversationId) {
@@ -162,14 +199,14 @@ export default function ConversationScreen() {
   }
 
   async function handleBlockUser() {
-    if (!currentUser || !otherUserId) {
+    if (!currentUser || !partnerId) {
       return;
     }
 
     try {
-      await blockUser(currentUser.uid, otherUserId);
+      await blockUser(currentUser.uid, partnerId);
       track('user_blocked', { context: 'conversation' });
-      setBlockedUserIds((currentIds) => [...new Set([...currentIds, otherUserId])]);
+      setBlockedUserIds((currentIds) => [...new Set([...currentIds, partnerId])]);
       Alert.alert(
         'User Blocked',
         "They can no longer message you or join a conversation with you. You won't see them in attendee lists."
@@ -182,14 +219,14 @@ export default function ConversationScreen() {
   }
 
   async function handleUnblockUser() {
-    if (!currentUser || !otherUserId) {
+    if (!currentUser || !partnerId) {
       return;
     }
 
     try {
-      await unblockUser(currentUser.uid, otherUserId);
+      await unblockUser(currentUser.uid, partnerId);
       track('user_unblocked', { context: 'conversation' });
-      setBlockedUserIds((currentIds) => currentIds.filter((id) => id !== otherUserId));
+      setBlockedUserIds((currentIds) => currentIds.filter((id) => id !== partnerId));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to unblock this user.';
       Alert.alert('Unblock Error', message);
@@ -201,13 +238,13 @@ export default function ConversationScreen() {
       return;
     }
 
-    setStatus(`Refreshing ${otherUserName || 'Student'}...`);
+    setStatus(`Refreshing ${partnerName || 'Student'}...`);
     isRefreshingRef.current = true;
     setIsRefreshing(true);
     setRefreshNonce((value) => value + 1);
   }
 
-  const hasBlockedOther = !!otherUserId && blockedUserIds.includes(otherUserId);
+  const hasBlockedOther = !!partnerId && blockedUserIds.includes(partnerId);
   const isMessagingDisabled = hasBlockedOther || isBlockedByOther;
   const canSend = !isSending && !isMessagingDisabled && draft.trim().length > 0;
 
@@ -218,41 +255,45 @@ export default function ConversationScreen() {
       style={[styles.screen, { backgroundColor: palette.background }]}>
       {/* Identity strip under the nav header — sans-only utility surface. */}
       <View style={[styles.identityBar, { borderBottomColor: palette.border }]}>
-        <Avatar name={otherUserName || 'Student'} size="sm" verified />
+        <Avatar name={partnerName || 'Student'} size="sm" verified />
         <View style={styles.identityText}>
           <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
-            {otherUserName || 'Student'}
+            {partnerName || 'Student'}
           </Text>
           <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
             {status}
           </Text>
         </View>
-        <IconButton
-          accessibilityLabel={`Report ${otherUserName || 'student'}`}
-          icon="exclamationmark.triangle"
-          onPress={() =>
-            router.push({
-              pathname: '/report-user',
-              params: {
-                reportedUserId: otherUserId || '',
-                reportedUserName: otherUserName || '',
-                context: 'conversation',
-              },
-            })
-          }
-        />
-        {!isBlockedByOther ? (
+        {/* Grouped so the two safety actions sit together at the same rhythm as
+            every other header action row in the app. */}
+        <View style={styles.identityActions}>
           <IconButton
-            accessibilityLabel={
-              hasBlockedOther
-                ? `Unblock ${otherUserName || 'student'}`
-                : `Block ${otherUserName || 'student'}`
+            accessibilityLabel={`Report ${partnerName || 'student'}`}
+            icon="exclamationmark.triangle"
+            onPress={() =>
+              router.push({
+                pathname: '/report-user',
+                params: {
+                  reportedUserId: partnerId,
+                  reportedUserName: partnerName,
+                  context: 'conversation',
+                },
+              })
             }
-            icon="nosign"
-            onPress={hasBlockedOther ? handleUnblockUser : handleBlockUser}
-            tone={hasBlockedOther ? 'accent' : 'default'}
           />
-        ) : null}
+          {!isBlockedByOther ? (
+            <IconButton
+              accessibilityLabel={
+                hasBlockedOther
+                  ? `Unblock ${partnerName || 'student'}`
+                  : `Block ${partnerName || 'student'}`
+              }
+              icon="nosign"
+              onPress={hasBlockedOther ? handleUnblockUser : handleBlockUser}
+              tone={hasBlockedOther ? 'accent' : 'default'}
+            />
+          ) : null}
+        </View>
       </View>
 
       <ScrollView
@@ -387,6 +428,13 @@ const styles = StyleSheet.create({
   identityText: {
     flex: 1,
     gap: 1,
+    minWidth: 0,
+  },
+  identityActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexShrink: 0,
+    gap: Space.xs,
   },
   thread: {
     flex: 1,
@@ -402,12 +450,10 @@ const styles = StyleSheet.create({
   daySeparator: {
     alignSelf: 'center',
     fontFamily: FontFamily.bodySemiBold,
-    fontSize: 10,
-    letterSpacing: 0.8,
-    lineHeight: 13,
+    fontSize: 11,
+    lineHeight: 14,
     marginVertical: Space.sm,
     textAlign: 'center',
-    textTransform: 'uppercase',
   },
   mine: {
     alignItems: 'flex-end',
