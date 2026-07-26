@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SessionCard } from '@/components/session-card';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { formatTimeLabel, TimeDropdown } from '@/components/time-dropdown';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
@@ -408,11 +409,7 @@ export default function CreateSessionScreen() {
           styles.content,
           { paddingBottom: insets.bottom + 56, paddingTop: Space.lg },
         ]}>
-        <View style={styles.header}>
-          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Host session</Text>
-          <Text style={[TypeScale.title, { color: palette.text }]}>New session</Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>{status}</Text>
-        </View>
+        <ScreenHeader title="New session" status={status} />
 
         <View style={styles.section}>
           <Text style={[styles.question, { color: palette.text }]}>Which class?</Text>
@@ -458,7 +455,7 @@ export default function CreateSessionScreen() {
           {isLoading ? (
             <ActivityIndicator color={palette.tint} />
           ) : filteredLocations.length > 0 ? (
-            <View style={styles.locationColumn}>
+            <View style={[styles.locationColumn, { borderTopColor: palette.border }]}>
               {filteredLocations.map((location) => {
                 const isSelected = selectedLocationId === location.locationId;
                 const aggregate = ratingAggregates.get(location.locationId);
@@ -477,7 +474,7 @@ export default function CreateSessionScreen() {
                             ? `${palette.tint}26`
                             : Brand.accentSoft
                           : palette.surface,
-                        borderColor: isSelected ? palette.tint : palette.border,
+                        borderBottomColor: palette.border,
                       },
                     ]}>
                     <View style={styles.locationText}>
@@ -586,7 +583,7 @@ export default function CreateSessionScreen() {
           </Text>
           <Text style={[TypeScale.caption, { color: palette.icon }]}>{scheduleHint}</Text>
 
-          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Quick picks</Text>
+          <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>Quick picks</Text>
           <View style={styles.presetGrid}>
             {TIME_PRESETS.map((presetTime) => {
               const isSelected = startTime === presetTime;
@@ -630,7 +627,7 @@ export default function CreateSessionScreen() {
             })}
           </View>
 
-          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Duration</Text>
+          <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>Duration</Text>
           <View style={styles.durationRow}>
             {DURATION_PRESETS.map((duration) => {
               const computedEnd = startTime
@@ -698,15 +695,9 @@ export default function CreateSessionScreen() {
           </Text>
         </View>
 
-        {/* Board CreateCapacityScreen: "How many seats?" — eyebrow row with an
-            "Including you" hint, then a 4-column grid of square seat tiles;
-            the selected tile is solid accent with white text. */}
         <View style={styles.section}>
           <Text style={[styles.question, { color: palette.text }]}>How many seats?</Text>
-          <View style={styles.capacityLabelRow}>
-            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Capacity</Text>
-            <Text style={[TypeScale.caption, { color: palette.icon }]}>Including you</Text>
-          </View>
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>Including you</Text>
           <View style={styles.capacityGrid}>
             {CAPACITY_PRESETS.map((seatCount) => {
               const isSelected = capacity === seatCount;
@@ -741,10 +732,11 @@ export default function CreateSessionScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Focus (optional)</Text>
+          <Text style={[styles.question, { color: palette.text }]}>What are you working on?</Text>
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>Optional</Text>
           <TextInput
             onChangeText={setFocusText}
-            placeholder="e.g. Pset 4 — pipelines & caching"
+            placeholder="Pset 4: pipelines and caching"
             placeholderTextColor={placeholderColor}
             style={[
               styles.input,
@@ -757,8 +749,7 @@ export default function CreateSessionScreen() {
             value={focusText}
           />
           <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            Becomes the session title — leave blank for “{selectedClass || 'CLASS'} Study
-            Session”.
+            Leave blank to use “{selectedClass || 'CLASS'} Study Session”.
           </Text>
         </View>
 
@@ -793,9 +784,6 @@ const styles = StyleSheet.create({
   content: {
     gap: Space.xl,
     padding: Space.lg + 4,
-  },
-  header: {
-    gap: Space.xs,
   },
   question: {
     fontFamily: FontFamily.serifItalic,
@@ -834,8 +822,8 @@ const styles = StyleSheet.create({
     width: `${100 / 7}%`,
   },
   input: {
-    borderRadius: Radius.chip + 4,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
     fontFamily: FontFamily.body,
     fontSize: 15,
     minHeight: 52,
@@ -843,13 +831,11 @@ const styles = StyleSheet.create({
     paddingVertical: Space.md,
   },
   locationColumn: {
-    gap: Space.sm + 2,
+    borderTopWidth: 1,
   },
   locationOption: {
     alignItems: 'center',
-    borderRadius: Radius.card,
-    borderTopRightRadius: Radius.accentCorner,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
@@ -908,8 +894,8 @@ const styles = StyleSheet.create({
   capacityTile: {
     alignItems: 'center',
     aspectRatio: 1,
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: Radius.md,
+    borderWidth: 1,
     flexBasis: '21%',
     flexGrow: 1,
     justifyContent: 'center',
@@ -921,8 +907,8 @@ const styles = StyleSheet.create({
   },
   durationPill: {
     alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: Radius.md,
+    borderWidth: 1,
     justifyContent: 'center',
     minHeight: 38,
     paddingHorizontal: Space.lg,
