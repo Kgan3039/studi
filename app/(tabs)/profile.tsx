@@ -57,7 +57,7 @@ const SAVED_LOCATIONS_SHOWN = 3;
 
 type ProfileStat = { value: string; label: string };
 
-type SavedLocation = { name: string; rating: number | null };
+type SavedLocation = { locationId: string; name: string; rating: number | null };
 
 // Last-saved values, kept to compute the profile_updated fieldsChanged count
 // (a number, never the values — docs/metrics.md).
@@ -376,6 +376,7 @@ export default function ProfileScreen() {
   const savedLocations: SavedLocation[] = useMemo(() => {
     return locations
       .map((location) => ({
+        locationId: location.locationId,
         name: location.name,
         rating: ratingAggregates.get(location.locationId)?.averageStars ?? null,
       }))
@@ -402,8 +403,6 @@ export default function ProfileScreen() {
       }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <ScreenHeader
-        onRefresh={handleRefresh}
-        refreshing={isRefreshing}
         showNotifications
         title="Profile"
       />
@@ -735,16 +734,29 @@ export default function ProfileScreen() {
         {savedLocations.length > 0 ? (
           <View style={[styles.rowList, { borderTopColor: palette.border }]}>
             {savedLocations.map((location) => (
-              <View
-                key={location.name}
-                style={[styles.locationRow, { borderBottomColor: palette.border }]}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${location.name}, open on the map`}
+                key={location.locationId}
+                onPress={() =>
+                  router.push({
+                    pathname: '/explore',
+                    params: { locationId: location.locationId },
+                  })
+                }
+                style={({ pressed }) => [
+                  styles.locationRow,
+                  { borderBottomColor: palette.border, opacity: pressed ? 0.55 : 1 },
+                  pressed ? styles.pressedRow : null,
+                ]}>
                 <Text style={[TypeScale.bodyStrong, styles.locationName, { color: palette.text }]} numberOfLines={1}>
                   {location.name}
                 </Text>
                 <Text style={[TypeScale.label, { color: palette.icon }]}>
                   {location.rating != null ? `★ ${location.rating.toFixed(1)}` : 'New'}
                 </Text>
-              </View>
+                <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+              </Pressable>
             ))}
           </View>
         ) : (
