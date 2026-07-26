@@ -248,9 +248,9 @@ export default function ConversationScreen() {
                 ? `Unblock ${otherUserName || 'student'}`
                 : `Block ${otherUserName || 'student'}`
             }
-            icon="hand.raised.fill"
+            icon="nosign"
             onPress={hasBlockedOther ? handleUnblockUser : handleBlockUser}
-            tone={hasBlockedOther ? 'default' : 'accent'}
+            tone={hasBlockedOther ? 'accent' : 'default'}
           />
         ) : null}
       </View>
