@@ -11,7 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CampusMap } from '@/components/campus-map';
@@ -27,7 +27,10 @@ import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
 import { Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
-import { getAtmosphereFiltersForLocationTags } from '@/data/location-rating-options';
+import {
+  getAtmosphereFiltersForLocationTags,
+  type LocationAtmosphereFilter,
+} from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -43,23 +46,25 @@ import {
 import { canonicalStudyLocationId } from '@/lib/catalog';
 import type { User } from 'firebase/auth';
 
-type MapFilter = 'all' | 'live' | 'next-hour' | 'my-classes' | 'quiet';
+/** Session-derived filters. Each narrows independently and they combine. */
+type ActivityFilter = 'live' | 'next-hour' | 'my-classes';
 
-const MAP_FILTERS: { id: MapFilter; label: string }[] = [
-  { id: 'all', label: 'All spots' },
-  { id: 'live', label: 'Live now' },
-  { id: 'next-hour', label: 'Next hour' },
-  { id: 'my-classes', label: 'My classes' },
-  { id: 'quiet', label: 'Quiet spots' },
+const ACTIVITY_FILTERS: { id: ActivityFilter; label: string; icon: IconSymbolName }[] = [
+  { id: 'live', label: 'Live now', icon: 'clock' },
+  { id: 'next-hour', label: 'Next hour', icon: 'calendar' },
+  { id: 'my-classes', label: 'My classes', icon: 'person.2.fill' },
 ];
 
-const MAP_FILTER_ICONS: Record<MapFilter, IconSymbolName> = {
-  all: 'line.3.horizontal.decrease',
-  live: 'clock',
-  'next-hour': 'calendar',
-  'my-classes': 'person.2.fill',
-  quiet: 'book.closed',
-};
+/**
+ * Atmosphere filters come from what students actually rated a spot, so they
+ * only include the qualities someone would search *for*.
+ */
+const ATMOSPHERE_FILTERS: LocationAtmosphereFilter[] = [
+  'Quiet',
+  'Spacious',
+  'Group Friendly',
+  'Solo Focused',
+];
 
 function isLive(session: StudySession, now: number) {
   const start = getTimestampMillis(session.startTime);
@@ -126,7 +131,9 @@ function formatSessionTime(session: StudySession) {
 
 export default function StudyLocationsScreen() {
   const router = useRouter();
+  const { locationId: requestedLocationId } = useLocalSearchParams<{ locationId?: string }>();
   const scrollViewRef = useRef<ScrollView>(null);
+  const appliedRequestedLocationRef = useRef<string | null>(null);
   const loadRequestRef = useRef(0);
   const isMountedRef = useRef(true);
   const colorScheme = useColorScheme() ?? 'light';
@@ -140,10 +147,27 @@ export default function StudyLocationsScreen() {
   const [ratingAggregates, setRatingAggregates] = useState<Map<string, LocationRatingAggregate>>(
     new Map()
   );
-  const [selectedFilter, setSelectedFilter] = useState<MapFilter>('all');
+  const [activityFilters, setActivityFilters] = useState<ActivityFilter[]>([]);
+  const [atmosphereFilters, setAtmosphereFilters] = useState<LocationAtmosphereFilter[]>([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const activeFilterLabel =
-    MAP_FILTERS.find((filter) => filter.id === selectedFilter)?.label ?? 'All spots';
+  const activeFilterCount = activityFilters.length + atmosphereFilters.length;
+
+  function toggleActivityFilter(id: ActivityFilter) {
+    setActivityFilters((current) =>
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id]
+    );
+  }
+
+  function toggleAtmosphereFilter(tag: LocationAtmosphereFilter) {
+    setAtmosphereFilters((current) =>
+      current.includes(tag) ? current.filter((value) => value !== tag) : [...current, tag]
+    );
+  }
+
+  function clearSpotFilters() {
+    setActivityFilters([]);
+    setAtmosphereFilters([]);
+  }
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -283,27 +307,43 @@ export default function StudyLocationsScreen() {
         return false;
       }
 
-      switch (selectedFilter) {
-        case 'live':
-          return locationSessions.some((session) => isLive(session, now));
-        case 'next-hour':
-          return locationSessions.some((session) => isStartingWithin(session, now, oneHourFromNow));
-        case 'my-classes':
-          return locationSessions.some((session) =>
-            profileClassSet.has(normalizeClassCode(session.classId))
-          );
-        case 'quiet':
-          return getAtmosphereFiltersForLocationTags([...locationTags, ...reviewTags]).has('Quiet');
-        default:
-          return true;
+      // Every selected filter has to hold, so combinations narrow rather than
+      // replace each other.
+      const matchesActivity = activityFilters.every((filter) => {
+        switch (filter) {
+          case 'live':
+            return locationSessions.some((session) => isLive(session, now));
+          case 'next-hour':
+            return locationSessions.some((session) =>
+              isStartingWithin(session, now, oneHourFromNow)
+            );
+          case 'my-classes':
+            return locationSessions.some((session) =>
+              profileClassSet.has(normalizeClassCode(session.classId))
+            );
+          default:
+            return true;
+        }
+      });
+
+      if (!matchesActivity) {
+        return false;
       }
+
+      if (atmosphereFilters.length > 0) {
+        const atmosphere = getAtmosphereFiltersForLocationTags([...locationTags, ...reviewTags]);
+        return atmosphereFilters.every((tag) => atmosphere.has(tag));
+      }
+
+      return true;
     });
   }, [
+    activityFilters,
+    atmosphereFilters,
     locations,
     profileClassSet,
     ratingAggregates,
     searchQuery,
-    selectedFilter,
     sessionsByLocationId,
   ]);
 
@@ -330,18 +370,22 @@ export default function StudyLocationsScreen() {
         return false;
       }
 
-      switch (selectedFilter) {
-        case 'live':
-          return isLive(session, now);
-        case 'next-hour':
-          return isStartingWithin(session, now, oneHourFromNow);
-        case 'my-classes':
-          return profileClassSet.has(normalizeClassCode(session.classId));
-        default:
-          return true;
-      }
+      // Mirrors the location filter so the pin counts only include sessions
+      // the current filters would actually surface.
+      return activityFilters.every((filter) => {
+        switch (filter) {
+          case 'live':
+            return isLive(session, now);
+          case 'next-hour':
+            return isStartingWithin(session, now, oneHourFromNow);
+          case 'my-classes':
+            return profileClassSet.has(normalizeClassCode(session.classId));
+          default:
+            return true;
+        }
+      });
     });
-  }, [profileClassSet, selectedFilter, sessions, visibleLocationIds]);
+  }, [activityFilters, profileClassSet, sessions, visibleLocationIds]);
 
   const sessionsByLocation = useMemo(() => {
     const counts = new Map<string, number>();
@@ -412,6 +456,30 @@ export default function StudyLocationsScreen() {
     });
   }
 
+  // Arriving from a link (e.g. a spot on Profile) opens that spot's details
+  // rather than dropping the person at the top of an unfiltered map.
+  useEffect(() => {
+    const requested = requestedLocationId?.trim();
+
+    if (!requested || locations.length === 0 || appliedRequestedLocationRef.current === requested) {
+      return;
+    }
+
+    const canonicalId = canonicalStudyLocationId(requested);
+    const match = locations.find((location) => location.locationId === canonicalId);
+
+    if (!match) {
+      return;
+    }
+
+    appliedRequestedLocationRef.current = requested;
+    // Clear narrowing filters so the requested spot can't be filtered out from
+    // under the person who just asked for it.
+    clearSpotFilters();
+    setSearchQuery('');
+    selectLocation(canonicalId);
+  }, [locations, requestedLocationId]);
+
   function openDirections(location: StudyLocation) {
     const destination = encodeURIComponent(
       `${location.name}, ${location.building}, Madison, Wisconsin`
@@ -446,7 +514,7 @@ export default function StudyLocationsScreen() {
 
   function clearFilters() {
     setSearchQuery('');
-    setSelectedFilter('all');
+    clearSpotFilters();
   }
 
   if (!authResolved || !currentUser) {
@@ -472,8 +540,6 @@ export default function StudyLocationsScreen() {
       style={[styles.screen, { backgroundColor: palette.background }]}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <ScreenHeader
-        onRefresh={handleRefresh}
-        refreshing={isRefreshing}
         showNotifications
         title="Study spots"
         status={loadMessage}
@@ -493,34 +559,43 @@ export default function StudyLocationsScreen() {
         </View>
         <Pressable
           accessibilityLabel={
-            selectedFilter === 'all' ? 'Filters' : `Filters, ${activeFilterLabel} applied`
+            activeFilterCount > 0 ? `Filters, ${activeFilterCount} applied` : 'Filters'
           }
           accessibilityRole="button"
           onPress={() => setFiltersOpen(true)}
           style={({ pressed }) => [
             styles.filterButton,
             {
-              backgroundColor: selectedFilter === 'all' ? 'transparent' : palette.tint,
-              borderColor: selectedFilter === 'all' ? palette.outline : palette.tint,
+              backgroundColor: activeFilterCount > 0 ? palette.tint : 'transparent',
+              borderColor: activeFilterCount > 0 ? palette.tint : palette.outline,
               opacity: pressed ? 0.7 : 1,
               transform: [{ scale: pressed ? 0.96 : 1 }],
             },
           ]}>
           <IconSymbol
-            color={selectedFilter === 'all' ? palette.icon : '#FFFFFF'}
+            color={activeFilterCount > 0 ? '#FFFFFF' : palette.icon}
             name="slider.horizontal.3"
             size={20}
           />
+          {activeFilterCount > 0 ? (
+            <Text style={[TypeScale.label, styles.filterCount]}>{activeFilterCount}</Text>
+          ) : null}
         </Pressable>
       </View>
 
-      {selectedFilter !== 'all' ? (
+      {activeFilterCount > 0 ? (
         <View style={styles.filterRow}>
-          <FilterChip
-            icon="xmark"
-            label={activeFilterLabel}
-            onPress={() => setSelectedFilter('all')}
-          />
+          {activityFilters.map((filter) => (
+            <FilterChip
+              icon="xmark"
+              key={filter}
+              label={ACTIVITY_FILTERS.find((option) => option.id === filter)?.label ?? filter}
+              onPress={() => toggleActivityFilter(filter)}
+            />
+          ))}
+          {atmosphereFilters.map((tag) => (
+            <FilterChip icon="xmark" key={tag} label={tag} onPress={() => toggleAtmosphereFilter(tag)} />
+          ))}
         </View>
       ) : null}
 
@@ -744,8 +819,8 @@ export default function StudyLocationsScreen() {
           <Button
             label="Clear all"
             variant="secondary"
-            onPress={() => setSelectedFilter('all')}
-            disabled={selectedFilter === 'all'}
+            onPress={clearSpotFilters}
+            disabled={activeFilterCount === 0}
             style={styles.filterFooterButton}
           />
           <Button
@@ -756,15 +831,29 @@ export default function StudyLocationsScreen() {
         </View>
       }>
       <View style={styles.filterGroup}>
-        <Text style={[TypeScale.label, { color: palette.icon }]}>Show</Text>
+        <Text style={[TypeScale.label, { color: palette.icon }]}>Activity</Text>
         <View style={styles.filterGroupRow}>
-          {MAP_FILTERS.map((filter) => (
+          {ACTIVITY_FILTERS.map((filter) => (
             <FilterChip
-              icon={MAP_FILTER_ICONS[filter.id]}
+              icon={filter.icon}
               key={filter.id}
               label={filter.label}
-              onPress={() => setSelectedFilter(filter.id)}
-              selected={selectedFilter === filter.id}
+              onPress={() => toggleActivityFilter(filter.id)}
+              selected={activityFilters.includes(filter.id)}
+            />
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.filterGroup}>
+        <Text style={[TypeScale.label, { color: palette.icon }]}>Atmosphere</Text>
+        <View style={styles.filterGroupRow}>
+          {ATMOSPHERE_FILTERS.map((tag) => (
+            <FilterChip
+              key={tag}
+              label={tag}
+              onPress={() => toggleAtmosphereFilter(tag)}
+              selected={atmosphereFilters.includes(tag)}
             />
           ))}
         </View>
@@ -808,6 +897,9 @@ const styles = StyleSheet.create({
     height: 48,
     justifyContent: 'center',
     paddingHorizontal: Space.md,
+  },
+  filterCount: {
+    color: '#FFFFFF',
   },
   filterRow: {
     flexDirection: 'row',
