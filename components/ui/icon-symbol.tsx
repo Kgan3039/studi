@@ -26,6 +26,7 @@ const MAPPING = {
   'plus.circle.fill': 'add-circle',
   'slider.horizontal.3': 'tune',
   'arrow.up.right': 'north-east',
+  'arrow.clockwise': 'refresh',
   'circle.dashed': 'radio-button-unchecked',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',

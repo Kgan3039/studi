@@ -16,6 +16,7 @@ import { SessionCard } from '@/components/session-card';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { SearchBar } from '@/components/ui/SearchBar';
@@ -305,15 +306,15 @@ export default function SessionsScreen() {
               accessibilityLabel="Refresh sessions"
               disabled={isLoading || isRefreshing}
               onPress={handleRefresh}
-              style={({ pressed }) => ({
-                opacity: pressed || isLoading || isRefreshing ? 0.5 : 1,
-              })}>
-              <View style={styles.refreshButtonContent}>
+              style={({ pressed }) => [
+                styles.refreshButton,
+                { opacity: pressed || isLoading || isRefreshing ? 0.5 : 1 },
+              ]}>
                 {isLoading || isRefreshing ? (
                   <ActivityIndicator size="small" color={palette.tint} />
-                ) : null}
-                <Text style={[TypeScale.label, { color: palette.tint }]}>Refresh</Text>
-              </View>
+                ) : (
+                  <IconSymbol name="arrow.clockwise" size={20} color={palette.tint} />
+                )}
             </Pressable>
             <NotificationCenterButton />
           </View>
@@ -461,10 +462,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Space.sm,
   },
-  refreshButtonContent: {
+  refreshButton: {
     alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.xs,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
   filterRow: {
     flexDirection: 'row',

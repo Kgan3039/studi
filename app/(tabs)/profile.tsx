@@ -360,9 +360,8 @@ export default function ProfileScreen() {
     ];
   }, [classes.length, classesUpper, currentUser, sessions]);
 
-  // "Saved locations" is not modeled, so the section shows the top-rated UW
-  // study spots from the locations + rating-aggregate sources, matching the
-  // board's name + ★ rating rows.
+  // Saved locations are not modeled, so this section accurately presents the
+  // top-rated UW study spots from the locations + rating-aggregate sources.
   const savedLocations: SavedLocation[] = useMemo(() => {
     return locations
       .map((location) => ({
@@ -677,9 +676,9 @@ export default function ProfileScreen() {
         </View>
       ) : null}
 
-      {/* Saved locations (board ProfileScreen ~1814). */}
+      {/* Top-rated campus locations. */}
       <View style={styles.section}>
-        <SectionHeader eyebrow="Saved locations" />
+        <SectionHeader eyebrow="Top study spots" />
         {savedLocations.length > 0 ? (
           <View style={[styles.rowList, { borderTopColor: palette.border }]}>
             {savedLocations.map((location) => (
@@ -697,7 +696,7 @@ export default function ProfileScreen() {
           </View>
         ) : (
           <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            Rate a study spot to see your places here.
+            Rated study spots will appear here.
           </Text>
         )}
       </View>
