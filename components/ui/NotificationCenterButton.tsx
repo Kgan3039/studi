@@ -180,10 +180,9 @@ export function NotificationCenterButton() {
         style={({ pressed }) => [
           styles.bellButton,
           {
-            backgroundColor: palette.surface,
-            borderColor: palette.border,
             opacity: pressed ? 0.7 : 1,
           },
+          pressed ? { backgroundColor: palette.surfaceMuted, transform: [{ scale: 0.94 }] } : null,
         ]}>
         <MaterialIcons color={palette.text} name="notifications-none" size={22} />
         {unreadCount > 0 ? (
@@ -313,11 +312,10 @@ export function NotificationCenterButton() {
 const styles = StyleSheet.create({
   bellButton: {
     alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    height: 42,
+    borderRadius: Radius.md,
+    height: 44,
     justifyContent: 'center',
-    width: 42,
+    width: 44,
   },
   countBadge: {
     alignItems: 'center',

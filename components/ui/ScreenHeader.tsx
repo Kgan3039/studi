@@ -5,10 +5,13 @@ import {
   View,
   type LayoutChangeEvent,
   type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from 'react-native';
 
 import { Colors, Space, TypeScale } from '@/constants/theme';
+import { IconButton } from '@/components/ui/IconButton';
+import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export type ScreenHeaderProps = {
@@ -16,7 +19,11 @@ export type ScreenHeaderProps = {
   subtitle?: string;
   status?: string;
   action?: ReactNode;
+  showNotifications?: boolean;
+  onRefresh?: () => void;
+  refreshing?: boolean;
   align?: 'start' | 'center';
+  titleStyle?: StyleProp<TextStyle>;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -29,13 +36,18 @@ export function ScreenHeader({
   subtitle,
   status,
   action,
+  showNotifications = false,
+  onRefresh,
+  refreshing = false,
   align = 'start',
+  titleStyle,
   style,
 }: ScreenHeaderProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const centered = align === 'center';
   const [actionWidth, setActionWidth] = useState(0);
+  const hasActions = !!action || !!onRefresh || showNotifications;
 
   function handleActionLayout(event: LayoutChangeEvent) {
     if (!centered) {
@@ -48,7 +60,7 @@ export function ScreenHeader({
   return (
     <View style={[styles.container, centered && styles.centered, style]}>
       <View style={[styles.headingRow, centered && styles.centeredHeadingRow]}>
-        {centered && action ? (
+        {centered && hasActions ? (
           <View
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
@@ -62,6 +74,7 @@ export function ScreenHeader({
               TypeScale.screenTitle,
               styles.title,
               centered && styles.centeredText,
+              titleStyle,
               { color: palette.primaryText },
             ]}>
             {title}
@@ -90,9 +103,21 @@ export function ScreenHeader({
             </Text>
           ) : null}
         </View>
-        {action ? (
-          <View onLayout={centered ? handleActionLayout : undefined} style={styles.action}>
+        {hasActions ? (
+          <View
+            onLayout={centered ? handleActionLayout : undefined}
+            style={styles.actions}>
             {action}
+            {onRefresh ? (
+              <IconButton
+                accessibilityLabel={`Refresh ${title.toLowerCase()}`}
+                disabled={refreshing}
+                icon="arrow.clockwise"
+                loading={refreshing}
+                onPress={onRefresh}
+              />
+            ) : null}
+            {showNotifications ? <NotificationCenterButton /> : null}
           </View>
         ) : null}
       </View>
@@ -138,8 +163,10 @@ const styles = StyleSheet.create({
   supportingText: {
     flexShrink: 1,
   },
-  action: {
+  actions: {
+    alignItems: 'center',
+    flexDirection: 'row',
     flexShrink: 0,
-    paddingTop: Space.xs,
+    gap: Space.xs,
   },
 });

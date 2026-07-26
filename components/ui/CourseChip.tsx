@@ -12,8 +12,7 @@ export type CourseChipProps = {
 };
 
 /**
- * Dept-colored course chip (handoff §1.2, §2): pill with a dept dot and the
- * code in the mono face. Department colors apply ONLY here and to dept dots.
+ * Dept-colored course label with a restrained edge accent and mono code.
  * Unknown departments fall back to the foreground tint. Selected state adds
  * a foreground ring (board: ring-2 ring-foreground).
  */
@@ -36,20 +35,17 @@ export function CourseChip({ code, size = 'md', selected = false, onPress, style
   const resolvedTextColor = selected ? palette.background : textColor;
 
   const content = (
-    <>
-      <View style={[styles.dot, dotSizes[size], { backgroundColor: tint }]} />
-      <Text
-        style={[TypeScale.code, textSizes[size], { color: resolvedTextColor }]}
-        numberOfLines={1}>
-        {code}
-      </Text>
-    </>
+    <Text
+      style={[TypeScale.code, textSizes[size], { color: resolvedTextColor }]}
+      numberOfLines={1}>
+      {code}
+    </Text>
   );
 
   const chipStyle = [
     styles.chip,
     chipSizes[size],
-    { backgroundColor, borderColor },
+    { backgroundColor, borderColor, borderLeftColor: selected ? palette.primaryText : tint },
     selected && { borderColor: palette.primaryText },
     style,
   ];
@@ -81,22 +77,14 @@ const textSizes = StyleSheet.create({
   lg: { fontSize: 15, lineHeight: 18 },
 });
 
-const dotSizes = StyleSheet.create({
-  sm: { width: 5, height: 5, borderRadius: 2.5 },
-  md: { width: 6, height: 6, borderRadius: 3 },
-  lg: { width: 7, height: 7, borderRadius: 3.5 },
-});
-
 const styles = StyleSheet.create({
   chip: {
     alignSelf: 'flex-start',
     alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.sm - 2,
     borderRadius: Radius.md,
     borderWidth: 1,
+    borderLeftWidth: 3,
   },
-  dot: {},
   pressed: {
     opacity: 0.7,
   },
