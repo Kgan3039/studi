@@ -1,21 +1,16 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
-import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { ErrorState } from '@/components/ui/ErrorState';
+import { LoadingState } from '@/components/ui/LoadingState';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { SearchBar } from '@/components/ui/SearchBar';
+import { Colors, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import { subscribeToUserConversations, type ConversationListItem } from '@/lib/firestore';
@@ -46,6 +41,7 @@ export default function MessagesScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
@@ -59,22 +55,35 @@ export default function MessagesScreen() {
   useEffect(() => {
     if (!currentUser) {
       setConversations([]);
+      setErrorMessage('');
       setIsLoading(false);
       setIsRefreshing(false);
       return;
     }
 
     setIsLoading(true);
-    const unsubscribe = subscribeToUserConversations(currentUser.uid, (loadedConversations) => {
-      setConversations(loadedConversations);
-      setIsLoading(false);
-      setIsRefreshing(false);
-    });
+    setErrorMessage('');
+    const unsubscribe = subscribeToUserConversations(
+      currentUser.uid,
+      (loadedConversations) => {
+        setConversations(loadedConversations);
+        setErrorMessage('');
+        setIsLoading(false);
+        setIsRefreshing(false);
+      },
+      // Listener failures (rules, offline, profile hydration) used to leave the
+      // spinner up forever; surface them so pull-to-refresh can retry.
+      (error) => {
+        setErrorMessage(error.message);
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    );
 
     return unsubscribe;
   }, [currentUser, refreshNonce]);
 
-  async function handleRefresh() {
+  function handleRefresh() {
     if (!currentUser) {
       return;
     }
@@ -100,40 +109,32 @@ export default function MessagesScreen() {
     });
   }, [conversations, searchQuery]);
 
-  const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
-
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
+      // Rows and the clear control stay tappable in one tap while the search
+      // keyboard is open.
+      keyboardShouldPersistTaps="handled"
       refreshControl={
         <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
       }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      {/* Utility screen — sans-only header (handoff §1.3). */}
-      <View style={styles.header}>
-        <Text style={[TypeScale.h2, { color: palette.text }]}>Messages</Text>
-        <NotificationCenterButton />
-      </View>
+      <ScreenHeader action={<NotificationCenterButton />} title="Messages" />
 
       {conversations.length > 0 ? (
-        <TextInput
-          autoCapitalize="none"
-          autoCorrect={false}
+        <SearchBar
+          accessibilityLabel="Search messages"
+          clearAccessibilityLabel="Clear message search"
           onChangeText={setSearchQuery}
           placeholder="Search messages"
-          placeholderTextColor={placeholderColor}
-          style={[
-            styles.search,
-            { backgroundColor: palette.surfaceMuted, color: palette.text },
-          ]}
           value={searchQuery}
         />
       ) : null}
 
       {isLoading ? (
-        <View style={styles.loadingArea}>
-          <ActivityIndicator color={palette.tint} />
-        </View>
+        <LoadingState title="Loading conversations" />
+      ) : errorMessage ? (
+        <ErrorState body={errorMessage} onRetry={handleRefresh} />
       ) : conversations.length > 0 ? (
         visibleConversations.length > 0 ? (
           <View>
@@ -166,16 +167,29 @@ export default function MessagesScreen() {
                   <View style={styles.threadBody}>
                     <View style={styles.threadHeader}>
                       <Text
-                        style={[TypeScale.bodyStrong, styles.threadName, { color: palette.text }]}
+                        style={[
+                          TypeScale.bodyStrong,
+                          styles.threadName,
+                          { color: palette.primaryText },
+                        ]}
                         numberOfLines={1}>
                         {otherName}
                       </Text>
-                      <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                      <Text
+                        // Metadata is capped so a scaled timestamp cannot eat
+                        // the row and starve the name at accessibility sizes.
+                        maxFontSizeMultiplier={1.6}
+                        style={[
+                          TypeScale.meta,
+                          styles.threadTimestamp,
+                          { color: palette.secondaryText },
+                        ]}
+                        numberOfLines={1}>
                         {formatTimestamp(conversation.lastMessageAt || conversation.updatedAt)}
                       </Text>
                     </View>
                     <Text
-                      style={[TypeScale.caption, styles.preview, { color: palette.icon }]}
+                      style={[TypeScale.body, { color: palette.secondaryText }]}
                       numberOfLines={1}>
                       {conversation.lastMessagePreview || 'Say hi before you arrive.'}
                     </Text>
@@ -185,9 +199,13 @@ export default function MessagesScreen() {
             })}
           </View>
         ) : (
-          <Text style={[TypeScale.body, styles.noMatches, { color: palette.icon }]}>
-            No conversations match “{searchQuery.trim()}”.
-          </Text>
+          <EmptyState
+            icon="chat"
+            headline="No matching conversations"
+            body={`Nothing matches “${searchQuery.trim()}”.`}
+            actionLabel="Clear search"
+            onAction={() => setSearchQuery('')}
+          />
         )
       ) : (
         <EmptyState
@@ -206,22 +224,8 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: {
     gap: Space.lg,
-    padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
-  },
-  header: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    gap: Space.xs,
-    justifyContent: 'space-between',
-  },
-  search: {
-    borderRadius: Radius.xl,
-    fontFamily: FontFamily.body,
-    fontSize: 15,
-    minHeight: 44,
-    paddingHorizontal: Space.lg,
-    paddingVertical: Space.sm + 2,
+    paddingHorizontal: Space.lg + 4,
   },
   threadRow: {
     alignItems: 'center',
@@ -232,7 +236,8 @@ const styles = StyleSheet.create({
   },
   threadBody: {
     flex: 1,
-    gap: 2,
+    gap: Space.xs,
+    minWidth: 0,
   },
   threadHeader: {
     alignItems: 'center',
@@ -242,17 +247,9 @@ const styles = StyleSheet.create({
   },
   threadName: {
     flexShrink: 1,
+    minWidth: 0,
   },
-  preview: {
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  noMatches: {
-    paddingVertical: Space.lg,
-  },
-  loadingArea: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 160,
+  threadTimestamp: {
+    flexShrink: 0,
   },
 });

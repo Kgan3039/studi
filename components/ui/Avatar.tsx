@@ -46,7 +46,10 @@ export function Avatar({ name, size = 'md', verified = false, tone = 'default', 
           styles.disc,
           { width: px, height: px, borderRadius: px / 2, backgroundColor: discColor },
         ]}>
+        {/* The disc is a fixed-size graphic, so initials must not scale with
+            Dynamic Type — they would overflow and clip inside it. */}
         <Text
+          allowFontScaling={false}
           style={{
             color: palette.background,
             fontFamily: FontFamily.bodySemiBold,
@@ -131,6 +134,7 @@ export function AvatarStack({ names, max = 4, size = 'sm', totalCount, style }: 
             },
           ]}>
           <Text
+            allowFontScaling={false}
             style={{
               color: palette.icon,
               fontFamily: FontFamily.bodySemiBold,
