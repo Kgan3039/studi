@@ -16,6 +16,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
+import { IconButton } from '@/components/ui/IconButton';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
@@ -38,7 +39,7 @@ function toDate(value: unknown): Date | null {
   return (value as { toDate: () => Date }).toDate();
 }
 
-/** Board ChatScreen day separator: "Today · 2:14 PM", "Mon, Jun 9 · 4:00 PM". */
+/** Compact day and time label for the first message in a day. */
 function formatDaySeparator(date: Date) {
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -48,7 +49,7 @@ function formatDaySeparator(date: Date) {
       : date.toDateString() === yesterday.toDateString()
         ? 'Yesterday'
         : date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  return `${dayLabel} · ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+  return `${dayLabel}, ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
 }
 
 function formatTimestamp(value: unknown) {
@@ -226,8 +227,9 @@ export default function ConversationScreen() {
             {status}
           </Text>
         </View>
-        <Pressable
-          accessibilityRole="button"
+        <IconButton
+          accessibilityLabel={`Report ${otherUserName || 'student'}`}
+          icon="exclamationmark.triangle"
           onPress={() =>
             router.push({
               pathname: '/report-user',
@@ -238,18 +240,18 @@ export default function ConversationScreen() {
               },
             })
           }
-          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
-          <Text style={[TypeScale.label, { color: palette.icon }]}>Report</Text>
-        </Pressable>
+        />
         {!isBlockedByOther ? (
-          <Pressable
-            accessibilityRole="button"
+          <IconButton
+            accessibilityLabel={
+              hasBlockedOther
+                ? `Unblock ${otherUserName || 'student'}`
+                : `Block ${otherUserName || 'student'}`
+            }
+            icon="hand.raised.fill"
             onPress={hasBlockedOther ? handleUnblockUser : handleBlockUser}
-            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
-            <Text style={[TypeScale.label, { color: palette.tint }]}>
-              {hasBlockedOther ? 'Unblock' : 'Block'}
-            </Text>
-          </Pressable>
+            tone={hasBlockedOther ? 'default' : 'accent'}
+          />
         ) : null}
       </View>
 
@@ -312,9 +314,9 @@ export default function ConversationScreen() {
           })
         ) : (
           <View style={styles.emptyThread}>
-            <Text style={[styles.emptyHeadline, { color: palette.text }]}>Say hi 👋</Text>
+            <Text style={[styles.emptyHeadline, { color: palette.text }]}>Start the conversation</Text>
             <Text style={[TypeScale.body, styles.emptyBody, { color: palette.icon }]}>
-              &ldquo;What should I bring?&rdquo; is a great opener.
+              Ask what to bring or where everyone is meeting.
             </Text>
           </View>
         )}

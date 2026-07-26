@@ -115,10 +115,10 @@ function formatSessionTime(session: StudySession) {
   }
 
   if (start.toDateString() === tomorrow.toDateString()) {
-    return `Tomorrow · ${time}`;
+    return `Tomorrow, ${time}`;
   }
 
-  return `${start.toLocaleDateString('en-US', { weekday: 'short' })} · ${time}`;
+  return `${start.toLocaleDateString('en-US', { weekday: 'short' })}, ${time}`;
 }
 
 export default function StudyLocationsScreen() {
@@ -544,9 +544,9 @@ export default function StudyLocationsScreen() {
                       {location.name}
                     </Text>
                     <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                      {location.campusArea} · {sessionCount} upcoming{' '}
+                      {location.campusArea}, {sessionCount} upcoming{' '}
                       {sessionCount === 1 ? 'session' : 'sessions'}
-                      {aggregate ? ` · ★ ${aggregate.averageStars}` : ''}
+                      {aggregate ? `, ${aggregate.averageStars} stars` : ''}
                     </Text>
                   </View>
                   <View style={styles.locationListActions}>
@@ -594,7 +594,7 @@ export default function StudyLocationsScreen() {
                   <Text style={[TypeScale.meta, { color: palette.icon }]}>
                     {selectedSessions.length} upcoming{' '}
                     {selectedSessions.length === 1 ? 'session' : 'sessions'}
-                    {selectedRating ? ` · ★ ${selectedRating.averageStars}` : ''}
+                    {selectedRating ? `, ${selectedRating.averageStars} stars` : ''}
                   </Text>
                 </View>
                 <Pressable
@@ -659,7 +659,7 @@ export default function StudyLocationsScreen() {
                             {session.title}
                           </Text>
                           <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                            {formatSessionTime(session)} · {participantCount} going
+                            {formatSessionTime(session)}, {participantCount} going
                           </Text>
                         </View>
                         {live ? (

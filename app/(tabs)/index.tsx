@@ -143,7 +143,7 @@ function HeroCard({
         {session.title}
       </Text>
       <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
-        {formatSessionWindow(session.startTime, session.endTime)} · {session.locationName}
+        {formatSessionWindow(session.startTime, session.endTime)}, {session.locationName}
       </Text>
       <View style={styles.heroFooter}>
         <AvatarStack names={attendeeNames} max={3} size="sm" totalCount={going} />
@@ -194,7 +194,7 @@ function UpcomingRow({
           {session.title}
         </Text>
         <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-          {session.locationName} · {formatSessionStart(session.startTime)}
+          {session.locationName}, {formatSessionStart(session.startTime)}
         </Text>
       </View>
       {isFull ? (

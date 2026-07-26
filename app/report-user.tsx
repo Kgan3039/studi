@@ -3,7 +3,6 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,6 +13,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/Button';
+import { FilterChip } from '@/components/ui/FilterChip';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
@@ -80,53 +81,43 @@ export default function ReportUserScreen() {
           styles.content,
           { paddingBottom: insets.bottom + Space.xxl, paddingTop: Space.lg },
         ]}>
+        <ScreenTransition style={styles.transition}>
         <View style={styles.header}>
-          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Safety</Text>
           <Text style={[styles.headerTitle, { color: palette.text }]}>Help keep Studi safe</Text>
           <Text style={[TypeScale.body, { color: palette.icon }]}>
             Tell us what happened. Reports are private and reviewed by the Studi team.
           </Text>
         </View>
 
-        <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+        <View style={styles.form}>
           <View style={styles.fieldGroup}>
-            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Reporting</Text>
-            <Text style={[TypeScale.heading, { color: palette.text }]}>
-              {reportedUserName || 'This user'}
+            <Text style={[TypeScale.label, { color: palette.icon }]}>Reporting</Text>
+            <Text style={[styles.subjectName, { color: palette.text }]}>
+              {reportedUserName || 'this user'}
             </Text>
           </View>
 
           <View style={styles.fieldGroup}>
-            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Reason</Text>
+            <Text style={[TypeScale.heading, { color: palette.text }]}>What happened?</Text>
             <View style={styles.chipRow}>
               {REPORT_REASONS.map((reason) => {
                 const isSelected = selectedReason === reason;
 
                 return (
-                  <Pressable
+                  <FilterChip
                     key={reason}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: isSelected }}
+                    label={reason}
                     onPress={() => setSelectedReason(reason)}
-                    style={({ pressed }) => [
-                      styles.chip,
-                      {
-                        backgroundColor: isSelected ? palette.tint : palette.surfaceMuted,
-                        borderColor: isSelected ? palette.tint : palette.border,
-                        opacity: pressed ? 0.7 : 1,
-                      },
-                    ]}>
-                    <Text style={[TypeScale.label, { color: isSelected ? '#FFFFFF' : palette.text }]}>
-                      {reason}
-                    </Text>
-                  </Pressable>
+                    selected={isSelected}
+                  />
                 );
               })}
             </View>
           </View>
 
           <View style={styles.fieldGroup}>
-            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Details (optional)</Text>
+            <Text style={[TypeScale.heading, { color: palette.text }]}>Add details</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>Optional</Text>
             <TextInput
               maxLength={1000}
               multiline
@@ -147,12 +138,13 @@ export default function ReportUserScreen() {
 
           <Button
             fullWidth
-            label="Submit Report"
+            label="Submit report"
             loading={isSubmitting}
             onPress={handleSubmitReport}
             size="lg"
           />
         </View>
+        </ScreenTransition>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -163,8 +155,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: Space.xl,
     padding: Space.lg + 4,
+  },
+  transition: {
+    gap: Space.xl,
   },
   header: {
     gap: Space.xs,
@@ -174,11 +168,8 @@ const styles = StyleSheet.create({
     fontSize: 24,
     lineHeight: 29,
   },
-  card: {
-    borderRadius: Radius.card,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+  form: {
     gap: Space.lg,
-    padding: Space.lg + 4,
   },
   fieldGroup: {
     gap: Space.sm,
@@ -188,14 +179,10 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: Space.sm + 2,
   },
-  chip: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    justifyContent: 'center',
-    minHeight: 36,
-    paddingHorizontal: Space.lg,
-    paddingVertical: Space.sm - 2,
+  subjectName: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 24,
+    lineHeight: 29,
   },
   input: {
     borderRadius: Radius.lg,

@@ -6,7 +6,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,7 +16,10 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
+import { SearchBar } from '@/components/ui/SearchBar';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Brand, Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -56,7 +58,6 @@ export default function FriendsScreen() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
-  const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [myClasses, setMyClasses] = useState<string[]>([]);
@@ -368,52 +369,27 @@ export default function FriendsScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
-      <Stack.Screen options={{ title: 'Study Buddies' }} />
+      <Stack.Screen options={{ title: 'Study buddies' }} />
 
       <View style={[styles.header, { paddingTop: Space.sm }]}>
-        {/* Search — always visible; results replace the tab content. */}
-        <TextInput
-          autoCapitalize="none"
-          autoCorrect={false}
+        <SearchBar
+          accessibilityLabel="Find classmates"
           onChangeText={setSearchQuery}
           placeholder="Find classmates by name"
-          placeholderTextColor={placeholderColor}
-          returnKeyType="search"
-          style={[
-            styles.searchInput,
-            { backgroundColor: palette.surfaceMuted, borderColor: palette.border, color: palette.text },
-          ]}
           value={searchQuery}
         />
 
         {!isSearching ? (
-          <View style={[styles.segmented, { backgroundColor: palette.surfaceMuted }]}>
-            {TABS.map((tabOption) => {
-              const active = tab === tabOption.key;
-              return (
-                <Pressable
-                  key={tabOption.key}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
-                  onPress={() => setTab(tabOption.key)}
-                  style={[
-                    styles.segment,
-                    active && { backgroundColor: palette.surface },
-                  ]}>
-                  <Text
-                    style={[
-                      TypeScale.label,
-                      { color: active ? palette.text : palette.icon },
-                    ]}>
-                    {tabOption.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          <SegmentedControl
+            accessibilityLabel="Study buddy view"
+            onChange={setTab}
+            options={TABS.map((option) => ({ label: option.label, value: option.key }))}
+            value={tab}
+          />
         ) : null}
       </View>
 
+      <ScreenTransition style={styles.results}>
       {isSearching ? (
         <SearchResults
           state={searchState}
@@ -471,6 +447,7 @@ export default function FriendsScreen() {
           onSend={(uid) => handleSend(uid, 'suggested')}
         />
       )}
+      </ScreenTransition>
 
       <View style={{ height: insets.bottom }} />
     </View>
@@ -499,8 +476,8 @@ function LoadingOrError({
   }
   return (
     <EmptyState
-      headline="Something went off-script."
-      body="We couldn't load this just now."
+      headline="Couldn’t load study buddies"
+      body="Check your connection and try again."
       actionLabel="Try again"
       onAction={onRetry}
     />
@@ -656,7 +633,7 @@ function RequestsList({
   if (incoming.length === 0 && outgoing.length === 0) {
     return (
       <EmptyState
-        icon="dot"
+        icon="people"
         headline="No pending requests"
         body="Requests you send and receive show up here."
         actionLabel="See suggestions"
@@ -676,7 +653,7 @@ function RequestsList({
   // could exhaust one side before ever reaching the other).
   const rows: Section[] = [];
   if (incoming.length > 0) {
-    rows.push({ kind: 'header', id: 'h-in', label: `Requests · ${incoming.length}` });
+    rows.push({ kind: 'header', id: 'h-in', label: `Requests (${incoming.length})` });
     incoming.forEach((item) =>
       rows.push({ kind: 'incoming', id: `in-${item.otherUid}`, item })
     );
@@ -685,7 +662,7 @@ function RequestsList({
     }
   }
   if (outgoing.length > 0) {
-    rows.push({ kind: 'header', id: 'h-out', label: `Sent · ${outgoing.length}` });
+    rows.push({ kind: 'header', id: 'h-out', label: `Sent (${outgoing.length})` });
     outgoing.forEach((item) =>
       rows.push({ kind: 'outgoing', id: `out-${item.otherUid}`, item })
     );
@@ -834,7 +811,7 @@ function SuggestedList({
       }}
       ListEmptyComponent={
         <EmptyState
-          icon="dot"
+          icon="people"
           headline={hasClasses ? 'No classmates to suggest yet' : 'Add your classes first'}
           body={
             hasClasses
@@ -876,7 +853,7 @@ function SearchResults({
   if (state === 'error') {
     return (
       <EmptyState
-        headline="Search hiccuped."
+        headline="Search unavailable"
         body="Check your connection and try that search again."
       />
     );
@@ -918,9 +895,9 @@ function SearchResults({
       }}
       ListEmptyComponent={
         <EmptyState
-          icon="dot"
+          icon="people"
           headline="No matches"
-          body="Try a different name — Studi only shows verified UW students."
+          body="Try a different name. Studi only shows verified UW students."
         />
       }
     />
@@ -934,25 +911,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.lg + 4,
     paddingBottom: Space.md,
   },
-  searchInput: {
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    fontFamily: FontFamily.body,
-    fontSize: 15,
-    minHeight: 48,
-    paddingHorizontal: Space.lg,
-  },
-  segmented: {
-    borderRadius: Radius.lg,
-    flexDirection: 'row',
-    padding: 3,
-  },
-  segment: {
-    alignItems: 'center',
-    borderRadius: Radius.md,
+  results: {
     flex: 1,
-    justifyContent: 'center',
-    paddingVertical: Space.sm,
   },
   centerArea: {
     alignItems: 'center',

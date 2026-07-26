@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui/IconButton';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
@@ -62,7 +63,7 @@ function toMillis(value: unknown): number {
   return (value as { toMillis: () => number }).toMillis();
 }
 
-/** Board ChatScreen day separator: "Today · 2:14 PM", "Mon, Jun 9 · 4:00 PM". */
+/** Compact day and time label for the first message in a day. */
 function formatDaySeparator(date: Date) {
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -72,7 +73,7 @@ function formatDaySeparator(date: Date) {
       : date.toDateString() === yesterday.toDateString()
         ? 'Yesterday'
         : date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  return `${dayLabel} · ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+  return `${dayLabel}, ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
 }
 
 function formatTimestamp(value: unknown) {
@@ -427,7 +428,7 @@ export default function SessionChatScreen() {
     return (
       <View style={[styles.centered, { backgroundColor: palette.background }]}>
         <Text style={[styles.emptyHeadline, { color: palette.text }]}>
-          Something went off-script.
+          Session chat unavailable
         </Text>
         <Text style={[TypeScale.body, styles.emptyBody, { color: palette.icon }]}>
           This session may have been removed, or the link is no longer valid.
@@ -468,17 +469,17 @@ export default function SessionChatScreen() {
             {session.title}
           </Text>
           <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-            {threadError ?? `${session.classId} · ${participantCount} going`}
+            {threadError ?? `${session.classId}, ${participantCount} going`}
           </Text>
         </View>
-        <Pressable
-          accessibilityRole="button"
+        <IconButton
+          accessibilityLabel="View session details"
+          icon="info.circle"
           onPress={() =>
             router.push({ pathname: '/session/[sessionId]', params: { sessionId: session.sessionId } })
           }
-          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
-          <Text style={[TypeScale.label, { color: palette.tint }]}>Details</Text>
-        </Pressable>
+          tone="accent"
+        />
       </View>
 
       {isReadOnly ? (
@@ -520,7 +521,7 @@ export default function SessionChatScreen() {
                         ? 'Not sent'
                         : failed.isRetrying
                           ? 'Retrying…'
-                          : 'Not sent · Tap to retry'}
+                          : 'Not sent. Tap to retry'}
                     </Text>
                   </Pressable>
                 </View>
@@ -536,7 +537,7 @@ export default function SessionChatScreen() {
         ListEmptyComponent={
           threadLoaded ? (
             <View style={[styles.emptyThread, styles.invertedItem]}>
-              <Text style={[styles.emptyHeadline, { color: palette.text }]}>Say hi 👋</Text>
+              <Text style={[styles.emptyHeadline, { color: palette.text }]}>Start the conversation</Text>
               <Text style={[TypeScale.body, styles.emptyBody, { color: palette.icon }]}>
                 Coordinate seats, timing, and what to bring.
               </Text>

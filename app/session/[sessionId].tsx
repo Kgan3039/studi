@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    Pressable,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -17,6 +16,9 @@ import { Avatar } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { IconButton } from '@/components/ui/IconButton';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import {
     Brand,
@@ -412,12 +414,17 @@ export default function SessionDetailScreen() {
         }
         contentContainerStyle={[styles.content, { paddingTop: Space.sm }]}>
         {session ? (
-          <>
+          <ScreenTransition style={styles.transition}>
             <View style={styles.heroBlock}>
-              <Text style={[TypeScale.meta, { color: palette.icon }]} numberOfLines={1}>
-                {locationDisplayName}
-                {session.location?.campusArea ? ` · ${session.location.campusArea}` : ''}
-              </Text>
+              <View style={styles.metaRow}>
+                <IconSymbol color={palette.tint} name="mappin.and.ellipse" size={17} />
+                <Text
+                  style={[TypeScale.meta, styles.metaText, { color: palette.icon }]}
+                  numberOfLines={1}>
+                  {locationDisplayName}
+                  {session.location?.campusArea ? `, ${session.location.campusArea}` : ''}
+                </Text>
+              </View>
               <View style={styles.heroChipRow}>
                 <CourseChip code={session.classId} size="lg" />
                 {isCancelled ? (
@@ -449,7 +456,7 @@ export default function SessionDetailScreen() {
                       show-up % are not in the data model; the verified-UW
                       trust signal is the available metric and stands in. */}
                   <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                    Host · Verified UW student
+                    Host, verified UW student
                   </Text>
                 </View>
                 <Button
@@ -543,7 +550,7 @@ export default function SessionDetailScreen() {
                 </Text>
               )}
               <View style={styles.verifiedRow}>
-                <View style={[styles.verifiedDot, { backgroundColor: Brand.success }]} />
+                <IconSymbol color={Brand.success} name="lock.shield.fill" size={16} />
                 <Text style={[TypeScale.caption, { color: palette.icon }]}>
                   All attendees are verified UW students
                 </Text>
@@ -611,8 +618,8 @@ export default function SessionDetailScreen() {
               </Text>
               <Text style={[TypeScale.body, { color: palette.icon }]}>
                 {session.location?.building ?? 'Campus location'}
-                {' · '}
-                {session.location?.campusArea ?? 'UW–Madison'}
+                {', '}
+                {session.location?.campusArea ?? 'UW Madison'}
               </Text>
               {session.location?.notes ? (
                 <Text style={[TypeScale.caption, { color: palette.icon }]}>
@@ -641,20 +648,15 @@ export default function SessionDetailScreen() {
               <Text style={[TypeScale.caption, styles.statusText, { color: palette.icon }]}>
                 {status}
               </Text>
-              <Pressable
-                accessibilityRole="button"
+              <IconButton
+                accessibilityLabel="Refresh session"
                 disabled={isLoading || isRefreshing}
+                icon="arrow.clockwise"
+                loading={isLoading || isRefreshing}
                 onPress={handleRefresh}
-                style={({ pressed }) => ({ opacity: pressed || isLoading || isRefreshing ? 0.5 : 1 })}>
-                <View style={styles.refreshButtonContent}>
-                  {isLoading || isRefreshing ? (
-                    <ActivityIndicator size="small" color={palette.tint} />
-                  ) : null}
-                  <Text style={[TypeScale.label, { color: palette.tint }]}>Refresh</Text>
-                </View>
-              </Pressable>
+              />
             </View>
-          </>
+          </ScreenTransition>
         ) : (
           <View
             style={[
@@ -703,7 +705,14 @@ export default function SessionDetailScreen() {
             )
           ) : isParticipant ? (
             <View style={styles.ctaStack}>
-              <Button label="✓ Going" variant="success" size="lg" fullWidth />
+              <Button
+                disabled
+                fullWidth
+                icon="checkmark.circle.fill"
+                label="Going"
+                size="lg"
+                variant="success"
+              />
               <Button
                 label="Leave session"
                 variant="ghost"
@@ -739,8 +748,19 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl,
   },
+  transition: {
+    gap: Space.lg,
+  },
   heroBlock: {
     gap: Space.sm + 2,
+  },
+  metaRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  metaText: {
+    flex: 1,
   },
   heroChipRow: {
     flexDirection: 'row',
@@ -838,21 +858,11 @@ const styles = StyleSheet.create({
     gap: Space.sm - 2,
     marginTop: Space.xs,
   },
-  verifiedDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
   statusRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
-  },
-  refreshButtonContent: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.xs,
   },
   statusText: {
     flexShrink: 1,

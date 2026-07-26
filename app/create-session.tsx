@@ -19,7 +19,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SessionCard } from '@/components/session-card';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { IconButton } from '@/components/ui/IconButton';
+import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
+import { SearchBar } from '@/components/ui/SearchBar';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { formatTimeLabel, TimeDropdown } from '@/components/time-dropdown';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
@@ -118,6 +122,34 @@ const DURATION_PRESETS = [
  * range (2–20) without a slider.
  */
 const CAPACITY_PRESETS = [2, 4, 6, 8, 10, 12, 16, 20];
+
+function FormStepHeader({
+  icon,
+  step,
+  title,
+  caption,
+}: {
+  icon: IconSymbolName;
+  step: number;
+  title: string;
+  caption?: string;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+
+  return (
+    <View style={styles.stepHeader}>
+      <View style={styles.stepIcon}>
+        <IconSymbol color={palette.tint} name={icon} size={21} />
+      </View>
+      <View style={styles.stepCopy}>
+        <Text style={[TypeScale.caption, { color: palette.icon }]}>Step {step} of 5</Text>
+        <Text style={[styles.question, { color: palette.text }]}>{title}</Text>
+        {caption ? <Text style={[TypeScale.caption, { color: palette.icon }]}>{caption}</Text> : null}
+      </View>
+    </View>
+  );
+}
 
 /** "HH:MM" + minutes, or null when it would cross midnight (end must be same-day). */
 function addMinutesToTime(time: string, minutes: number): string | null {
@@ -255,7 +287,7 @@ export default function CreateSessionScreen() {
       );
       setStatus(
         profileClasses.length > 0 && loadedLocations.length > 0
-          ? 'Pick a class, spot, and time — under 30 seconds.'
+          ? 'Pick a class, spot, and time. You can post in under 30 seconds.'
           : 'Add classes on your Profile and make sure study spots are available before creating sessions.'
       );
     } catch (error) {
@@ -346,7 +378,7 @@ export default function CreateSessionScreen() {
           (new Date(validatedSchedule.startTimeIso).getTime() - Date.now()) / 3_600_000
         ),
       });
-      setStatus('You’re at the table — classmates can join now.');
+      setStatus('Your session is live. Classmates can join now.');
       setScheduleHint(`Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
       setSessionDate('');
       setStartTime('');
@@ -409,10 +441,16 @@ export default function CreateSessionScreen() {
           styles.content,
           { paddingBottom: insets.bottom + 56, paddingTop: Space.lg },
         ]}>
-        <ScreenHeader title="New session" status={status} />
+        <ScreenHeader
+          onRefresh={handleRefresh}
+          refreshing={isRefreshing}
+          title="New session"
+          status={status}
+        />
 
+        <ScreenTransition style={styles.transition}>
         <View style={styles.section}>
-          <Text style={[styles.question, { color: palette.text }]}>Which class?</Text>
+          <FormStepHeader icon="book.closed" step={1} title="Which class?" />
           {isLoading ? (
             <ActivityIndicator color={palette.tint} />
           ) : classes.length > 0 ? (
@@ -434,22 +472,11 @@ export default function CreateSessionScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.question, { color: palette.text }]}>Where are you studying?</Text>
-          <TextInput
-            autoCapitalize="words"
-            autoCorrect={false}
-            spellCheck={false}
+          <FormStepHeader icon="mappin.and.ellipse" step={2} title="Where are you studying?" />
+          <SearchBar
+            accessibilityLabel="Search study spots"
             onChangeText={setLocationQuery}
             placeholder="Search spots by name, building, or tag"
-            placeholderTextColor={placeholderColor}
-            style={[
-              styles.input,
-              {
-                backgroundColor: palette.surfaceMuted,
-                borderColor: palette.border,
-                color: palette.text,
-              },
-            ]}
             value={locationQuery}
           />
           {isLoading ? (
@@ -483,11 +510,11 @@ export default function CreateSessionScreen() {
                       </Text>
                       <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
                         {location.building}
-                        {aggregate ? `  ·  ★ ${aggregate.averageStars}` : ''}
+                        {aggregate ? `, ${aggregate.averageStars} stars` : ''}
                       </Text>
                     </View>
                     {isSelected ? (
-                      <View style={[styles.seatDot, { backgroundColor: palette.tint }]} />
+                      <IconSymbol color={palette.tint} name="checkmark.circle.fill" size={21} />
                     ) : null}
                   </Pressable>
                 );
@@ -505,7 +532,7 @@ export default function CreateSessionScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.question, { color: palette.text }]}>When does it start?</Text>
+          <FormStepHeader icon="calendar" step={3} title="When does it start?" />
 
           <View
             style={[
@@ -513,26 +540,20 @@ export default function CreateSessionScreen() {
               { backgroundColor: palette.surface, borderColor: palette.border },
             ]}>
             <View style={styles.calendarHeader}>
-              <Pressable
+              <IconButton
+                accessibilityLabel="Previous month"
                 disabled={!canGoToPreviousMonth}
+                icon="chevron.left"
                 onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, -1))}
-                style={[
-                  styles.monthButton,
-                  {
-                    borderColor: palette.border,
-                    opacity: canGoToPreviousMonth ? 1 : 0.35,
-                  },
-                ]}>
-                <Text style={[TypeScale.label, { color: palette.text }]}>{'<'}</Text>
-              </Pressable>
+              />
               <Text style={[TypeScale.label, { color: palette.text }]}>
                 {formatMonthLabel(selectedCalendarMonth)}
               </Text>
-              <Pressable
+              <IconButton
+                accessibilityLabel="Next month"
+                icon="chevron.right"
                 onPress={() => setSelectedCalendarMonth((currentMonth) => addMonths(currentMonth, 1))}
-                style={[styles.monthButton, { borderColor: palette.border }]}>
-                <Text style={[TypeScale.label, { color: palette.text }]}>{'>'}</Text>
-              </Pressable>
+              />
             </View>
 
             <View style={styles.weekdayRow}>
@@ -696,8 +717,12 @@ export default function CreateSessionScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.question, { color: palette.text }]}>How many seats?</Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>Including you</Text>
+          <FormStepHeader
+            caption="The count includes you."
+            icon="person.2.fill"
+            step={4}
+            title="How many seats?"
+          />
           <View style={styles.capacityGrid}>
             {CAPACITY_PRESETS.map((seatCount) => {
               const isSelected = capacity === seatCount;
@@ -727,13 +752,17 @@ export default function CreateSessionScreen() {
             })}
           </View>
           <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            {`Join closes at ${capacity} — you hold the first seat.`}
+            {`Joining closes when ${capacity} seats are filled. Your seat is already counted.`}
           </Text>
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.question, { color: palette.text }]}>What are you working on?</Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>Optional</Text>
+          <FormStepHeader
+            caption="Optional"
+            icon="square.and.pencil"
+            step={5}
+            title="What are you working on?"
+          />
           <TextInput
             onChangeText={setFocusText}
             placeholder="Pset 4: pipelines and caching"
@@ -757,7 +786,7 @@ export default function CreateSessionScreen() {
           <View style={styles.section}>
             <Text style={[styles.question, { color: palette.text }]}>Looks good?</Text>
             <Text style={[TypeScale.caption, { color: palette.icon }]}>
-              This is exactly how classmates will see it.
+              This is what classmates will see.
             </Text>
             <SessionCard session={previewSession} locationName={selectedLocation?.name} />
           </View>
@@ -771,6 +800,7 @@ export default function CreateSessionScreen() {
           disabled={isLoading}
           onPress={handleCreateSession}
         />
+        </ScreenTransition>
       </ScrollView>
       <SuccessToast toast={toast} />
     </KeyboardAvoidingView>
@@ -782,8 +812,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: Space.xl,
     padding: Space.lg + 4,
+  },
+  transition: {
+    gap: Space.xxl,
   },
   question: {
     fontFamily: FontFamily.serifItalic,
@@ -792,6 +824,21 @@ const styles = StyleSheet.create({
   },
   section: {
     gap: Space.md,
+  },
+  stepHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: Space.md,
+  },
+  stepIcon: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
+    width: 28,
+  },
+  stepCopy: {
+    flex: 1,
+    gap: 2,
   },
   chipRow: {
     flexDirection: 'row',
@@ -844,19 +891,6 @@ const styles = StyleSheet.create({
   locationText: {
     flexShrink: 1,
     gap: 2,
-  },
-  seatDot: {
-    borderRadius: Radius.pill,
-    height: 10,
-    width: 10,
-  },
-  monthButton: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    height: 40,
-    justifyContent: 'center',
-    width: 40,
   },
   flexInput: {
     flex: 1,
