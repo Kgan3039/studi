@@ -26,6 +26,13 @@ export function ScreenTransition({ children, style }: ScreenTransitionProps) {
     return () => subscription.remove();
   }, []);
 
+  // Safety net: the content starts at opacity 0 and is revealed by the focus
+  // effect below. If a screen ever mounts already focused, that event doesn't
+  // fire and the screen would stay blank, so settle it visible on mount too.
+  useEffect(() => {
+    progress.setValue(1);
+  }, [progress]);
+
   useFocusEffect(
     useCallback(() => {
       if (reduceMotion) {
