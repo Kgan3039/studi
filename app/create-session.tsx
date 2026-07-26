@@ -330,10 +330,11 @@ export default function CreateSessionScreen() {
           ? currentSelectedLocationId
           : defaultLocationId
       );
+      // Only say something when something is actually wrong.
       setStatus(
         profileClasses.length > 0 && loadedLocations.length > 0
-          ? 'Pick a class, spot, and time. You can post in under 30 seconds.'
-          : 'Add classes on your Profile and make sure study spots are available before creating sessions.'
+          ? ''
+          : 'Add classes on your Profile before creating a session.'
       );
     } catch (error) {
       const message =
@@ -486,8 +487,9 @@ export default function CreateSessionScreen() {
           styles.content,
           { paddingBottom: insets.bottom + 56, paddingTop: Space.lg },
         ]}>
-        {/* The modal's native header already titles this screen; repeating it
-            here would stack two titles on open. */}
+        {/* The modal header titles this screen and the sections below explain
+            themselves, so there's no intro copy here. Only real status — an
+            error or a save result — earns a line. */}
         {status ? (
           <Text style={[TypeScale.meta, styles.formStatus, { color: palette.icon }]}>{status}</Text>
         ) : null}
@@ -997,16 +999,19 @@ const styles = StyleSheet.create({
   capacityGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: Space.sm + 2,
+    gap: Space.sm,
   },
   capacityTile: {
     alignItems: 'center',
-    aspectRatio: 1,
     borderRadius: Radius.md,
     borderWidth: 1,
-    flexBasis: '21%',
+    flexBasis: '22%',
     flexGrow: 1,
     justifyContent: 'center',
+    // Sized to the number it holds. A square tile leaves a big empty box
+    // around a two-character label.
+    minHeight: 48,
+    paddingVertical: Space.sm,
   },
   capacityTileNumber: {
     fontFamily: FontFamily.bodySemiBold,
