@@ -15,7 +15,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -388,53 +390,52 @@ export default function ProfileScreen() {
         <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
       }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      <View style={styles.profileTopAction}>
-        <NotificationCenterButton />
-      </View>
-      {/* Avatar header + name / class-year block (board ProfileScreen ~1761). */}
+      <ScreenHeader title="You" action={<NotificationCenterButton />} />
+
       <View style={styles.identity}>
-        <Avatar name={displayName || currentUser?.email || 'Student'} size="xl" verified />
-        <View style={styles.nameRow}>
+        <Avatar name={displayName || currentUser?.email || 'Student'} size="lg" verified />
+        <View style={styles.identityCopy}>
           <Text style={[styles.identityName, { color: palette.text }]} numberOfLines={1}>
             {displayName || currentUser?.email || 'Student'}
           </Text>
-          <View
-            accessibilityLabel="Verified UW student"
-            style={[styles.verifiedCheck, { backgroundColor: palette.tint }]}>
-            <Text style={styles.verifiedCheckMark}>✓</Text>
-          </View>
+          {academicLine ? (
+            <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
+              {academicLine}
+            </Text>
+          ) : null}
+          <Text style={[TypeScale.meta, { color: palette.icon }]}>
+            Verified @wisc.edu
+          </Text>
+          {bio.trim() ? (
+            <Text style={[TypeScale.body, styles.bioText, { color: palette.text }]}>
+              {bio.trim()}
+            </Text>
+          ) : null}
         </View>
-        {/* Board's "Junior · Computer Science" academic line (design spec §3.12). */}
-        {academicLine ? (
-          <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
-            {academicLine}
-          </Text>
-        ) : null}
-        {bio.trim() ? (
-          <Text style={[TypeScale.body, styles.bioText, { color: palette.text }]}>
-            {bio.trim()}
-          </Text>
-        ) : null}
-        <Text style={[TypeScale.eyebrow, styles.classYear, { color: palette.icon }]}>
-          Verified @wisc.edu
-        </Text>
         <Pressable
           accessibilityRole="button"
           onPress={() => setIsEditingName((editing) => !editing)}
-        >
+          hitSlop={8}>
           <Text style={[TypeScale.label, { color: palette.tint }]}>
             {isEditingName ? 'Done' : 'Edit'}
           </Text>
         </Pressable>
       </View>
 
-      {/* Stats grid (board ProfileScreen ~1771). */}
-      <View style={styles.statsGrid}>
-        {stats.map((stat) => (
+      <View
+        accessibilityLabel="Profile activity"
+        style={[
+          styles.statsGrid,
+          { borderBottomColor: palette.border, borderTopColor: palette.border },
+        ]}>
+        {stats.map((stat, index) => (
           <View
             key={stat.label}
-            style={[styles.statCell, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <Text style={[styles.statValue, { color: palette.tint }]}>{stat.value}</Text>
+            style={[
+              styles.statCell,
+              index > 0 ? { borderLeftColor: palette.border, borderLeftWidth: 1 } : null,
+            ]}>
+            <Text style={[styles.statValue, { color: palette.text }]}>{stat.value}</Text>
             <Text style={[styles.statLabel, { color: palette.icon }]}>{stat.label}</Text>
           </View>
         ))}
@@ -572,11 +573,11 @@ export default function ProfileScreen() {
           }
         />
         {classes.length > 0 ? (
-          <View style={styles.rowList}>
+          <View style={[styles.rowList, { borderTopColor: palette.border }]}>
             {classes.map((classCode) => (
               <View
                 key={classCode}
-                style={[styles.classRow, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+                style={[styles.classRow, { borderBottomColor: palette.border }]}>
                 <View style={styles.classRowBody}>
                   <CourseChip code={classCode} size="sm" />
                   <Text
@@ -680,11 +681,11 @@ export default function ProfileScreen() {
       <View style={styles.section}>
         <SectionHeader eyebrow="Saved locations" />
         {savedLocations.length > 0 ? (
-          <View style={styles.rowList}>
+          <View style={[styles.rowList, { borderTopColor: palette.border }]}>
             {savedLocations.map((location) => (
               <View
                 key={location.name}
-                style={[styles.locationRow, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+                style={[styles.locationRow, { borderBottomColor: palette.border }]}>
                 <Text style={[TypeScale.bodyStrong, styles.locationName, { color: palette.text }]} numberOfLines={1}>
                   {location.name}
                 </Text>
@@ -701,51 +702,46 @@ export default function ProfileScreen() {
         )}
       </View>
 
-      {/* Study Buddies entry — friends, requests, and classmate suggestions
-          live at /friends (design spec §3.9). No new bottom tab: the current
-          5-tab structure stays, with this as the entry point. */}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Study buddies"
-        onPress={() => router.push('/friends' as Href)}
-        style={({ pressed }) => [
-          styles.settingsRow,
-          {
-            backgroundColor: palette.surface,
-            borderColor: palette.border,
-            opacity: pressed ? 0.7 : 1,
-          },
+      <View
+        style={[
+          styles.settingsList,
+          { borderBottomColor: palette.border, borderTopColor: palette.border },
         ]}>
-        <View style={styles.settingsRowBody}>
-          <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Study buddies</Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            Friends, requests, and classmates
-          </Text>
-        </View>
-        <Text style={[TypeScale.heading, { color: palette.icon }]}>›</Text>
-      </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Study buddies"
+          onPress={() => router.push('/friends' as Href)}
+          style={({ pressed }) => [
+            styles.settingsRow,
+            { borderBottomColor: palette.border, opacity: pressed ? 0.55 : 1 },
+          ]}>
+          <View style={styles.settingsRowBody}>
+            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Study buddies</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
+              Friends, requests, and classmates
+            </Text>
+          </View>
+          <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+        </Pressable>
 
-      {/* Settings entry (design spec §3.12 footer Settings link). Privacy,
-          support, sign out, and delete account live there now. */}
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => router.push('/settings' as Href)}
-        style={({ pressed }) => [
-          styles.settingsRow,
-          {
-            backgroundColor: palette.surface,
-            borderColor: palette.border,
-            opacity: pressed ? 0.7 : 1,
-          },
-        ]}>
-        <View style={styles.settingsRowBody}>
-          <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Settings</Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            Notifications, privacy, and account
-          </Text>
-        </View>
-        <Text style={[TypeScale.heading, { color: palette.icon }]}>›</Text>
-      </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
+          onPress={() => router.push('/settings' as Href)}
+          style={({ pressed }) => [
+            styles.settingsRow,
+            styles.settingsRowLast,
+            { opacity: pressed ? 0.55 : 1 },
+          ]}>
+          <View style={styles.settingsRowBody}>
+            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Settings</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
+              Notifications, privacy, and account
+            </Text>
+          </View>
+          <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+        </Pressable>
+      </View>
     </ScrollView>
   );
 }
@@ -765,46 +761,24 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
   },
-  profileTopAction: {
-    alignSelf: 'flex-end',
-    marginBottom: -Space.md,
-  },
   identity: {
     alignItems: 'center',
-    gap: Space.sm,
-  },
-  nameRow: {
-    alignItems: 'center',
     flexDirection: 'row',
-    gap: Space.sm - 2,
-    marginTop: Space.xs,
+    gap: Space.md,
+  },
+  identityCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
   },
   identityName: {
     fontFamily: FontFamily.serifItalic,
-    fontSize: 28,
-    lineHeight: 34,
+    fontSize: 26,
+    lineHeight: 31,
     flexShrink: 1,
-    textAlign: 'center',
-  },
-  verifiedCheck: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    height: 18,
-    justifyContent: 'center',
-    width: 18,
-  },
-  verifiedCheckMark: {
-    color: '#FFFFFF',
-    fontFamily: FontFamily.bodySemiBold,
-    fontSize: 10,
-    lineHeight: 12,
-  },
-  classYear: {
-    marginTop: Space.xs,
   },
   bioText: {
-    maxWidth: 320,
-    textAlign: 'center',
+    marginTop: Space.xs,
   },
   yearRow: {
     flexDirection: 'row',
@@ -813,8 +787,8 @@ const styles = StyleSheet.create({
   },
   yearChip: {
     alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: Radius.md,
+    borderWidth: 1,
     justifyContent: 'center',
     minHeight: 40,
     paddingHorizontal: Space.md + 2,
@@ -830,15 +804,14 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   statsGrid: {
+    borderBottomWidth: 1,
+    borderTopWidth: 1,
     flexDirection: 'row',
-    gap: Space.sm,
   },
   statCell: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
     flex: 1,
-    gap: Space.xs,
+    gap: 2,
     paddingHorizontal: Space.sm,
     paddingVertical: Space.md,
   },
@@ -848,21 +821,17 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   statLabel: {
-    fontFamily: FontFamily.bodySemiBold,
-    fontSize: 9,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
+    ...TypeScale.caption,
   },
   section: {
     gap: Space.md,
   },
   rowList: {
-    gap: Space.sm,
+    borderTopWidth: 1,
   },
   classRow: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
@@ -881,8 +850,7 @@ const styles = StyleSheet.create({
   },
   locationRow: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
@@ -945,10 +913,13 @@ const styles = StyleSheet.create({
     gap: Space.xs,
     padding: Space.md + 2,
   },
+  settingsList: {
+    borderBottomWidth: 1,
+    borderTopWidth: 1,
+  },
   settingsRow: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
@@ -959,5 +930,8 @@ const styles = StyleSheet.create({
   settingsRowBody: {
     flexShrink: 1,
     gap: 2,
+  },
+  settingsRowLast: {
+    borderBottomWidth: 0,
   },
 });
