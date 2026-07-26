@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
   Alert,
+  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -17,10 +18,12 @@ import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { IconButton } from '@/components/ui/IconButton';
+import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
@@ -36,7 +39,11 @@ import {
   type StudySession,
   type UserProfile,
 } from '@/lib/firestore';
-import { getStudyLocationDisplayName } from '@/lib/catalog';
+import {
+  UW_COURSE_CATALOG,
+  formatCourseTitle,
+  getStudyLocationDisplayName,
+} from '@/lib/catalog';
 import type { User } from 'firebase/auth';
 
 type TodaySession = StudySession & { locationName: string };
@@ -149,6 +156,72 @@ function HeroCard({
         <AvatarStack names={attendeeNames} max={3} size="sm" totalCount={going} />
         {action}
       </View>
+    </Pressable>
+  );
+}
+
+/**
+ * A class the user is enrolled in, with the number of upcoming sessions it
+ * currently matches. Doubles as the empty-state next step: every row can start
+ * a session for that class.
+ */
+function ClassRow({
+  code,
+  title,
+  activeCount,
+  onPress,
+  onHost,
+  isLast,
+}: {
+  code: string;
+  title: string;
+  activeCount: number;
+  onPress: () => void;
+  onHost: () => void;
+  isLast: boolean;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${code}, ${activeCount} upcoming ${
+        activeCount === 1 ? 'session' : 'sessions'
+      }`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.classRow,
+        {
+          borderBottomColor: palette.border,
+          borderBottomWidth: isLast ? 0 : 1,
+          opacity: pressed ? 0.6 : 1,
+        },
+        pressed ? styles.pressed : null,
+      ]}>
+      <CourseChip code={code} size="sm" />
+      <View style={styles.classRowBody}>
+        <Text style={[TypeScale.meta, { color: palette.icon }]} numberOfLines={2}>
+          {title}
+        </Text>
+        <Text style={[TypeScale.caption, { color: palette.icon }]}>
+          {activeCount > 0
+            ? `${activeCount} upcoming ${activeCount === 1 ? 'session' : 'sessions'}`
+            : 'No sessions yet'}
+        </Text>
+      </View>
+      {activeCount > 0 ? (
+        <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Start a ${code} session`}
+          hitSlop={8}
+          onPress={onHost}
+          style={({ pressed }) => [styles.classRowAction, { opacity: pressed ? 0.5 : 1 }]}>
+          <Text style={[TypeScale.label, { color: palette.tint }]}>Start one</Text>
+        </Pressable>
+      )}
     </Pressable>
   );
 }
@@ -413,6 +486,27 @@ export default function HomeScreen() {
   const dateEyebrow = new Date()
     .toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 
+  // How many upcoming sessions each saved class currently matches — the number
+  // that makes "your classes" worth looking at rather than a row of labels.
+  const activeByClass = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const session of sessions) {
+      const code = session.classId.trim().toUpperCase();
+      counts.set(code, (counts.get(code) ?? 0) + 1);
+    }
+
+    return counts;
+  }, [sessions]);
+
+  const courseTitlesByCode = useMemo(
+    () =>
+      new Map(
+        UW_COURSE_CATALOG.map((course) => [course.code, formatCourseTitle(course.title)] as const)
+      ),
+    []
+  );
+
   if (!isSignedIn) {
     return null;
   }
@@ -432,14 +526,36 @@ export default function HomeScreen() {
           />
         }
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-        <ScreenHeader
-          onRefresh={handleRefresh}
-          refreshing={isRefreshing}
-          showNotifications
-          subtitle={dateEyebrow}
-          title={`${timeOfDayGreeting()}${savedName.firstName ? `, ${savedName.firstName}` : ''}`}
-          titleStyle={styles.greeting}
-        />
+        {/* Home is the app's front page, so it carries the mark. Other tabs
+            stay title-only. */}
+        <View style={styles.brandRow}>
+          <View style={styles.brandLockup}>
+            <Image
+              accessibilityIgnoresInvertColors
+              source={require('@/assets/images/studi-logo.png')}
+              style={styles.brandMark}
+            />
+            <Text style={[styles.brandWord, { color: palette.text }]}>Studi</Text>
+          </View>
+          <View style={styles.brandActions}>
+            <IconButton
+              accessibilityLabel="Refresh home"
+              disabled={isRefreshing}
+              icon="arrow.clockwise"
+              loading={isRefreshing}
+              onPress={handleRefresh}
+            />
+            <NotificationCenterButton />
+          </View>
+        </View>
+
+        <View style={styles.greetingBlock}>
+          <Text style={[TypeScale.body, { color: palette.icon }]}>{timeOfDayGreeting()},</Text>
+          <Text style={[styles.greetingName, { color: palette.text }]} numberOfLines={1}>
+            {savedName.firstName || 'there'}
+          </Text>
+          <Text style={[TypeScale.meta, { color: palette.icon }]}>{dateEyebrow}</Text>
+        </View>
 
         <ScreenTransition style={styles.transition}>
         {hero ? (
@@ -477,53 +593,94 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        {showEmpty ? (
-          sessionsError ? (
-            <EmptyState
-              icon="seat"
-              headline="Sessions could not load"
-              body={sessionsError}
-              actionLabel="Try again"
-              onAction={loadSessions}
-              style={styles.emptyState}
+        {showEmpty && sessionsError ? (
+          <EmptyState
+            icon="seat"
+            headline="Sessions could not load"
+            body={sessionsError}
+            actionLabel="Try again"
+            onAction={loadSessions}
+            style={styles.emptyState}
+          />
+        ) : null}
+
+        {showEmpty && !sessionsError && profileClasses.length === 0 ? (
+          <EmptyState
+            icon="calendar"
+            headline="Add your classes"
+            body="Studi uses your schedule to find sessions that match."
+            actionLabel="Add classes"
+            onAction={() => router.push('/profile')}
+            style={styles.emptyState}
+          />
+        ) : null}
+
+        {/* With classes saved, a centered empty blob would be a dead end — the
+            class list below already offers the next step, so this stays a
+            single quiet line above it. */}
+        {showEmpty && !sessionsError && profileClasses.length > 0 ? (
+          <View style={styles.quietEmpty}>
+            <Text style={[TypeScale.body, { color: palette.icon }]}>
+              No sessions for your classes yet.
+            </Text>
+            <Button
+              label="Host a session"
+              onPress={() => router.push('/create-session')}
+              style={styles.quietEmptyAction}
             />
-          ) : profileClasses.length === 0 ? (
-            <EmptyState
-              icon="calendar"
-              headline="Add your classes"
-              body="Studi uses your schedule to find relevant sessions."
-              actionLabel="Add classes"
-              onAction={() => router.push('/profile')}
-              style={styles.emptyState}
-            />
-          ) : (
-            <EmptyState
-              icon="seat"
-              headline="No matching sessions yet"
-              body="Create a session and invite classmates to join."
-              actionLabel="Host a session"
-              onAction={() => router.push('/create-session')}
-              style={styles.emptyState}
-            />
-          )
+          </View>
         ) : null}
 
         {profileClasses.length > 0 ? (
           <View style={styles.section}>
-            <SectionHeader eyebrow="Your classes this week" />
-            <View style={styles.chipWrap}>
-              {profileClasses.map((classCode) => (
-                <CourseChip
+            <SectionHeader
+              eyebrow="Your classes"
+              action={
+                <IconButton
+                  accessibilityLabel="Edit your classes"
+                  icon="square.and.pencil"
+                  onPress={() => router.push('/profile')}
+                />
+              }
+            />
+            <View style={[styles.classList, { borderTopColor: palette.border }]}>
+              {profileClasses.map((classCode, index) => (
+                <ClassRow
                   key={classCode}
                   code={classCode}
+                  title={courseTitlesByCode.get(classCode) ?? 'UW–Madison course'}
+                  activeCount={activeByClass.get(classCode) ?? 0}
+                  isLast={index === profileClasses.length - 1}
                   onPress={() =>
                     router.push({ pathname: '/sessions', params: { classId: classCode } })
+                  }
+                  onHost={() =>
+                    router.push({ pathname: '/create-session', params: { classId: classCode } })
                   }
                 />
               ))}
             </View>
           </View>
         ) : null}
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Study buddies"
+          onPress={() => router.push('/friends')}
+          style={({ pressed }) => [
+            styles.buddyRow,
+            { borderColor: palette.border, opacity: pressed ? 0.6 : 1 },
+            pressed ? styles.pressed : null,
+          ]}>
+          <IconSymbol name="person.2.fill" size={22} color={palette.tint} />
+          <View style={styles.buddyCopy}>
+            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Study buddies</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
+              Find classmates in your courses
+            </Text>
+          </View>
+          <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+        </Pressable>
         </ScreenTransition>
       </ScrollView>
       <SuccessToast toast={toast} />
@@ -540,10 +697,38 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
   },
-  greeting: {
+  brandRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  brandLockup: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  brandMark: {
+    height: 26,
+    resizeMode: 'contain',
+    width: 26,
+  },
+  brandWord: {
+    fontFamily: FontFamily.serif,
+    fontSize: 22,
+    lineHeight: 26,
+  },
+  brandActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.xs,
+  },
+  greetingBlock: {
+    gap: 2,
+  },
+  greetingName: {
     fontFamily: FontFamily.serifItalic,
-    fontSize: 32,
-    lineHeight: 36,
+    fontSize: 34,
+    lineHeight: 40,
   },
   transition: {
     gap: Space.xl,
@@ -628,5 +813,48 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     paddingVertical: Space.lg,
+  },
+  // Presses compress slightly to confirm the tap. Nothing moves while idle.
+  pressed: {
+    transform: [{ scale: 0.98 }],
+  },
+  quietEmpty: {
+    gap: Space.md,
+  },
+  quietEmptyAction: {
+    alignSelf: 'flex-start',
+  },
+  classList: {
+    borderTopWidth: 1,
+  },
+  classRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.md,
+    minHeight: 60,
+    paddingVertical: Space.md,
+  },
+  classRowBody: {
+    flex: 1,
+    gap: 1,
+    minWidth: 0,
+  },
+  classRowAction: {
+    paddingVertical: Space.xs,
+  },
+  buddyRow: {
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: Space.md,
+    minHeight: 64,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.md,
+  },
+  buddyCopy: {
+    flex: 1,
+    gap: 1,
+    minWidth: 0,
   },
 });
