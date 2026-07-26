@@ -17,7 +17,8 @@ import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
@@ -431,20 +432,16 @@ export default function HomeScreen() {
           />
         }
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={[TypeScale.meta, { color: palette.icon }]}>{dateEyebrow}</Text>
-            <Text
-              style={[styles.greeting, { color: palette.text }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit>
-              {timeOfDayGreeting()}
-              {savedName.firstName ? `, ${savedName.firstName}` : ''}
-            </Text>
-          </View>
-          <NotificationCenterButton />
-        </View>
+        <ScreenHeader
+          onRefresh={handleRefresh}
+          refreshing={isRefreshing}
+          showNotifications
+          subtitle={dateEyebrow}
+          title={`${timeOfDayGreeting()}${savedName.firstName ? `, ${savedName.firstName}` : ''}`}
+          titleStyle={styles.greeting}
+        />
 
+        <ScreenTransition style={styles.transition}>
         {hero ? (
           <HeroCard
             session={hero}
@@ -527,6 +524,7 @@ export default function HomeScreen() {
             </View>
           </View>
         ) : null}
+        </ScreenTransition>
       </ScrollView>
       <SuccessToast toast={toast} />
     </View>
@@ -542,20 +540,13 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
   },
-  header: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: Space.md,
-  },
-  headerText: {
-    flexShrink: 1,
-    gap: Space.xs + 1,
-  },
   greeting: {
     fontFamily: FontFamily.serifItalic,
-    fontSize: 29,
-    lineHeight: 35,
+    fontSize: 32,
+    lineHeight: 36,
+  },
+  transition: {
+    gap: Space.xl,
   },
   heroCard: {
     borderRadius: Radius.xl,

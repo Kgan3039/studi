@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 import 'react-native-reanimated';
 
 import { StudiLaunchIntro } from '@/components/studi-launch-intro';
+import { Colors, FontFamily } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initAnalytics, track } from '@/lib/analytics';
 import { subscribeToAuthState, waitForAuthReady } from '@/lib/auth';
@@ -48,6 +49,7 @@ export const unstable_settings = {
 
 function RootLayout() {
   const colorScheme = useColorScheme();
+  const palette = Colors[colorScheme ?? 'light'];
   const pathname = usePathname();
   const router = useRouter();
   const segments = useSegments();
@@ -190,6 +192,14 @@ function RootLayout() {
       <Stack
         screenOptions={{
           headerBackTitle: 'Back',
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: palette.background },
+          headerTintColor: palette.text,
+          headerTitleStyle: {
+            fontFamily: FontFamily.bodySemiBold,
+            fontSize: 16,
+          },
+          contentStyle: { backgroundColor: palette.background },
         }}
       >
         {/* Public — always registered. */}

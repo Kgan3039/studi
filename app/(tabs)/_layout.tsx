@@ -67,6 +67,7 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: palette.background,
           borderTopColor: palette.border,
+          paddingTop: 5,
         },
         tabBarLabelStyle: {
           fontFamily: FontFamily.bodySemiBold,
@@ -90,7 +91,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="explore"
         options={{
-          title: 'Map',
+          title: 'Spots',
           tabBarIcon: ({ color }) => <IconSymbol size={26} name="map.fill" color={color} />,
         }}
       />
@@ -104,7 +105,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'You',
+          title: 'Profile',
           tabBarIcon: ({ color }) => <IconSymbol size={26} name="person.crop.circle.fill" color={color} />,
         }}
       />

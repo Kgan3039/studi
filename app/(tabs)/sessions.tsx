@@ -1,13 +1,10 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
-    Pressable,
     RefreshControl,
     ScrollView,
     StyleSheet,
-    Text,
     View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,12 +13,13 @@ import { SessionCard } from '@/components/session-card';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
+import { FilterChip } from '@/components/ui/FilterChip';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
-import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
+import { Colors, Space } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -55,7 +53,7 @@ export default function SessionsScreen() {
   const [showAllClasses, setShowAllClasses] = useState(false);
   const [sessions, setSessions] = useState<SessionListEntry[]>([]);
   const [status, setStatus] = useState('Loading sessions...');
-  const [isLoading, setIsLoading] = useState(true);
+  const [, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [joiningSessionId, setJoiningSessionId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -259,34 +257,46 @@ export default function SessionsScreen() {
     }
   }
 
-  const filterOptions: { label: string; selected: boolean; onPress: () => void }[] =
+  const scopeOptions: { label: string; value: 'mine' | 'all' | 'requested' }[] =
     normalizedRequestedClass
       ? [
           {
             label: normalizedRequestedClass,
-            selected: true,
-            onPress: () => {},
+            value: 'requested',
           },
           {
-            label: 'All classes',
-            selected: false,
-            onPress: () => router.replace('/sessions'),
+            label: 'All sessions',
+            value: 'all',
           },
         ]
       : profileClasses.length > 0
         ? [
             {
               label: 'My classes',
-              selected: !showAllClasses,
-              onPress: () => setShowAllClasses(false),
+              value: 'mine',
             },
             {
-              label: 'All classes',
-              selected: showAllClasses,
-              onPress: () => setShowAllClasses(true),
+              label: 'All sessions',
+              value: 'all',
             },
           ]
         : [];
+  const selectedScope: 'mine' | 'all' | 'requested' = normalizedRequestedClass
+    ? 'requested'
+    : showAllClasses
+      ? 'all'
+      : 'mine';
+
+  function handleScopeChange(scope: 'mine' | 'all' | 'requested') {
+    if (scope === 'all' && normalizedRequestedClass) {
+      router.replace('/sessions');
+      return;
+    }
+
+    if (scope !== 'requested') {
+      setShowAllClasses(scope === 'all');
+    }
+  }
 
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
@@ -297,69 +307,36 @@ export default function SessionsScreen() {
         }
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <ScreenHeader
+        onRefresh={handleRefresh}
+        refreshing={isRefreshing}
+        showNotifications
         title="Sessions"
         status={status}
-        action={
-          <View style={styles.headerActions}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Refresh sessions"
-              disabled={isLoading || isRefreshing}
-              onPress={handleRefresh}
-              style={({ pressed }) => [
-                styles.refreshButton,
-                { opacity: pressed || isLoading || isRefreshing ? 0.5 : 1 },
-              ]}>
-                {isLoading || isRefreshing ? (
-                  <ActivityIndicator size="small" color={palette.tint} />
-                ) : (
-                  <IconSymbol name="arrow.clockwise" size={20} color={palette.tint} />
-                )}
-            </Pressable>
-            <NotificationCenterButton />
-          </View>
-        }
       />
 
+      <ScreenTransition style={styles.transition}>
       <SearchBar
         onChangeText={setSearchQuery}
         placeholder="Search course, title, place, or person"
         value={searchQuery}
       />
 
+      {scopeOptions.length > 0 ? (
+        <SegmentedControl
+          accessibilityLabel="Session scope"
+          onChange={handleScopeChange}
+          options={scopeOptions}
+          value={selectedScope}
+        />
+      ) : null}
+
       <View style={styles.filterRow}>
-        {[
-          ...filterOptions,
-          {
-            label: 'Today',
-            selected: todayOnly,
-            onPress: () => setTodayOnly((current) => !current),
-          },
-        ].map((option) => (
-          <Pressable
-            key={option.label}
-            accessibilityRole="button"
-            accessibilityState={{ selected: option.selected }}
-            onPress={option.onPress}
-            style={[
-              styles.filterPill,
-              option.selected
-                ? { backgroundColor: palette.tint }
-                : {
-                    backgroundColor: palette.surface,
-                    borderColor: palette.border,
-                    borderWidth: StyleSheet.hairlineWidth * 2,
-                  },
-            ]}>
-            <Text
-              style={[
-                TypeScale.label,
-                { color: option.selected ? '#FFFFFF' : palette.icon },
-              ]}>
-              {option.label}
-            </Text>
-          </Pressable>
-        ))}
+        <FilterChip
+          icon="calendar"
+          label="Today only"
+          onPress={() => setTodayOnly((current) => !current)}
+          selected={todayOnly}
+        />
       </View>
 
       {deptOptions.length > 1 ? (
@@ -442,6 +419,7 @@ export default function SessionsScreen() {
           onAction={() => handleCreateSession(normalizedRequestedClass || undefined)}
         />
       )}
+      </ScreenTransition>
       </ScrollView>
       <SuccessToast toast={toast} />
     </View>
@@ -457,16 +435,8 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
   },
-  headerActions: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.sm,
-  },
-  refreshButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
+  transition: {
+    gap: Space.lg,
   },
   filterRow: {
     flexDirection: 'row',
@@ -477,14 +447,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Space.sm,
-  },
-  filterPill: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: Radius.md,
-    minHeight: 36,
-    paddingHorizontal: Space.md + 2,
-    paddingVertical: Space.xs + 2,
   },
   list: {
     gap: Space.md,

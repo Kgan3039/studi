@@ -16,8 +16,8 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -314,7 +314,7 @@ export default function ProfileScreen() {
   // "Junior · Computer Science · she/her" — only the fields the user filled in.
   const academicLine = [year, major.trim(), pronouns.trim()]
     .filter(Boolean)
-    .join(' · ');
+    .join(', ');
   const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
   const inputColors = {
     backgroundColor: palette.surfaceMuted,
@@ -389,8 +389,14 @@ export default function ProfileScreen() {
         <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
       }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      <ScreenHeader title="You" action={<NotificationCenterButton />} />
+      <ScreenHeader
+        onRefresh={handleRefresh}
+        refreshing={isRefreshing}
+        showNotifications
+        title="Profile"
+      />
 
+      <ScreenTransition style={styles.transition}>
       <View style={styles.identity}>
         <Avatar name={displayName || currentUser?.email || 'Student'} size="lg" verified />
         <View style={styles.identityCopy}>
@@ -438,6 +444,54 @@ export default function ProfileScreen() {
             <Text style={[styles.statLabel, { color: palette.icon }]}>{stat.label}</Text>
           </View>
         ))}
+      </View>
+
+      <View
+        accessibilityLabel="Profile shortcuts"
+        style={[
+          styles.settingsList,
+          { borderBottomColor: palette.border, borderTopColor: palette.border },
+        ]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Study buddies"
+          onPress={() => router.push('/friends' as Href)}
+          style={({ pressed }) => [
+            styles.settingsRow,
+            { borderBottomColor: palette.border, opacity: pressed ? 0.55 : 1 },
+          ]}>
+          <View style={styles.settingsIcon}>
+            <IconSymbol name="person.2.fill" size={22} color={palette.tint} />
+          </View>
+          <View style={styles.settingsRowBody}>
+            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Study buddies</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
+              Friends, requests, and classmates
+            </Text>
+          </View>
+          <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
+          onPress={() => router.push('/settings' as Href)}
+          style={({ pressed }) => [
+            styles.settingsRow,
+            styles.settingsRowLast,
+            { opacity: pressed ? 0.55 : 1 },
+          ]}>
+          <View style={styles.settingsIcon}>
+            <IconSymbol name="gearshape.fill" size={22} color={palette.tint} />
+          </View>
+          <View style={styles.settingsRowBody}>
+            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Settings</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
+              Notifications, privacy, and account
+            </Text>
+          </View>
+          <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+        </Pressable>
       </View>
 
       {isEditingName ? (
@@ -539,7 +593,7 @@ export default function ProfileScreen() {
               maxLength={PROFILE_BIO_MAX_LENGTH}
               multiline
               onChangeText={setBio}
-              placeholder="Short bio — what are you studying toward?"
+              placeholder="What are you studying toward?"
               placeholderTextColor={placeholderColor}
               style={[styles.input, styles.bioInput, inputColors]}
               value={bio}
@@ -582,7 +636,7 @@ export default function ProfileScreen() {
                   <Text
                     style={[TypeScale.bodyStrong, styles.classTitle, { color: palette.text }]}
                     numberOfLines={1}>
-                    {courseTitlesByCode.get(classCode) ?? 'UW–Madison course'}
+                    {courseTitlesByCode.get(classCode) ?? 'UW Madison course'}
                   </Text>
                 </View>
                 <Text style={[TypeScale.label, { color: palette.icon }]}>
@@ -634,7 +688,7 @@ export default function ProfileScreen() {
                       {course.title}
                     </Text>
                     <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-                      {course.subjectName} · {course.credits}
+                      {course.subjectName}, {course.credits}
                     </Text>
                   </Pressable>
                 ))
@@ -655,7 +709,7 @@ export default function ProfileScreen() {
                   <Text
                     style={[TypeScale.body, styles.classTitle, { color: palette.text }]}
                     numberOfLines={1}>
-                    {courseTitlesByCode.get(classCode) ?? 'UW–Madison course'}
+                    {courseTitlesByCode.get(classCode) ?? 'UW Madison course'}
                   </Text>
                   <Pressable
                     accessibilityRole="button"
@@ -701,46 +755,7 @@ export default function ProfileScreen() {
         )}
       </View>
 
-      <View
-        style={[
-          styles.settingsList,
-          { borderBottomColor: palette.border, borderTopColor: palette.border },
-        ]}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Study buddies"
-          onPress={() => router.push('/friends' as Href)}
-          style={({ pressed }) => [
-            styles.settingsRow,
-            { borderBottomColor: palette.border, opacity: pressed ? 0.55 : 1 },
-          ]}>
-          <View style={styles.settingsRowBody}>
-            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Study buddies</Text>
-            <Text style={[TypeScale.caption, { color: palette.icon }]}>
-              Friends, requests, and classmates
-            </Text>
-          </View>
-          <IconSymbol name="chevron.right" size={18} color={palette.icon} />
-        </Pressable>
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Settings"
-          onPress={() => router.push('/settings' as Href)}
-          style={({ pressed }) => [
-            styles.settingsRow,
-            styles.settingsRowLast,
-            { opacity: pressed ? 0.55 : 1 },
-          ]}>
-          <View style={styles.settingsRowBody}>
-            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Settings</Text>
-            <Text style={[TypeScale.caption, { color: palette.icon }]}>
-              Notifications, privacy, and account
-            </Text>
-          </View>
-          <IconSymbol name="chevron.right" size={18} color={palette.icon} />
-        </Pressable>
-      </View>
+      </ScreenTransition>
     </ScrollView>
   );
 }
@@ -759,6 +774,9 @@ const styles = StyleSheet.create({
     gap: Space.xl,
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
+  },
+  transition: {
+    gap: Space.xl,
   },
   identity: {
     alignItems: 'center',
@@ -926,8 +944,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.md + 2,
     paddingVertical: Space.sm,
   },
+  settingsIcon: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 28,
+  },
   settingsRowBody: {
-    flexShrink: 1,
+    flex: 1,
     gap: 2,
   },
   settingsRowLast: {

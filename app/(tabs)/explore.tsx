@@ -18,8 +18,10 @@ import { CampusMap } from '@/components/campus-map';
 import type { MapSessionTiming } from '@/components/campus-map.types';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
+import { FilterChip } from '@/components/ui/FilterChip';
+import type { IconSymbolName } from '@/components/ui/icon-symbol';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
 import { Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
 import { getAtmosphereFiltersForLocationTags } from '@/data/location-rating-options';
@@ -47,6 +49,14 @@ const MAP_FILTERS: { id: MapFilter; label: string }[] = [
   { id: 'my-classes', label: 'My classes' },
   { id: 'quiet', label: 'Quiet spots' },
 ];
+
+const MAP_FILTER_ICONS: Record<MapFilter, IconSymbolName> = {
+  all: 'line.3.horizontal.decrease',
+  live: 'clock',
+  'next-hour': 'calendar',
+  'my-classes': 'person.2.fill',
+  quiet: 'book.closed',
+};
 
 function isLive(session: StudySession, now: number) {
   const start = getTimestampMillis(session.startTime);
@@ -455,16 +465,14 @@ export default function StudyLocationsScreen() {
       style={[styles.screen, { backgroundColor: palette.background }]}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <ScreenHeader
+        onRefresh={handleRefresh}
+        refreshing={isRefreshing}
+        showNotifications
         title="Study spots"
         status={loadMessage}
-        action={
-          <View style={styles.headerActions}>
-            {isLoading ? <ActivityIndicator color={palette.tint} size="small" /> : null}
-            <NotificationCenterButton />
-          </View>
-        }
       />
 
+      <ScreenTransition style={styles.transition}>
       <SearchBar
           accessibilityLabel="Search study spots and sessions"
           onChangeText={setSearchQuery}
@@ -480,27 +488,13 @@ export default function StudyLocationsScreen() {
           const isSelected = selectedFilter === filter.id;
 
           return (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ selected: isSelected }}
+            <FilterChip
+              icon={MAP_FILTER_ICONS[filter.id]}
               key={filter.id}
+              label={filter.label}
               onPress={() => setSelectedFilter(filter.id)}
-              style={({ pressed }) => [
-                styles.filterChip,
-                isSelected
-                  ? { backgroundColor: palette.tint }
-                  : {
-                      backgroundColor: palette.surface,
-                      borderColor: palette.border,
-                      borderWidth: StyleSheet.hairlineWidth * 2,
-                    },
-                pressed && styles.pressed,
-              ]}>
-              <Text
-                style={[TypeScale.label, { color: isSelected ? '#FFFFFF' : palette.icon }]}>
-                {filter.label}
-              </Text>
-            </Pressable>
+              selected={isSelected}
+            />
           );
         })}
       </ScrollView>
@@ -712,6 +706,7 @@ export default function StudyLocationsScreen() {
           />
         ) : null}
       </View>
+      </ScreenTransition>
     </ScrollView>
   );
 }
@@ -730,20 +725,12 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 8,
   },
-  headerActions: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.sm,
+  transition: {
+    gap: Space.md,
   },
   filterRail: {
     gap: Space.sm,
     paddingRight: Space.lg,
-  },
-  filterChip: {
-    borderRadius: Radius.md,
-    justifyContent: 'center',
-    minHeight: 36,
-    paddingHorizontal: Space.md + 2,
   },
   mapAndSheet: {
     gap: Space.md,
