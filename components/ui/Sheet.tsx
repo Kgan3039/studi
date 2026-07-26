@@ -27,10 +27,10 @@ export type SheetProps = {
 };
 
 /**
- * The one editing surface in Studi: content opens over its screen instead of
- * pushing a route or expanding an inline panel, so the thing being edited stays
- * in view behind it. Dismissal is always available three ways — the close
- * button, the scrim, and the hardware back gesture.
+ * The one editing surface in Studi. It fades in over the screen and darkens
+ * what's behind it — the same behaviour as the notification panel — so opening
+ * an editor never looks like navigating somewhere new. Dismissal is always
+ * available three ways: the close button, the scrim, and the back gesture.
  */
 export function Sheet({ visible, onClose, title, subtitle, footer, children }: SheetProps) {
   const colorScheme = useColorScheme() ?? 'light';
@@ -39,7 +39,7 @@ export function Sheet({ visible, onClose, title, subtitle, footer, children }: S
 
   return (
     <Modal
-      animationType="slide"
+      animationType="fade"
       onRequestClose={onClose}
       statusBarTranslucent
       transparent
@@ -47,8 +47,8 @@ export function Sheet({ visible, onClose, title, subtitle, footer, children }: S
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.overlay}>
-        {/* Declared first so it sits behind the sheet: taps above the sheet
-            land on the scrim, taps inside it do not. */}
+        {/* Declared first so it sits behind the panel: taps outside land on the
+            scrim, taps inside it do not. */}
         <Pressable
           accessibilityLabel={`Close ${title.toLowerCase()}`}
           accessibilityRole="button"
@@ -58,50 +58,61 @@ export function Sheet({ visible, onClose, title, subtitle, footer, children }: S
         <View
           accessibilityViewIsModal
           style={[
-            styles.sheet,
+            styles.panel,
             Elevation.e3,
             {
               backgroundColor: palette.background,
               borderColor: palette.border,
-              paddingBottom: Math.max(insets.bottom, Space.lg),
+              marginTop: insets.top + Space.md,
+              maxHeight: '82%',
             },
           ]}>
-            <View style={[styles.header, { borderBottomColor: palette.border }]}>
-              <View style={styles.headerCopy}>
-                <Text style={[TypeScale.h2, { color: palette.text }]} numberOfLines={1}>
-                  {title}
+          <View style={[styles.header, { borderBottomColor: palette.border }]}>
+            <View style={styles.headerCopy}>
+              <Text style={[TypeScale.h2, { color: palette.text }]} numberOfLines={1}>
+                {title}
+              </Text>
+              {subtitle ? (
+                <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={2}>
+                  {subtitle}
                 </Text>
-                {subtitle ? (
-                  <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={2}>
-                    {subtitle}
-                  </Text>
-                ) : null}
-              </View>
-              <Pressable
-                accessibilityLabel="Close"
-                accessibilityRole="button"
-                hitSlop={8}
-                onPress={onClose}
-                style={({ pressed }) => [
-                  styles.closeButton,
-                  {
-                    backgroundColor: palette.surfaceMuted,
-                    opacity: pressed ? 0.6 : 1,
-                  },
-                ]}>
-                <IconSymbol name="xmark" size={17} color={palette.text} />
-              </Pressable>
+              ) : null}
             </View>
+            <Pressable
+              accessibilityLabel="Close"
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={onClose}
+              style={({ pressed }) => [
+                styles.closeButton,
+                {
+                  backgroundColor: palette.surfaceMuted,
+                  opacity: pressed ? 0.6 : 1,
+                  transform: [{ scale: pressed ? 0.94 : 1 }],
+                },
+              ]}>
+              <IconSymbol name="xmark" size={17} color={palette.text} />
+            </Pressable>
+          </View>
 
-            <ScrollView
-              contentContainerStyle={styles.body}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}>
-              {children}
-            </ScrollView>
+          <ScrollView
+            contentContainerStyle={styles.body}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}>
+            {children}
+          </ScrollView>
 
           {footer ? (
-            <View style={[styles.footer, { borderTopColor: palette.border }]}>{footer}</View>
+            <View
+              style={[
+                styles.footer,
+                {
+                  borderTopColor: palette.border,
+                  paddingBottom: Math.max(insets.bottom, Space.md),
+                },
+              ]}>
+              {footer}
+            </View>
           ) : null}
         </View>
       </KeyboardAvoidingView>
@@ -111,15 +122,15 @@ export function Sheet({ visible, onClose, title, subtitle, footer, children }: S
 
 const styles = StyleSheet.create({
   overlay: {
-    backgroundColor: 'rgba(18, 24, 21, 0.32)',
+    backgroundColor: 'rgba(18, 24, 21, 0.22)',
     flex: 1,
-    justifyContent: 'flex-end',
+    justifyContent: 'flex-start',
   },
-  sheet: {
-    borderTopLeftRadius: Radius.xl + 4,
-    borderTopRightRadius: Radius.xl + 4,
+  panel: {
+    borderRadius: Radius.xl,
     borderWidth: 1,
-    maxHeight: '88%',
+    marginHorizontal: Space.md,
+    overflow: 'hidden',
   },
   header: {
     alignItems: 'flex-start',
@@ -128,7 +139,7 @@ const styles = StyleSheet.create({
     gap: Space.md,
     justifyContent: 'space-between',
     paddingBottom: Space.md,
-    paddingHorizontal: Space.lg + 4,
+    paddingHorizontal: Space.lg,
     paddingTop: Space.lg,
   },
   headerCopy: {
@@ -145,13 +156,13 @@ const styles = StyleSheet.create({
   },
   body: {
     gap: Space.lg,
-    paddingHorizontal: Space.lg + 4,
-    paddingTop: Space.lg,
     paddingBottom: Space.lg,
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
   },
   footer: {
     borderTopWidth: 1,
-    paddingHorizontal: Space.lg + 4,
+    paddingHorizontal: Space.lg,
     paddingTop: Space.md,
   },
 });

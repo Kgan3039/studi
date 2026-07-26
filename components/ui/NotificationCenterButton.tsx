@@ -362,14 +362,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderColor: '#FFFFFF',
     borderRadius: Radius.pill,
-    borderWidth: 2,
+    borderWidth: 1.5,
     justifyContent: 'center',
-    minHeight: 18,
-    minWidth: 18,
-    paddingHorizontal: 4,
+    minHeight: 16,
+    minWidth: 16,
+    paddingHorizontal: 3,
     position: 'absolute',
-    right: -5,
-    top: -5,
+    // The button is a 44pt target around a 22pt bell, so anchoring to the
+    // button's corner leaves the count floating in empty space. These offsets
+    // sit it on the bell itself.
+    right: 5,
+    top: 4,
   },
   countText: {
     color: '#FFFFFF',
