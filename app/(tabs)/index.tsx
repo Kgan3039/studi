@@ -631,8 +631,6 @@ export default function HomeScreen() {
             actions anchored right. The warmth comes from the name, not from a
             different layout. */}
         <ScreenHeader
-          onRefresh={handleRefresh}
-          refreshing={isRefreshing}
           showNotifications
           status={dateEyebrow}
           subtitle={timeOfDayGreeting()}

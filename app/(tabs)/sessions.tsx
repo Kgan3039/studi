@@ -339,8 +339,6 @@ export default function SessionsScreen() {
             onPress={() => handleCreateSession()}
           />
         }
-        onRefresh={handleRefresh}
-        refreshing={isRefreshing}
         showNotifications
         title="Sessions"
         status={status}

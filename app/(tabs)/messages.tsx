@@ -120,8 +120,6 @@ export default function MessagesScreen() {
       }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <ScreenHeader
-        onRefresh={handleRefresh}
-        refreshing={isRefreshing}
         showNotifications
         title="Messages"
       />

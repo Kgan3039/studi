@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 
 import { Colors, Space, TypeScale } from '@/constants/theme';
-import { IconButton } from '@/components/ui/IconButton';
 import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
@@ -20,8 +19,6 @@ export type ScreenHeaderProps = {
   status?: string;
   action?: ReactNode;
   showNotifications?: boolean;
-  onRefresh?: () => void;
-  refreshing?: boolean;
   align?: 'start' | 'center';
   titleStyle?: StyleProp<TextStyle>;
   style?: StyleProp<ViewStyle>;
@@ -37,8 +34,6 @@ export function ScreenHeader({
   status,
   action,
   showNotifications = false,
-  onRefresh,
-  refreshing = false,
   align = 'start',
   titleStyle,
   style,
@@ -47,7 +42,7 @@ export function ScreenHeader({
   const palette = Colors[colorScheme];
   const centered = align === 'center';
   const [actionWidth, setActionWidth] = useState(0);
-  const hasActions = !!action || !!onRefresh || showNotifications;
+  const hasActions = !!action || showNotifications;
 
   function handleActionLayout(event: LayoutChangeEvent) {
     if (!centered) {
@@ -111,15 +106,6 @@ export function ScreenHeader({
                 top of this row next to the taller icon buttons. Wrapping it
                 lets the row centre it like everything else. */}
             {action ? <View style={styles.actionSlot}>{action}</View> : null}
-            {onRefresh ? (
-              <IconButton
-                accessibilityLabel={`Refresh ${title.toLowerCase()}`}
-                disabled={refreshing}
-                icon="arrow.clockwise"
-                loading={refreshing}
-                onPress={onRefresh}
-              />
-            ) : null}
             {showNotifications ? <NotificationCenterButton /> : null}
           </View>
         ) : null}
