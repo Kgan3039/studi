@@ -38,6 +38,39 @@ service cloud.firestore {
         || existsAfter(/databases/$(database)/documents/userBlocks/$(userB + '__' + userA));
     }
 
+    // ---- Deterministic `{uidA}__{uidB}` pair IDs ----------------------
+    // Shared by every collection keyed on a uid pair: conversations,
+    // userBlocks, friendRequests, friendships.
+
+    // A safe pair-ID component. Studi accounts are created ONLY through
+    // Firebase email/password auth (no Admin createUser / importUsers / custom
+    // tokens anywhere in the codebase), so every uid is a Firebase-generated
+    // [A-Za-z0-9] string — it never contains `_`, `-`, or `__`. Enforcing this
+    // at write makes `{a}__{b}` an unambiguous, non-empty, delimiter-free
+    // encoding (mirrors functions/pair-id.js SAFE_UID_PATTERN and the client).
+    function isSafeUidComponent(value) {
+      return value is string && value.matches('^[A-Za-z0-9]{1,128}$');
+    }
+
+    // Membership derived from the deterministic doc ID itself, not the doc
+    // body. Every pair collection keys on `{uidA}__{uidB}`, so splitting the id
+    // yields the exact pair. Gating `get` on this — rather than on
+    // `resource == null || <body check>` — means a missing doc and an existing
+    // doc are BOTH denied to an outsider, closing the existence-probing side
+    // channel (a non-member can no longer tell "missing" from "denied").
+    // Malformed ids are rejected: exactly two segments, each a safe non-empty
+    // uid component, and the two members must be DISTINCT (so a self-pair id
+    // like `uid__uid` fails closed — no real request/friendship/conversation
+    // pairs a user with themselves). So empty segments (`__x`), `>2`-part ids,
+    // and self-pairs are all denied.
+    function isDeterministicPairMember(docId) {
+      return docId.split('__').size() == 2
+        && isSafeUidComponent(docId.split('__')[0])
+        && isSafeUidComponent(docId.split('__')[1])
+        && docId.split('__')[0] != docId.split('__')[1]
+        && request.auth.uid in docId.split('__');
+    }
+
     function rateLimitRef(userId, action) {
       return /databases/$(database)/documents/rateLimits/$(userId)/actions/$(action);
     }
@@ -237,6 +270,27 @@ service cloud.firestore {
     // Times are Firestore Timestamps (PR 5 client migration).
     // ------------------------------------------------------------------
 
+    // participantIds is a SET, not a bag: seat math counts entries
+    // (app/session/[sessionId].tsx) and the group-chat fanout ceiling is judged
+    // on the array length, so a duplicate entry silently consumes a seat and
+    // inflates the fanout count. The subset tests in isHostEdit/isSelfJoin use
+    // toSet(), which collapses duplicates — this is the check that keeps the
+    // stored array honest. Enforced on the INCOMING value only, and the host
+    // can always satisfy it (a host edit may only ever remove members, so a
+    // deduplicated array is always a legal write).
+    function hasUniqueParticipantIds(participantIds) {
+      return participantIds.toSet().size() == participantIds.size();
+    }
+
+    // Hard ceiling on seats, matching MAX_GROUP_CHAT_PARTICIPANTS in
+    // functions/notification-validation.js and lib/firestore.ts (change all
+    // three together). Capacity already caps every session created by the
+    // current client at 20; this bounds the array itself, including on legacy
+    // sessions that carry no capacity field.
+    function isWithinParticipantCeiling(participantIds) {
+      return participantIds.size() <= 20;
+    }
+
     // Capacity counts the host (PR: session capacity). Optional so sessions
     // created before the field existed stay valid — absent means unlimited.
     function hasValidCapacity(data) {
@@ -284,6 +338,16 @@ service cloud.firestore {
         && affectedKeys().hasOnly(['title', 'locationId', 'startTime', 'endTime',
                                    'status', 'participantIds', 'capacity', 'updatedAt'])
         && hasValidCapacity(incoming())
+        // Duplicate padding was the one way a host could grow participantIds
+        // past the subset test below (duplicates of a seated member collapse in
+        // toSet()). Always enforced — a deduplicated array is always writable.
+        && hasUniqueParticipantIds(incoming().participantIds)
+        // Never grow past the ceiling. The second arm keeps an oversized legacy
+        // session editable at all: its host can still retitle, reschedule,
+        // cancel, and kick without first having to remove people, because the
+        // subset test already makes growth in MEMBERS impossible.
+        && (isWithinParticipantCeiling(incoming().participantIds)
+            || incoming().participantIds.size() <= resource.data.participantIds.size())
         // Host may loosen but never shrink below the people already seated
         // (post-state count, so a simultaneous kick + reduce is judged fairly):
         && (!('capacity' in incoming())
@@ -319,6 +383,12 @@ service cloud.firestore {
         && incoming().participantIds.toSet().intersection(
              resource.data.participantIds.toSet()
            ) == resource.data.participantIds.toSet()
+        // Seats stay a bounded, duplicate-free set. Capacity already caps every
+        // session the current client creates; this also bounds joins on legacy
+        // sessions that carry no capacity field, where the array was otherwise
+        // free to grow without limit.
+        && hasUniqueParticipantIds(incoming().participantIds)
+        && isWithinParticipantCeiling(incoming().participantIds)
         // Capacity is the seat ceiling (host included). Legacy sessions
         // without the field stay unlimited. This is the final enforcement
         // layer behind the client's transactional join.
@@ -394,6 +464,14 @@ service cloud.firestore {
     // blocks enforced at create AND per message.
     // ------------------------------------------------------------------
 
+    // The participant who is not the caller. Safe because isValidNewConversation
+    // has already pinned the list to exactly two entries containing the caller.
+    function conversationCounterpart() {
+      return incoming().participantIds[0] == request.auth.uid
+        ? incoming().participantIds[1]
+        : incoming().participantIds[0];
+    }
+
     function isValidNewConversation(conversationId) {
       return incoming().keys().hasOnly([
           'participantIds', 'participantKey',
@@ -416,15 +494,23 @@ service cloud.firestore {
         && incoming().lastMessageAt == request.time
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
+        // Threads only open against real accounts — no junk docs parked at
+        // made-up uids, matching the friendRequests standard.
+        && exists(/databases/$(database)/documents/users/$(conversationCounterpart()))
         && !isBlockedEitherWay(incoming().participantIds[0], incoming().participantIds[1]);
     }
 
     match /conversations/{conversationId} {
+      // Membership by deterministic id, exactly like friendRequests and
+      // friendships: getOrCreateDirectConversation probes `{sorted}` before it
+      // knows whether the thread exists, so a participant's get must be allowed
+      // on a missing doc. Gating on the id rather than on `!exists() ||
+      // <body check>` means an OUTSIDER is denied identically whether the
+      // thread exists or not — the previous form let a non-participant tell
+      // "missing" (allowed, empty snapshot) from "exists" (permission-denied),
+      // an oracle over who has DMed whom across the whole user base.
       allow get: if isVerifiedUwUser()
-        && (
-          !exists(/databases/$(database)/documents/conversations/$(conversationId))
-          || request.auth.uid in resource.data.participantIds
-        );
+        && isDeterministicPairMember(conversationId);
       allow list: if isVerifiedUwUser()
         && request.auth.uid in resource.data.participantIds;
       allow create: if isVerifiedUwUser() && isValidNewConversation(conversationId);
@@ -558,6 +644,11 @@ service cloud.firestore {
         && incoming().blockerUserId == request.auth.uid
         && incoming().blockedUserId is string
         && incoming().blockedUserId != request.auth.uid
+        // Keeps `{blocker}__{blocked}` an unambiguous two-segment id, matching
+        // friendRequests/friendships. Without it a `__`-bearing blockedUserId
+        // mints a 3-segment doc that no isBlockedEitherWay lookup can ever
+        // match — an inert doc masquerading as a block.
+        && isSafeUidComponent(incoming().blockedUserId)
         && blockId == incoming().blockerUserId + '__' + incoming().blockedUserId
         && incoming().createdAt == request.time;
       allow update: if false;
@@ -606,35 +697,6 @@ service cloud.firestore {
       return userA < userB
         ? /databases/$(database)/documents/friendships/$(userA + '__' + userB)
         : /databases/$(database)/documents/friendships/$(userB + '__' + userA);
-    }
-
-    // A safe pair-ID component. Studi accounts are created ONLY through
-    // Firebase email/password auth (no Admin createUser / importUsers / custom
-    // tokens anywhere in the codebase), so every uid is a Firebase-generated
-    // [A-Za-z0-9] string — it never contains `_`, `-`, or `__`. Enforcing this
-    // at write makes `{a}__{b}` an unambiguous, non-empty, delimiter-free
-    // encoding (mirrors functions/pair-id.js SAFE_UID_PATTERN and the client).
-    function isSafeUidComponent(value) {
-      return value is string && value.matches('^[A-Za-z0-9]{1,128}$');
-    }
-
-    // Membership derived from the deterministic doc ID itself, not the doc
-    // body. Both collections key on `{uidA}__{uidB}`, so splitting the id
-    // yields the exact pair. Gating `get` on this — rather than on
-    // `resource == null || <body check>` — means a missing doc and an existing
-    // doc are BOTH denied to an outsider, closing the existence-probing side
-    // channel (a non-member can no longer tell "missing" from "denied").
-    // Malformed ids are rejected: exactly two segments, each a safe non-empty
-    // uid component, and the two members must be DISTINCT (so a self-pair id
-    // like `uid__uid` fails closed — no real request/friendship pairs a user
-    // with themselves). So empty segments (`__x`), `>2`-part ids, and self-pairs
-    // are all denied.
-    function isDeterministicPairMember(docId) {
-      return docId.split('__').size() == 2
-        && isSafeUidComponent(docId.split('__')[0])
-        && isSafeUidComponent(docId.split('__')[1])
-        && docId.split('__')[0] != docId.split('__')[1]
-        && request.auth.uid in docId.split('__');
     }
 
     match /friendRequests/{requestId} {
