@@ -203,7 +203,7 @@ export function NotificationCenterButton() {
         statusBarTranslucent
         transparent
         visible={isOpen}>
-        <View style={styles.overlay}>
+        <View style={[styles.overlay, { backgroundColor: 'rgba(18, 24, 21, 0.14)' }]}>
           <Pressable
             accessibilityLabel="Close notifications"
             accessibilityRole="button"
@@ -242,7 +242,7 @@ export function NotificationCenterButton() {
                 <ActivityIndicator color={palette.tint} />
               </View>
             ) : previewItems.length > 0 ? (
-              <View style={styles.previewList}>
+              <View style={[styles.previewList, { borderTopColor: palette.border }]}>
                 {previewItems.map((item) => {
                   const unread = !item.readAt;
                   return (
@@ -254,22 +254,15 @@ export function NotificationCenterButton() {
                       style={({ pressed }) => [
                         styles.previewRow,
                         {
-                          backgroundColor: unread ? palette.surface : palette.surfaceMuted,
-                          borderColor: unread ? `${palette.tint}40` : palette.border,
+                          borderBottomColor: palette.border,
                           opacity: pressed ? 0.7 : 1,
                         },
                       ]}>
-                      <View
-                        style={[
-                          styles.previewIcon,
-                          { backgroundColor: unread ? `${palette.tint}16` : palette.surface },
-                        ]}>
-                        <MaterialIcons
-                          color={unread ? palette.tint : palette.icon}
-                          name={ICON_BY_TYPE[item.type] ?? 'notifications-none'}
-                          size={18}
-                        />
-                      </View>
+                      <MaterialIcons
+                        color={unread ? palette.tint : palette.icon}
+                        name={ICON_BY_TYPE[item.type] ?? 'notifications-none'}
+                        size={21}
+                      />
                       <View style={styles.previewCopy}>
                         <View style={styles.previewTitleRow}>
                           <Text
@@ -305,7 +298,7 @@ export function NotificationCenterButton() {
               onPress={handleViewAll}
               style={({ pressed }) => [
                 styles.viewAllButton,
-                { backgroundColor: palette.surface, borderColor: palette.border, opacity: pressed ? 0.7 : 1 },
+                { opacity: pressed ? 0.7 : 1 },
               ]}>
               <Text style={[TypeScale.label, { color: palette.text }]}>View all notifications</Text>
               <MaterialIcons color={palette.tint} name="arrow-forward" size={18} />
@@ -349,12 +342,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   previewCard: {
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    left: Space.md,
+    borderBottomWidth: 1,
+    left: 0,
     padding: Space.lg,
     position: 'absolute',
-    right: Space.md,
+    right: 0,
   },
   previewHeader: {
     alignItems: 'center',
@@ -368,23 +360,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   previewList: {
-    gap: Space.sm,
+    borderTopWidth: 1,
   },
   previewRow: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
-    gap: Space.sm + 2,
-    minHeight: 62,
-    padding: Space.sm + 2,
-  },
-  previewIcon: {
-    alignItems: 'center',
-    borderRadius: Radius.md,
-    height: 36,
-    justifyContent: 'center',
-    width: 36,
+    gap: Space.md,
+    minHeight: 64,
+    paddingHorizontal: Space.xs,
+    paddingVertical: Space.md,
   },
   previewCopy: {
     flex: 1,
@@ -410,12 +395,9 @@ const styles = StyleSheet.create({
   },
   viewAllButton: {
     alignItems: 'center',
-    borderRadius: Radius.md,
-    borderWidth: StyleSheet.hairlineWidth * 2,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: Space.md,
-    minHeight: 46,
-    paddingHorizontal: Space.md,
+    minHeight: 52,
+    paddingHorizontal: Space.xs,
   },
 });
