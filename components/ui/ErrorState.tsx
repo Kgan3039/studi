@@ -42,7 +42,7 @@ export function ErrorState({
         ) : null}
       </View>
       {onRetry ? (
-        <Button label={retryLabel} variant="secondary" onPress={onRetry} />
+        <Button label={retryLabel} variant="secondary" onPress={onRetry} style={styles.retry} />
       ) : null}
     </View>
   );
@@ -67,5 +67,10 @@ const styles = StyleSheet.create({
   },
   text: {
     textAlign: 'center',
+  },
+  // Button.base pins itself to flex-start, so centered copy needs this to
+  // keep the retry action under the message (same fix as EmptyState).
+  retry: {
+    alignSelf: 'center',
   },
 });

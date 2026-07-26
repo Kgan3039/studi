@@ -1374,48 +1374,58 @@ export function hasUnreadSessionChat(
 
 export function subscribeToUserConversations(
   userId: string,
-  listener: (conversations: ConversationListItem[]) => void
+  listener: (conversations: ConversationListItem[]) => void,
+  onError?: (error: Error) => void
 ) {
   const conversationsQuery = query(
     collection(db, COLLECTIONS.conversations),
     where("participantIds", "array-contains", userId)
   );
 
-  return onSnapshot(conversationsQuery, async (snapshot) => {
-    const rawConversations = snapshot.docs
-      .map((conversationDoc) => ({
-        conversationId: conversationDoc.id,
-        ...(conversationDoc.data() as Omit<DirectConversation, "conversationId">),
-      }))
+  return onSnapshot(
+    conversationsQuery,
+    async (snapshot) => {
+      try {
+        const rawConversations = snapshot.docs.map((conversationDoc) => ({
+          conversationId: conversationDoc.id,
+          ...(conversationDoc.data() as Omit<DirectConversation, "conversationId">),
+        }));
 
-    const otherUserIds = rawConversations.flatMap((conversation) =>
-      conversation.participantIds.filter((participantId) => participantId !== userId)
-    );
-    const profilesById = await getProfilesByIds(otherUserIds);
+        const otherUserIds = rawConversations.flatMap((conversation) =>
+          conversation.participantIds.filter((participantId) => participantId !== userId)
+        );
+        const profilesById = await getProfilesByIds(otherUserIds);
 
-    const conversations = rawConversations
-      .map((conversation) => {
-        const otherParticipantId =
-          conversation.participantIds.find((participantId) => participantId !== userId) ?? "";
+        const conversations = rawConversations
+          .map((conversation) => {
+            const otherParticipantId =
+              conversation.participantIds.find((participantId) => participantId !== userId) ?? "";
 
-        return {
-          ...conversation,
-          otherParticipant: profilesById.get(otherParticipantId) ?? null,
-        } satisfies ConversationListItem;
-      })
-      .sort((firstConversation, secondConversation) => {
-        const firstTimestamp = firstConversation.updatedAt instanceof Timestamp
-          ? firstConversation.updatedAt.toMillis()
-          : 0;
-        const secondTimestamp = secondConversation.updatedAt instanceof Timestamp
-          ? secondConversation.updatedAt.toMillis()
-          : 0;
+            return {
+              ...conversation,
+              otherParticipant: profilesById.get(otherParticipantId) ?? null,
+            } satisfies ConversationListItem;
+          })
+          .sort((firstConversation, secondConversation) => {
+            const firstTimestamp = firstConversation.updatedAt instanceof Timestamp
+              ? firstConversation.updatedAt.toMillis()
+              : 0;
+            const secondTimestamp = secondConversation.updatedAt instanceof Timestamp
+              ? secondConversation.updatedAt.toMillis()
+              : 0;
 
-        return secondTimestamp - firstTimestamp;
-      });
+            return secondTimestamp - firstTimestamp;
+          });
 
-    listener(conversations);
-  });
+        listener(conversations);
+      } catch (error) {
+        // Profile hydration runs inside the snapshot handler, so its rejection
+        // never reaches onSnapshot's own error channel.
+        onError?.(error instanceof Error ? error : new Error(String(error)));
+      }
+    },
+    onError
+  );
 }
 
 export async function blockUser(blockerUserId: string, blockedUserId: string) {
