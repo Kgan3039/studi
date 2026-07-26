@@ -10,10 +10,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SessionCard } from '@/components/session-card';
-import { CourseChip } from '@/components/ui/CourseChip';
-import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterChip } from '@/components/ui/FilterChip';
+import { IconButton } from '@/components/ui/IconButton';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
@@ -59,6 +58,7 @@ export default function SessionsScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
   const [todayOnly, setTodayOnly] = useState(false);
+  const [openSeatsOnly, setOpenSeatsOnly] = useState(false);
   const createSessionNavigationRef = useRef(false);
   const [isNavigatingToCreateSession, setIsNavigatingToCreateSession] = useState(false);
   const { toast, show: showToast } = useSuccessToast();
@@ -99,11 +99,27 @@ export default function SessionsScreen() {
       if (todayOnly && session.startTime.toDate().toDateString() !== todayString) {
         return false;
       }
+      // Hiding full sessions is the difference between a list you can act on
+      // and one where the Join button is missing half the time.
+      if (
+        openSeatsOnly &&
+        (session.status === 'full' || isSessionAtCapacity(session))
+      ) {
+        return false;
+      }
       return true;
     });
-  }, [searchQuery, selectedDept, sessions, todayOnly]);
+  }, [openSeatsOnly, searchQuery, selectedDept, sessions, todayOnly]);
 
-  const hasNarrowingFilters = !!searchQuery.trim() || selectedDept !== null || todayOnly;
+  const hasNarrowingFilters =
+    !!searchQuery.trim() || selectedDept !== null || todayOnly || openSeatsOnly;
+
+  function clearFilters() {
+    setSearchQuery('');
+    setSelectedDept(null);
+    setTodayOnly(false);
+    setOpenSeatsOnly(false);
+  }
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -307,6 +323,14 @@ export default function SessionsScreen() {
         }
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <ScreenHeader
+        action={
+          <IconButton
+            accessibilityLabel="Host a session"
+            icon="square.and.pencil"
+            loading={isNavigatingToCreateSession}
+            onPress={() => handleCreateSession()}
+          />
+        }
         onRefresh={handleRefresh}
         refreshing={isRefreshing}
         showNotifications
@@ -330,39 +354,41 @@ export default function SessionsScreen() {
         />
       ) : null}
 
-      <View style={styles.filterRow}>
+      {/* One scrolling row of same-shaped filters. Departments read as filters
+          here, not as course labels, so they share the chip silhouette. */}
+      <ScrollView
+        contentContainerStyle={styles.filterRow}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.filterScroll}>
         <FilterChip
           icon="calendar"
-          label="Today only"
+          label="Today"
           onPress={() => setTodayOnly((current) => !current)}
           selected={todayOnly}
         />
-      </View>
-
-      {deptOptions.length > 1 ? (
-        <View style={styles.deptRow}>
-          {deptOptions.map((deptCode) => (
-            <CourseChip
-              key={deptCode}
-              code={deptCode}
-              size="sm"
-              selected={selectedDept === deptCode}
-              onPress={() =>
-                setSelectedDept((current) => (current === deptCode ? null : deptCode))
-              }
-            />
-          ))}
-        </View>
-      ) : null}
-
-      {sessions.length > 0 ? (
-        <Button
-          fullWidth
-          label="Host a session"
-          loading={isNavigatingToCreateSession}
-          onPress={handleCreateSession}
+        <FilterChip
+          icon="person.2.fill"
+          label="Open seats"
+          onPress={() => setOpenSeatsOnly((current) => !current)}
+          selected={openSeatsOnly}
         />
-      ) : null}
+        {deptOptions.length > 1
+          ? deptOptions.map((deptCode) => (
+              <FilterChip
+                key={deptCode}
+                label={deptCode}
+                onPress={() =>
+                  setSelectedDept((current) => (current === deptCode ? null : deptCode))
+                }
+                selected={selectedDept === deptCode}
+              />
+            ))
+          : null}
+        {hasNarrowingFilters ? (
+          <FilterChip icon="xmark" label="Clear" onPress={clearFilters} />
+        ) : null}
+      </ScrollView>
 
       {visibleSessions.length > 0 ? (
         <View style={styles.list}>
@@ -396,11 +422,7 @@ export default function SessionsScreen() {
           headline="No sessions match those filters"
           body="Try widening the time, class, or search."
           actionLabel="Clear filters"
-          onAction={() => {
-            setSearchQuery('');
-            setSelectedDept(null);
-            setTodayOnly(false);
-          }}
+          onAction={clearFilters}
         />
       ) : (
         <EmptyState
@@ -438,15 +460,15 @@ const styles = StyleSheet.create({
   transition: {
     gap: Space.lg,
   },
+  filterScroll: {
+    // Let the row bleed to the screen edges so chips scroll out of the inset
+    // instead of stopping short of it.
+    marginHorizontal: -(Space.lg + 4),
+  },
   filterRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: Space.sm,
-  },
-  deptRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Space.sm,
+    paddingHorizontal: Space.lg + 4,
   },
   list: {
     gap: Space.md,
