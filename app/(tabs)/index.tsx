@@ -12,7 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { formatSessionStart, formatSessionWindow } from '@/components/session-card';
-import { AvatarStack } from '@/components/ui/Avatar';
+import { Avatar, AvatarStack } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
@@ -43,9 +43,13 @@ import {
   formatCourseTitle,
   getStudyLocationDisplayName,
 } from '@/lib/catalog';
+import { getFriendsPage, type FriendListItem } from '@/lib/friends';
 import type { User } from 'firebase/auth';
 
 type TodaySession = StudySession & { locationName: string };
+
+/** Home shows a short list; the full roster lives behind the add action. */
+const BUDDY_PREVIEW_COUNT = 4;
 
 type HeroKind = 'live' | 'joined' | 'matched';
 
@@ -226,6 +230,49 @@ function ClassRow({
   );
 }
 
+/** A study buddy with the context that makes them worth tapping right now. */
+function BuddyRow({
+  name,
+  detail,
+  onPress,
+  isLast,
+}: {
+  name: string;
+  detail: string;
+  onPress: () => void;
+  isLast: boolean;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${name}, ${detail}`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.buddyRow,
+        {
+          borderBottomColor: palette.border,
+          borderBottomWidth: isLast ? 0 : 1,
+          opacity: pressed ? 0.6 : 1,
+        },
+        pressed ? styles.pressed : null,
+      ]}>
+      <Avatar name={name} size="sm" verified />
+      <View style={styles.buddyCopy}>
+        <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
+          {name}
+        </Text>
+        <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+          {detail}
+        </Text>
+      </View>
+      <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+    </Pressable>
+  );
+}
+
 function UpcomingRow({
   session,
   onPress,
@@ -294,6 +341,7 @@ export default function HomeScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [heroAttendeeNames, setHeroAttendeeNames] = useState<string[]>([]);
   const [joiningHero, setJoiningHero] = useState(false);
+  const [friends, setFriends] = useState<FriendListItem[]>([]);
   const { toast, show: showToast } = useSuccessToast();
   // The (tabs) layout gate redirects signed-out/unverified users to the
   // (auth) flow; this flag only guards the brief frame before that happens.
@@ -375,6 +423,32 @@ export default function HomeScreen() {
   useEffect(() => {
     loadSessions();
   }, [loadSessions]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!currentUser || !currentUser.emailVerified) {
+      setFriends([]);
+      return;
+    }
+
+    getFriendsPage(currentUser.uid)
+      .then((page) => {
+        if (!cancelled) {
+          setFriends(page.items);
+        }
+      })
+      .catch(() => {
+        // The rest of Home is still useful without the buddy list.
+        if (!cancelled) {
+          setFriends([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser]);
 
   const savedName = splitDisplayName(profile?.displayName);
 
@@ -506,6 +580,33 @@ export default function HomeScreen() {
       ),
     []
   );
+
+  /**
+   * Buddies are ranked by how many of your upcoming sessions they're also in,
+   * then by how recently you connected. Studi doesn't record per-person
+   * interaction counts, and shared sessions are the closest real signal — they
+   * are also the ones you're most likely to want to message today.
+   */
+  const topBuddies = useMemo(() => {
+    return friends
+      .map((friend) => {
+        const shared = sessions.filter((session) =>
+          session.participantIds.includes(friend.friendUid)
+        );
+
+        return {
+          userId: friend.friendUid,
+          name: friend.profile?.displayName?.trim() || 'Student',
+          sharedCount: shared.length,
+          detail:
+            shared.length > 0
+              ? `${shared.length} shared ${shared.length === 1 ? 'session' : 'sessions'}`
+              : friend.profile?.major?.trim() || 'Classmate',
+        };
+      })
+      .sort((first, second) => second.sharedCount - first.sharedCount)
+      .slice(0, BUDDY_PREVIEW_COUNT);
+  }, [friends, sessions]);
 
   if (!isSignedIn) {
     return null;
@@ -650,24 +751,35 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Study buddies"
-          onPress={() => router.push('/friends')}
-          style={({ pressed }) => [
-            styles.buddyRow,
-            { borderColor: palette.border, opacity: pressed ? 0.6 : 1 },
-            pressed ? styles.pressed : null,
-          ]}>
-          <IconSymbol name="person.2.fill" size={22} color={palette.tint} />
-          <View style={styles.buddyCopy}>
-            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Study buddies</Text>
-            <Text style={[TypeScale.caption, { color: palette.icon }]}>
-              Find classmates in your courses
+        <View style={styles.section}>
+          <SectionHeader
+            eyebrow="Study buddies"
+            action={
+              <IconButton
+                accessibilityLabel="Find study buddies"
+                icon="person.badge.plus"
+                onPress={() => router.push('/friends')}
+              />
+            }
+          />
+          {topBuddies.length > 0 ? (
+            <View style={[styles.classList, { borderTopColor: palette.border }]}>
+              {topBuddies.map((buddy, index) => (
+                <BuddyRow
+                  key={buddy.userId}
+                  name={buddy.name}
+                  detail={buddy.detail}
+                  isLast={index === topBuddies.length - 1}
+                  onPress={() => router.push(`/user/${buddy.userId}`)}
+                />
+              ))}
+            </View>
+          ) : (
+            <Text style={[TypeScale.body, { color: palette.icon }]}>
+              No buddies yet. Add classmates to study together.
             </Text>
-          </View>
-          <IconSymbol name="chevron.right" size={18} color={palette.icon} />
-        </Pressable>
+          )}
+        </View>
         </ScreenTransition>
       </ScrollView>
       <SuccessToast toast={toast} />
@@ -758,9 +870,7 @@ const styles = StyleSheet.create({
   },
   upcomingNumberLabel: {
     fontFamily: FontFamily.bodySemiBold,
-    fontSize: 9,
-    letterSpacing: 0.9,
-    textTransform: 'uppercase',
+    fontSize: 11,
     marginTop: 1,
   },
   chipWrap: {
@@ -798,12 +908,9 @@ const styles = StyleSheet.create({
   },
   buddyRow: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: 1,
     flexDirection: 'row',
     gap: Space.md,
-    minHeight: 64,
-    paddingHorizontal: Space.lg,
+    minHeight: 60,
     paddingVertical: Space.md,
   },
   buddyCopy: {
