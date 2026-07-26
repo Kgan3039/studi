@@ -7,7 +7,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 
 import { Button } from './Button';
 
-export type EmptyStateIcon = 'dot' | 'seat' | 'chat' | 'calendar' | 'spot';
+export type EmptyStateIcon = 'dot' | 'seat' | 'chat' | 'calendar' | 'spot' | 'bell';
 
 export type EmptyStateProps = {
   headline: string;
@@ -27,6 +27,7 @@ const EMPTY_ICONS: Record<EmptyStateIcon, IconSymbolName> = {
   chat: 'message',
   calendar: 'calendar',
   spot: 'mappin.and.ellipse',
+  bell: 'bell',
 };
 
 /**
