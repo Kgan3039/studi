@@ -107,7 +107,10 @@ export function ScreenHeader({
           <View
             onLayout={centered ? handleActionLayout : undefined}
             style={styles.actions}>
-            {action}
+            {/* Button sets alignSelf: 'flex-start', which would pin it to the
+                top of this row next to the taller icon buttons. Wrapping it
+                lets the row centre it like everything else. */}
+            {action ? <View style={styles.actionSlot}>{action}</View> : null}
             {onRefresh ? (
               <IconButton
                 accessibilityLabel={`Refresh ${title.toLowerCase()}`}
@@ -168,5 +171,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexShrink: 0,
     gap: Space.xs,
+    // Matches the screen title's line height so actions centre against the
+    // title itself rather than floating above a multi-line copy block.
+    minHeight: 36,
+  },
+  actionSlot: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

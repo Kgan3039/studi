@@ -42,12 +42,16 @@ export function SectionHeader({ eyebrow, title, action, style }: SectionHeaderPr
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    // Centred, not bottom-aligned: a 44pt icon action bottom-aligned to a 23pt
+    // title floats above the text it belongs to.
+    alignItems: 'center',
     justifyContent: 'space-between',
     gap: Space.md,
+    minHeight: 44,
   },
   titles: {
     flexShrink: 1,
     gap: Space.xs,
+    minWidth: 0,
   },
 });
