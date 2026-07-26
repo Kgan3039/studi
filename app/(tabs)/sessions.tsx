@@ -16,7 +16,6 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Sheet } from '@/components/ui/Sheet';
 import { FilterChip } from '@/components/ui/FilterChip';
-import { IconButton } from '@/components/ui/IconButton';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
@@ -333,9 +332,9 @@ export default function SessionsScreen() {
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <ScreenHeader
         action={
-          <IconButton
-            accessibilityLabel="Host a session"
-            icon="square.and.pencil"
+          <Button
+            label="Host"
+            size="sm"
             loading={isNavigatingToCreateSession}
             onPress={() => handleCreateSession()}
           />
