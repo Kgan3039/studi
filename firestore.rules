@@ -413,11 +413,28 @@ service cloud.firestore {
         // test — let a leaver evict someone else by padding a duplicate into
         // the gap they freed: [alice, bob, mallory] → [alice, alice] satisfied
         // both checks (size 3-1, and {alice} is a subset of the old roster)
-        // while silently removing bob. Set equality pins the result exactly,
-        // and the uniqueness check stops a duplicate from standing in for a
-        // removed member. The old size test is subsumed: for a duplicate-free
-        // roster it is implied, and dropping it means a roster that somehow
-        // holds duplicates stays leavable rather than trapping its members.
+        // while silently removing bob.
+        //
+        // The two clauses below are load-bearing for DIFFERENT reasons —
+        // neither is redundant:
+        //  - Set equality closes the eviction hole. A post-state whose set is
+        //    exactly `old minus caller` still holds every other member by
+        //    construction, so no one can be substituted out.
+        //  - Uniqueness bounds the array. There is no ceiling check on this
+        //    branch; length stays bounded only because a duplicate-free array
+        //    over a pinned set holds at most |old set| - 1 entries. Without it
+        //    [alice x500, bob] satisfies set equality and grows the roster
+        //    without limit.
+        //
+        // The old size test is subsumed by set equality for a duplicate-free
+        // roster. On a roster that already CONTAINS duplicates — reachable only
+        // from the host-padding hole closed alongside this, i.e. docs written
+        // before that deploy — the rules do accept a deduplicated leave, but
+        // leaveSession in lib/firestore.ts uses arrayRemove, which strips only
+        // the caller's copies and preserves everyone else's. So through the app
+        // such a member cannot leave until the roster is deduplicated. Confirm
+        // no duplicate rosters exist rather than assuming; do not read this
+        // clause as a guarantee that they stay leavable end-to-end.
         && hasUniqueParticipantIds(incoming().participantIds)
         && incoming().participantIds.toSet() ==
              resource.data.participantIds.toSet().difference([request.auth.uid].toSet());

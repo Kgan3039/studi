@@ -2149,6 +2149,23 @@ describe('PR A hardening', () => {
       }));
     });
 
+    it('denies a self-leave that pads the roster with duplicates', async () => {
+      // Set equality alone would accept this — every remaining member is still
+      // present, so nobody is evicted — but the array grows without limit.
+      // isSelfLeave has no ceiling check, so the uniqueness clause is the only
+      // thing bounding length here. Do not drop it as "hygiene".
+      await seed('sessions/leaveBloat', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'leaveBloat'), {
+        participantIds: [...Array(500).fill(ALICE), BOB],
+        updatedAt: serverTimestamp(),
+      }));
+      // Even a single surplus copy is refused.
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'leaveBloat'), {
+        participantIds: [ALICE, ALICE, BOB],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
     it('allows an ordinary self-leave from a multi-person session', async () => {
       await seed('sessions/leaveOk', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
       // Mallory leaves; Alice and Bob keep their seats.
@@ -2173,7 +2190,13 @@ describe('PR A hardening', () => {
       }));
     });
 
-    it('allows the host to leave their own session', async () => {
+    it('rules permit a host to leave their own roster (not exposed in the client)', async () => {
+      // Records current behavior, unchanged by the self-leave fix: the rules
+      // treat the host like any other participant here, while the session
+      // screen renders "Leave session" only for non-hosts
+      // (app/session/[sessionId].tsx). Whether a host SHOULD be able to leave
+      // — and what an open session with a non-participant hostId means — is an
+      // open product question, not a contract this test is asserting.
       await seed('sessions/leaveHost', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
       await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 'leaveHost'), {
         participantIds: [BOB, MALLORY],
