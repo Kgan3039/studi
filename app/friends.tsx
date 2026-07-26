@@ -398,7 +398,7 @@ export default function FriendsScreen() {
                   onPress={() => setTab(tabOption.key)}
                   style={[
                     styles.segment,
-                    active && { backgroundColor: palette.surface, ...segmentShadow },
+                    active && { backgroundColor: palette.surface },
                   ]}>
                   <Text
                     style={[
@@ -580,7 +580,7 @@ function FriendsList({
             onPress={() => onOpen(item.friendUid)}
             style={({ pressed }) => [
               styles.row,
-              { backgroundColor: palette.surface, borderColor: palette.border, opacity: pressed ? 0.7 : 1 },
+              { borderColor: palette.border, opacity: pressed ? 0.7 : 1 },
             ]}>
             <Avatar name={name} size="md" verified />
             <View style={styles.rowBody}>
@@ -702,7 +702,7 @@ function RequestsList({
       renderItem={({ item: row }) => {
         if (row.kind === 'header') {
           return (
-            <Text style={[TypeScale.eyebrow, styles.sectionHeader, { color: palette.icon }]}>
+            <Text style={[TypeScale.sectionTitle, styles.sectionHeader, { color: palette.text }]}>
               {row.label}
             </Text>
           );
@@ -728,7 +728,7 @@ function RequestsList({
             onPress={() => onOpen(item.otherUid)}
             style={({ pressed }) => [
               styles.row,
-              { backgroundColor: palette.surface, borderColor: palette.border, opacity: pressed ? 0.7 : 1 },
+              { borderColor: palette.border, opacity: pressed ? 0.7 : 1 },
             ]}>
             <Avatar name={name} size="md" verified />
             <View style={styles.rowBody}>
@@ -801,7 +801,7 @@ function SuggestedList({
       contentContainerStyle={styles.listContent}
       ListHeaderComponent={
         suggested.length > 0 ? (
-          <Text style={[TypeScale.eyebrow, styles.sectionHeader, { color: palette.icon }]}>
+          <Text style={[TypeScale.sectionTitle, styles.sectionHeader, { color: palette.text }]}>
             From your classes
           </Text>
         ) : null
@@ -814,7 +814,7 @@ function SuggestedList({
             onPress={() => onOpen(item.profile.uid)}
             style={({ pressed }) => [
               styles.row,
-              { backgroundColor: palette.surface, borderColor: palette.border, opacity: pressed ? 0.7 : 1 },
+              { borderColor: palette.border, opacity: pressed ? 0.7 : 1 },
             ]}>
             <Avatar name={name} size="md" verified />
             <View style={styles.rowBody}>
@@ -897,7 +897,7 @@ function SearchResults({
             onPress={() => onOpen(item.uid)}
             style={({ pressed }) => [
               styles.row,
-              { backgroundColor: palette.surface, borderColor: palette.border, opacity: pressed ? 0.7 : 1 },
+              { borderColor: palette.border, opacity: pressed ? 0.7 : 1 },
             ]}>
             <Avatar name={item.displayName || 'Student'} size="md" verified />
             <View style={styles.rowBody}>
@@ -927,14 +927,6 @@ function SearchResults({
   );
 }
 
-const segmentShadow = {
-  shadowColor: Brand.text,
-  shadowOffset: { width: 0, height: 1 },
-  shadowOpacity: 0.06,
-  shadowRadius: 3,
-  elevation: 1,
-};
-
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   header: {
@@ -951,13 +943,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.lg,
   },
   segmented: {
-    borderRadius: Radius.pill,
+    borderRadius: Radius.lg,
     flexDirection: 'row',
     padding: 3,
   },
   segment: {
     alignItems: 'center',
-    borderRadius: Radius.pill,
+    borderRadius: Radius.md,
     flex: 1,
     justifyContent: 'center',
     paddingVertical: Space.sm,
@@ -970,7 +962,7 @@ const styles = StyleSheet.create({
   listContent: {
     padding: Space.lg + 4,
     paddingTop: Space.sm,
-    gap: Space.sm,
+    gap: 0,
   },
   sectionHeader: {
     marginTop: Space.sm,
@@ -978,8 +970,7 @@ const styles = StyleSheet.create({
   },
   row: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.md,
     minHeight: 64,
