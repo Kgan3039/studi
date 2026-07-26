@@ -171,12 +171,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexShrink: 0,
     gap: Space.xs,
-    // Matches the screen title's line height so actions centre against the
-    // title itself rather than floating above a multi-line copy block.
-    minHeight: 36,
+    // Fixed to the title's line height, not the 44pt icon buttons: the buttons
+    // then centre on the title's optical centre and keep their tap targets by
+    // overflowing this box evenly. minHeight would let the row grow to 44 and
+    // push every action below the title.
+    height: 36,
   },
   actionSlot: {
     alignItems: 'center',
     justifyContent: 'center',
+    // A filled button ends at a hard edge while an icon sits ~11pt inside its
+    // tap target, so the same gap value reads much tighter next to a pill.
+    // This makes the visible spacing match the icon-to-icon spacing.
+    marginRight: Space.sm + 4,
   },
 });
