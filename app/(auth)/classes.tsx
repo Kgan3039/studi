@@ -19,7 +19,7 @@ import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { identifyUser, track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
-import { UW_COURSE_CATALOG, searchCourses } from '@/lib/catalog';
+import { UW_COURSE_CATALOG, formatCourseTitle, searchCourses } from '@/lib/catalog';
 import { getUserProfile, invalidateProfileCache, updateUserClasses } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
@@ -71,7 +71,7 @@ export default function OnboardingClassesScreen() {
     const titles = new Map<string, string>();
     for (const course of UW_COURSE_CATALOG) {
       if (!titles.has(course.code.toUpperCase())) {
-        titles.set(course.code.toUpperCase(), course.title);
+        titles.set(course.code.toUpperCase(), formatCourseTitle(course.title));
       }
     }
     return titles;
@@ -166,7 +166,7 @@ export default function OnboardingClassesScreen() {
                   <Text
                     style={[TypeScale.bodyStrong, styles.courseTitle, { color: palette.text }]}
                     numberOfLines={1}>
-                    {course.title}
+                    {formatCourseTitle(course.title)}
                   </Text>
                 </View>
                 <View style={[styles.selectCircle, { borderColor: palette.outline }]} />

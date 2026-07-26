@@ -121,6 +121,43 @@ export function formatStudyLocationLabel(locationId: string): string {
   return label || 'Campus study spot';
 }
 
+// The UW catalog stores every title in all caps ("PRINCIPLES OF
+// MICROECONOMICS"). Shouting is not hierarchy, so titles are cased for display.
+const TITLE_MINOR_WORDS = new Set([
+  'a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from', 'in', 'nor', 'of',
+  'on', 'or', 'the', 'to', 'via', 'with',
+]);
+const ROMAN_NUMERAL = /^(?:i{1,3}|iv|vi{0,3}|ix|xi{0,3})$/;
+// Kept uppercase because the lowercase form reads as a different word.
+const TITLE_ACRONYMS = new Set(['us', 'uk', 'ai', 'it', 'hr', 'gis', 'dna', 'rna']);
+
+/** Convert an all-caps catalog title to readable title case. */
+export function formatCourseTitle(title: string): string {
+  const words = title.trim().toLowerCase().split(/\s+/).filter(Boolean);
+
+  return words
+    .map((word, index) => {
+      // Split on punctuation so "micro-economics" and "genetics/genomics"
+      // capitalize on both sides.
+      return word
+        .split(/([-/:])/)
+        .map((part, partIndex) => {
+          if (!/[a-z0-9]/.test(part)) {
+            return part;
+          }
+          if (ROMAN_NUMERAL.test(part) || TITLE_ACRONYMS.has(part)) {
+            return part.toUpperCase();
+          }
+          if (index > 0 && partIndex === 0 && TITLE_MINOR_WORDS.has(part)) {
+            return part;
+          }
+          return part[0].toUpperCase() + part.slice(1);
+        })
+        .join('');
+    })
+    .join(' ');
+}
+
 export function getStudyLocationDisplayName(
   locationId: string,
   preferredName?: string | null
