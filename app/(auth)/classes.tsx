@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { StepDots } from '@/components/ui/StepDots';
 import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -130,7 +131,6 @@ export default function OnboardingClassesScreen() {
         keyboardShouldPersistTaps="handled"
         style={styles.screen}
         contentContainerStyle={styles.content}>
-        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Step 3 of 4</Text>
         <Text style={[styles.question, { color: palette.text }]}>What are you taking?</Text>
         <Text style={[TypeScale.body, styles.subtext, { color: palette.icon }]}>
           We’ll only show sessions for your classes.
@@ -181,7 +181,7 @@ export default function OnboardingClassesScreen() {
 
         {classes.length > 0 ? (
           <View style={styles.selectedBlock}>
-            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Your classes</Text>
+            <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>Your classes</Text>
             <View style={styles.rows}>
               {classes.map((classCode) => (
                 <Pressable
@@ -204,7 +204,7 @@ export default function OnboardingClassesScreen() {
                     <Text
                       style={[TypeScale.bodyStrong, styles.courseTitle, { color: palette.text }]}
                       numberOfLines={1}>
-                      {courseTitlesByCode.get(classCode) ?? 'UW–Madison course'}
+                      {courseTitlesByCode.get(classCode) ?? 'UW Madison course'}
                     </Text>
                   </View>
                   <View
@@ -213,7 +213,7 @@ export default function OnboardingClassesScreen() {
                       styles.selectedCircle,
                       { backgroundColor: palette.tint, borderColor: palette.tint },
                     ]}>
-                    <Text style={styles.checkmark}>✓</Text>
+                    <IconSymbol color="#FFFFFF" name="checkmark.circle.fill" size={19} />
                   </View>
                 </Pressable>
               ))}
@@ -226,7 +226,7 @@ export default function OnboardingClassesScreen() {
         <Button
           label={
             classes.length > 0
-              ? `Continue · ${classes.length} selected`
+              ? `Continue (${classes.length} selected)`
               : 'Continue'
           }
           size="lg"
@@ -303,11 +303,6 @@ const styles = StyleSheet.create({
   },
   selectedCircle: {
     borderWidth: 0,
-  },
-  checkmark: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    lineHeight: 14,
   },
   noResults: {
     marginTop: Space.md,

@@ -119,7 +119,6 @@ export default function ProfileSetupScreen() {
         keyboardShouldPersistTaps="handled"
         style={styles.screen}
         contentContainerStyle={styles.content}>
-        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Step 4 of 4</Text>
         <Text style={[styles.question, { color: palette.text }]}>One last thing.</Text>
         <Text style={[TypeScale.body, styles.subtext, { color: palette.icon }]}>
           This is how classmates will see you at the table.

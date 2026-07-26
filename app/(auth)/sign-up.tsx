@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui/IconButton';
 import { Input } from '@/components/ui/Input';
 import { StepDots } from '@/components/ui/StepDots';
 import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
@@ -50,13 +51,11 @@ export default function SignUpScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={[styles.screen, { backgroundColor: palette.background }]}>
       <View style={[styles.header, { paddingTop: insets.top + Space.sm }]}>
-        <Pressable
-          accessibilityRole="button"
+        <IconButton
           accessibilityLabel="Back"
-          hitSlop={8}
-          onPress={() => router.back()}>
-          <Text style={[styles.back, { color: palette.icon }]}>‹</Text>
-        </Pressable>
+          icon="chevron.left"
+          onPress={() => router.back()}
+        />
         <StepDots total={4} filled={1} />
         <View style={styles.headerSpacer} />
       </View>
@@ -65,12 +64,11 @@ export default function SignUpScreen() {
         keyboardShouldPersistTaps="handled"
         style={styles.screen}
         contentContainerStyle={styles.content}>
-        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Step 1 of 4</Text>
         <Text style={[styles.question, { color: palette.text }]}>
           Start with your UW email.
         </Text>
         <Text style={[TypeScale.body, styles.subtext, { color: palette.icon }]}>
-          We’ll send a verification link to confirm you’re a UW–Madison student.
+          We’ll send a verification link to confirm you’re a UW Madison student.
         </Text>
 
         <View style={styles.fields}>
@@ -151,11 +149,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingBottom: Space.md,
     paddingHorizontal: Space.xl,
-  },
-  back: {
-    fontFamily: FontFamily.body,
-    fontSize: 24,
-    lineHeight: 26,
   },
   headerSpacer: {
     width: 24,

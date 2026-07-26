@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui/IconButton';
 import { Input } from '@/components/ui/Input';
 import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -63,13 +64,11 @@ export default function SignInScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={[styles.screen, { backgroundColor: palette.background }]}>
       <View style={[styles.header, { paddingTop: insets.top + Space.sm }]}>
-        <Pressable
-          accessibilityRole="button"
+        <IconButton
           accessibilityLabel="Back"
-          hitSlop={8}
-          onPress={() => router.back()}>
-          <Text style={[styles.back, { color: palette.icon }]}>‹</Text>
-        </Pressable>
+          icon="chevron.left"
+          onPress={() => router.back()}
+        />
       </View>
 
       <ScrollView
@@ -138,11 +137,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingBottom: Space.md,
     paddingHorizontal: Space.xl,
-  },
-  back: {
-    fontFamily: FontFamily.body,
-    fontSize: 24,
-    lineHeight: 26,
   },
   content: {
     paddingBottom: Space.xl,
