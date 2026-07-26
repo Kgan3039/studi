@@ -468,6 +468,7 @@ export default function ProfileScreen() {
           style={({ pressed }) => [
             styles.settingsRow,
             { borderBottomColor: palette.border, opacity: pressed ? 0.55 : 1 },
+            pressed ? styles.pressedRow : null,
           ]}>
           <View style={styles.settingsIcon}>
             <IconSymbol name="person.2.fill" size={22} color={palette.tint} />
@@ -489,6 +490,7 @@ export default function ProfileScreen() {
             styles.settingsRow,
             styles.settingsRowLast,
             { opacity: pressed ? 0.55 : 1 },
+            pressed ? styles.pressedRow : null,
           ]}>
           <View style={styles.settingsIcon}>
             <IconSymbol name="gearshape.fill" size={22} color={palette.tint} />
@@ -775,6 +777,9 @@ const styles = StyleSheet.create({
   },
   transition: {
     gap: Space.xl,
+  },
+  pressedRow: {
+    transform: [{ scale: 0.99 }],
   },
   identity: {
     alignItems: 'center',

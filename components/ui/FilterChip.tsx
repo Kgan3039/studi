@@ -29,6 +29,7 @@ export function FilterChip({ label, selected = false, icon, onPress, style }: Fi
           ? { backgroundColor: palette.tint, borderColor: palette.tint }
           : { backgroundColor: 'transparent', borderColor: palette.outline },
         { opacity: pressed ? 0.65 : 1 },
+        pressed ? styles.pressed : null,
         style,
       ]}>
       <View style={styles.content}>
@@ -54,5 +55,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: Space.sm,
+  },
+  pressed: {
+    transform: [{ scale: 0.96 }],
   },
 });

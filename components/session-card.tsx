@@ -272,6 +272,7 @@ export function SessionCard({
             borderColor: palette.border,
             opacity: dimmed ? 0.6 : pressed ? 0.85 : 1,
           },
+          pressed && !dimmed ? styles.pressed : null,
           style,
         ]}>
         <CourseChip code={session.classId} size="sm" />
@@ -306,6 +307,7 @@ export function SessionCard({
             borderColor: palette.border,
             opacity: dimmed ? 0.6 : pressed ? 0.9 : 1,
           },
+          pressed && !dimmed ? styles.pressed : null,
           style,
         ]}>
         <View
@@ -369,6 +371,7 @@ export function SessionCard({
           borderColor: palette.border,
           opacity: dimmed ? 0.6 : pressed ? 0.85 : 1,
         },
+        pressed && !dimmed ? styles.pressed : null,
         style,
       ]}>
       <View style={styles.headerRow}>
@@ -410,6 +413,10 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: Radius.xl,
     borderWidth: StyleSheet.hairlineWidth * 2,
+  },
+  // Confirms the tap on the app's most-tapped surface. Nothing moves at rest.
+  pressed: {
+    transform: [{ scale: 0.985 }],
   },
   fullCard: {
     paddingHorizontal: Space.lg,
