@@ -934,6 +934,9 @@ describe('session capacity', () => {
 // ------------------------------------------------------------ conversations
 describe('conversations + messages', () => {
   it('valid 2-person conversation at the deterministic id', async () => {
+    // Threads open only against real accounts, so the counterpart's profile
+    // doc must exist (mirrors the friendRequests exists(users/{toUid}) check).
+    await seed(`users/${BOB}`, { displayName: 'Bob', classes: [] });
     await assertSucceeds(
       setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
         validConversation(ALICE, BOB))
@@ -1878,5 +1881,355 @@ describe('reports (immutable, write-only)', () => {
       { ...valid(ALICE), details: 'x'.repeat(1001) }));
     await assertFails(createReportWithRateLimit(ctx(BOB), BOB, 'r5',
       { ...valid(BOB), reportedUserId: BOB }));
+  });
+});
+
+// ---------------------------------------------------- PR A: rules hardening
+// Regression coverage for the four rules-only findings fixed in PR A. Each
+// block pairs the closed hole with a control proving the legitimate flow it
+// sits next to still works.
+describe('PR A hardening', () => {
+  const seedUser = (uid) => seed(`users/${uid}`, { displayName: uid, classes: [] });
+
+  const seedConversation = (a, b) =>
+    seed(`conversations/${convoId(a, b)}`, {
+      ...validConversation(a, b),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      lastMessageAt: Timestamp.now(),
+    });
+
+  // -- H1: conversation existence probing ---------------------------------
+  describe('H1 conversation existence probing', () => {
+    it('denies an outsider identically whether or not the thread exists', async () => {
+      const cid = convoId(ALICE, BOB);
+
+      // Missing doc: previously allowed through the `!exists()` arm, which let
+      // a non-participant read "no thread here" off an empty snapshot.
+      await assertFails(getDoc(doc(ctx(MALLORY), 'conversations', cid)));
+
+      await seedConversation(ALICE, BOB);
+
+      // Existing doc: denied before and after. Same outcome either way, so
+      // there is nothing to distinguish and no oracle.
+      await assertFails(getDoc(doc(ctx(MALLORY), 'conversations', cid)));
+    });
+
+    it('still lets a participant probe their own thread id before it exists', async () => {
+      // getOrCreateDirectConversation depends on this: it getDocs the
+      // deterministic id first and only creates on a miss.
+      await assertSucceeds(getDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB))));
+      await assertSucceeds(getDoc(doc(ctx(BOB), 'conversations', convoId(ALICE, BOB))));
+
+      await seedConversation(ALICE, BOB);
+      await assertSucceeds(getDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB))));
+      await assertSucceeds(getDoc(doc(ctx(BOB), 'conversations', convoId(ALICE, BOB))));
+    });
+
+    it('denies malformed and self-pair conversation ids', async () => {
+      await assertFails(getDoc(doc(ctx(ALICE), 'conversations', ALICE)));
+      await assertFails(getDoc(doc(ctx(ALICE), 'conversations', `__${ALICE}`)));
+      await assertFails(getDoc(doc(ctx(ALICE), 'conversations', `${ALICE}__${ALICE}`)));
+      await assertFails(
+        getDoc(doc(ctx(ALICE), 'conversations', `${ALICE}__${BOB}__${MALLORY}`))
+      );
+    });
+
+    it('leaves the participant inbox query working', async () => {
+      await seedConversation(ALICE, BOB);
+      await assertSucceeds(getDocs(query(
+        collection(ctx(ALICE), 'conversations'),
+        where('participantIds', 'array-contains', ALICE)
+      )));
+      await assertFails(getDocs(collection(ctx(ALICE), 'conversations')));
+    });
+  });
+
+  // -- H3 part 1: counterpart must exist ----------------------------------
+  describe('H3 conversation counterpart existence', () => {
+    it('denies a thread opened against a uid with no user doc', async () => {
+      const ghost = 'ghostUid000000000000';
+      await assertFails(
+        setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, ghost)),
+          validConversation(ALICE, ghost))
+      );
+    });
+
+    it('allows a thread against a real account, from either side of the pair', async () => {
+      await seedUser(ALICE);
+      await seedUser(BOB);
+
+      await assertSucceeds(
+        setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
+          validConversation(ALICE, BOB))
+      );
+      await env.clearFirestore();
+
+      // The counterpart is participantIds[0] rather than [1] depending on sort
+      // order — exercise the other branch of conversationCounterpart().
+      await seedUser(ALICE);
+      await seedUser(BOB);
+      await assertSucceeds(
+        setDoc(doc(ctx(BOB), 'conversations', convoId(ALICE, BOB)),
+          validConversation(ALICE, BOB))
+      );
+    });
+
+    it('still enforces the pre-existing create invariants', async () => {
+      await seedUser(BOB);
+      // Blocked pair, even though Bob is a real account.
+      await seed(`userBlocks/${BOB}__${ALICE}`, {
+        blockerUserId: BOB, blockedUserId: ALICE, createdAt: Timestamp.now(),
+      });
+      await assertFails(
+        setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
+          validConversation(ALICE, BOB))
+      );
+    });
+  });
+
+  // -- H4: block uid validation -------------------------------------------
+  describe('H4 block uid validation', () => {
+    it('denies a blockedUserId that is not a safe uid component', async () => {
+      // A `__`-bearing value used to mint a 3-segment doc that no
+      // isBlockedEitherWay lookup could ever match.
+      await assertFails(
+        setDoc(doc(ctx(ALICE), 'userBlocks', `${ALICE}__${BOB}__${MALLORY}`), {
+          blockerUserId: ALICE,
+          blockedUserId: `${BOB}__${MALLORY}`,
+          createdAt: serverTimestamp(),
+        })
+      );
+      await assertFails(
+        setDoc(doc(ctx(ALICE), 'userBlocks', `${ALICE}__`), {
+          blockerUserId: ALICE, blockedUserId: '', createdAt: serverTimestamp(),
+        })
+      );
+      await assertFails(
+        setDoc(doc(ctx(ALICE), 'userBlocks', `${ALICE}__bob-uid`), {
+          blockerUserId: ALICE, blockedUserId: 'bob-uid', createdAt: serverTimestamp(),
+        })
+      );
+    });
+
+    it('still allows an ordinary block, and it still gates messaging', async () => {
+      await assertSucceeds(
+        setDoc(doc(ctx(ALICE), 'userBlocks', `${ALICE}__${BOB}`), {
+          blockerUserId: ALICE, blockedUserId: BOB, createdAt: serverTimestamp(),
+        })
+      );
+      await seedUser(BOB);
+      await assertFails(
+        setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
+          validConversation(ALICE, BOB))
+      );
+    });
+  });
+
+  // -- H2: session participant invariants ----------------------------------
+  describe('H2 session participant invariants', () => {
+    const sessionWith = (host, participantIds, overrides = {}) =>
+      validSession(host, {
+        participantIds,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+        ...overrides,
+      });
+
+    it('denies a host padding participantIds with duplicates', async () => {
+      await seed('sessions/pad1', sessionWith(ALICE, [ALICE, BOB]));
+      await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 'pad1'), {
+        participantIds: [ALICE, ALICE, ALICE, ALICE, ALICE],
+        updatedAt: serverTimestamp(),
+      }));
+      // A single duplicate is just as invalid as many.
+      await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 'pad1'), {
+        participantIds: [ALICE, BOB, BOB],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('denies unbounded growth on a legacy session with no capacity field', async () => {
+      await seed('sessions/legacy1', sessionWith(ALICE, [ALICE, BOB]));
+      await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 'legacy1'), {
+        participantIds: Array(200).fill(ALICE),
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('caps a self-join at the 20-seat ceiling even without a capacity field', async () => {
+      const twenty = Array.from({ length: 20 }, (_, i) => `filler${i}`);
+      await seed('sessions/full20', sessionWith(ALICE, twenty));
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'full20'), {
+        participantIds: [...twenty, MALLORY],
+        updatedAt: serverTimestamp(),
+      }));
+
+      // One seat short of the ceiling, the same join is fine.
+      const nineteen = twenty.slice(0, 19);
+      await seed('sessions/open19', sessionWith(ALICE, nineteen));
+      await assertSucceeds(updateDoc(doc(ctx(MALLORY), 'sessions', 'open19'), {
+        participantIds: [...nineteen, MALLORY],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('keeps an oversized legacy session editable by its host', async () => {
+      // Compatibility guard: a pre-existing session already above the ceiling
+      // must stay cancellable and kickable rather than freezing solid.
+      const oversized = Array.from({ length: 25 }, (_, i) => `legacyUid${i}`);
+      await seed('sessions/over25', sessionWith(ALICE, [ALICE, ...oversized]));
+
+      // Retitle with the roster untouched (26 entries, still over the ceiling).
+      await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 'over25'), {
+        title: 'Renamed while oversized',
+        updatedAt: serverTimestamp(),
+      }));
+      // Cancel.
+      await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 'over25'), {
+        status: 'cancelled', updatedAt: serverTimestamp(),
+      }));
+      // Kick down toward the ceiling.
+      await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 'over25'), {
+        participantIds: [ALICE, ...oversized.slice(0, 10)],
+        updatedAt: serverTimestamp(),
+      }));
+      // But never grow, not even by duplicating an existing member.
+      await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 'over25'), {
+        participantIds: [ALICE, ...oversized, ALICE],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('leaves ordinary join, leave, kick and capacity behavior intact', async () => {
+      await seed('sessions/normal', sessionWith(ALICE, [ALICE], { capacity: 3 }));
+
+      // Join.
+      await assertSucceeds(updateDoc(doc(ctx(BOB), 'sessions', 'normal'), {
+        participantIds: [ALICE, BOB], updatedAt: serverTimestamp(),
+      }));
+      // Second join, filling capacity.
+      await assertSucceeds(updateDoc(doc(ctx(MALLORY), 'sessions', 'normal'), {
+        participantIds: [ALICE, BOB, MALLORY], updatedAt: serverTimestamp(),
+      }));
+      // Leave.
+      await assertSucceeds(updateDoc(doc(ctx(BOB), 'sessions', 'normal'), {
+        participantIds: [ALICE, MALLORY], updatedAt: serverTimestamp(),
+      }));
+      // Host kick.
+      await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 'normal'), {
+        participantIds: [ALICE], updatedAt: serverTimestamp(),
+      }));
+      // Host raises capacity to the max.
+      await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 'normal'), {
+        capacity: 20, updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('denies a duplicate-padded self-leave that evicts another participant', async () => {
+      // The leaver frees a slot and refills it with a duplicate of a member
+      // who stays, so the roster shrinks by exactly one and every entry is
+      // still a prior member — the old size + subset test passed this while
+      // BOB was silently removed.
+      await seed('sessions/leave3', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'leave3'), {
+        participantIds: [ALICE, ALICE],
+        updatedAt: serverTimestamp(),
+      }));
+      // The same trick duplicating the host, and duplicating the other
+      // non-host member, are equally denied.
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'leave3'), {
+        participantIds: [BOB, BOB],
+        updatedAt: serverTimestamp(),
+      }));
+      // And a leaver cannot simply drop someone else alongside themselves.
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'leave3'), {
+        participantIds: [ALICE],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('denies a self-leave that pads the roster with duplicates', async () => {
+      // Set equality alone would accept this — every remaining member is still
+      // present, so nobody is evicted — but the array grows without limit.
+      // isSelfLeave has no ceiling check, so the uniqueness clause is the only
+      // thing bounding length here. Do not drop it as "hygiene".
+      await seed('sessions/leaveBloat', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'leaveBloat'), {
+        participantIds: [...Array(500).fill(ALICE), BOB],
+        updatedAt: serverTimestamp(),
+      }));
+      // Even a single surplus copy is refused.
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'leaveBloat'), {
+        participantIds: [ALICE, ALICE, BOB],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('allows an ordinary self-leave from a multi-person session', async () => {
+      await seed('sessions/leaveOk', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
+      // Mallory leaves; Alice and Bob keep their seats.
+      await assertSucceeds(updateDoc(doc(ctx(MALLORY), 'sessions', 'leaveOk'), {
+        participantIds: [ALICE, BOB],
+        updatedAt: serverTimestamp(),
+      }));
+      // Bob then leaves the remaining pair.
+      await assertSucceeds(updateDoc(doc(ctx(BOB), 'sessions', 'leaveOk'), {
+        participantIds: [ALICE],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('allows a self-leave that reorders the remaining participants', async () => {
+      // arrayRemove preserves order, but the rule pins the SET, not the
+      // sequence — a reordered remainder must stay valid.
+      await seed('sessions/leaveOrder', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
+      await assertSucceeds(updateDoc(doc(ctx(MALLORY), 'sessions', 'leaveOrder'), {
+        participantIds: [BOB, ALICE],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('rules permit a host to leave their own roster (not exposed in the client)', async () => {
+      // Records current behavior, unchanged by the self-leave fix: the rules
+      // treat the host like any other participant here, while the session
+      // screen renders "Leave session" only for non-hosts
+      // (app/session/[sessionId].tsx). Whether a host SHOULD be able to leave
+      // — and what an open session with a non-participant hostId means — is an
+      // open product question, not a contract this test is asserting.
+      await seed('sessions/leaveHost', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
+      await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 'leaveHost'), {
+        participantIds: [BOB, MALLORY],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('denies a non-host dropping someone else, with or without leaving', async () => {
+      await seed('sessions/leaveBad', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
+      // Caller stays seated and evicts a third party — a kick, which only the
+      // host may do. (Rewriting the roster unchanged is a separate, legitimate
+      // no-op handled by isSelfJoinNoOp.)
+      await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 'leaveBad'), {
+        participantIds: [ALICE, BOB], updatedAt: serverTimestamp(),
+      }));
+
+      await env.clearFirestore();
+      await seed('sessions/leaveBad', sessionWith(ALICE, [ALICE, BOB]));
+      // Leaving while smuggling in a third party.
+      await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 'leaveBad'), {
+        participantIds: [ALICE, MALLORY], updatedAt: serverTimestamp(),
+      }));
+      // A non-participant cannot "leave" on someone else's behalf.
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'leaveBad'), {
+        participantIds: [ALICE], updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('leaves a legacy no-capacity session joinable below the ceiling', async () => {
+      await seed('sessions/legacy2', sessionWith(ALICE, [ALICE]));
+      await assertSucceeds(updateDoc(doc(ctx(BOB), 'sessions', 'legacy2'), {
+        participantIds: [ALICE, BOB], updatedAt: serverTimestamp(),
+      }));
+    });
   });
 });
