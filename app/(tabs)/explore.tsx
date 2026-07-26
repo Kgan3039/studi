@@ -9,7 +9,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -20,7 +19,9 @@ import type { MapSessionTiming } from '@/components/campus-map.types';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
-import { Brand, Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { SearchBar } from '@/components/ui/SearchBar';
+import { Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
 import { getAtmosphereFiltersForLocationTags } from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
@@ -453,44 +454,23 @@ export default function StudyLocationsScreen() {
       }
       style={[styles.screen, { backgroundColor: palette.background }]}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      <View style={styles.header}>
-        <View style={styles.headerCopy}>
-          <Text style={[TypeScale.title, { color: palette.text }]}>Study spots</Text>
-          <Text style={[TypeScale.meta, { color: palette.icon }]}>{loadMessage}</Text>
-        </View>
-        <View style={styles.headerActions}>
-          {isLoading ? <ActivityIndicator color={palette.tint} size="small" /> : null}
-          <NotificationCenterButton />
-        </View>
-      </View>
+      <ScreenHeader
+        title="Study spots"
+        status={loadMessage}
+        action={
+          <View style={styles.headerActions}>
+            {isLoading ? <ActivityIndicator color={palette.tint} size="small" /> : null}
+            <NotificationCenterButton />
+          </View>
+        }
+      />
 
-      <View
-        style={[
-          styles.searchBar,
-          { backgroundColor: palette.surface, borderColor: palette.border },
-          Elevation.e1,
-        ]}>
-        <MaterialIcons color={palette.icon} name="search" size={22} />
-        <TextInput
+      <SearchBar
           accessibilityLabel="Search study spots and sessions"
-          autoCapitalize="none"
           onChangeText={setSearchQuery}
           placeholder="Search sessions or study spots"
-          placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
-          returnKeyType="search"
-          style={[TypeScale.body, styles.searchInput, { color: palette.text }]}
           value={searchQuery}
-        />
-        {searchQuery ? (
-          <Pressable
-            accessibilityLabel="Clear search"
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => setSearchQuery('')}>
-            <MaterialIcons color={palette.icon} name="cancel" size={20} />
-          </Pressable>
-        ) : null}
-      </View>
+      />
 
       <ScrollView
         horizontal
@@ -541,13 +521,12 @@ export default function StudyLocationsScreen() {
           <View
             style={[
               styles.locationList,
-              Elevation.e1,
-              { backgroundColor: palette.surface, borderColor: palette.border },
+              { borderTopColor: palette.border },
             ]}>
             <View style={styles.locationListHeader}>
-              <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Study spots</Text>
+              <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>Nearby spots</Text>
               <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                Select from the list for details and ratings.
+                Select a spot for details and ratings.
               </Text>
             </View>
 
@@ -563,7 +542,7 @@ export default function StudyLocationsScreen() {
                     styles.locationListItem,
                     {
                       backgroundColor: isSelected ? palette.surfaceMuted : palette.background,
-                      borderColor: isSelected ? palette.tint : palette.border,
+                      borderBottomColor: palette.border,
                     },
                   ]}>
                   <View style={styles.locationListCopy}>
@@ -583,17 +562,15 @@ export default function StudyLocationsScreen() {
                       onPress={() => selectLocation(location.locationId)}
                       style={({ pressed }) => [
                         styles.locationListButton,
-                        { borderColor: palette.border },
                         pressed && styles.pressed,
                       ]}>
-                      <Text style={[TypeScale.label, { color: palette.text }]}>Details</Text>
+                      <Text style={[TypeScale.label, { color: palette.tint }]}>Details</Text>
                     </Pressable>
                     <Pressable
                       accessibilityRole="button"
                       onPress={() => rateLocation(location)}
                       style={({ pressed }) => [
                         styles.locationListButton,
-                        { borderColor: palette.border },
                         pressed && styles.pressed,
                       ]}>
                       <Text style={[TypeScale.label, { color: palette.tint }]}>Rate</Text>
@@ -614,7 +591,7 @@ export default function StudyLocationsScreen() {
               <View style={[styles.sheetHandle, { backgroundColor: palette.outline }]} />
               <View style={styles.sheetHeadingRow}>
                 <View style={styles.locationHeading}>
-                  <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
+                  <Text style={[TypeScale.meta, { color: palette.icon }]}>
                     {selectedLocation.campusArea}
                   </Text>
                   <Text style={[TypeScale.h2, { color: palette.text }]}>
@@ -663,7 +640,7 @@ export default function StudyLocationsScreen() {
               </View>
 
               {selectedSessions.length > 0 ? (
-                <View style={styles.sessionList}>
+                <View style={[styles.sessionList, { borderTopColor: palette.border }]}>
                   {selectedSessions.slice(0, 3).map((session) => {
                     const live = isLive(session, Date.now());
                     const participantCount = Array.isArray(session.participantIds)
@@ -675,9 +652,9 @@ export default function StudyLocationsScreen() {
                         accessibilityRole="button"
                         key={session.sessionId}
                         onPress={() => router.push(`/session/${session.sessionId}`)}
-                        style={({ pressed }) => [
+                      style={({ pressed }) => [
                           styles.sessionRow,
-                          { backgroundColor: palette.surface, borderColor: palette.border },
+                          { borderBottomColor: palette.border },
                           pressed && styles.pressed,
                         ]}>
                         <CourseChip code={session.classId} size="sm" />
@@ -692,7 +669,7 @@ export default function StudyLocationsScreen() {
                           </Text>
                         </View>
                         {live ? (
-                          <Text style={[TypeScale.eyebrow, { color: palette.tint }]}>● LIVE</Text>
+                          <Text style={[TypeScale.meta, { color: palette.tint }]}>● Live</Text>
                         ) : (
                           <MaterialIcons color={palette.icon} name="chevron-right" size={20} />
                         )}
@@ -702,9 +679,11 @@ export default function StudyLocationsScreen() {
                 </View>
               ) : (
                 <View style={[styles.noSessions, { borderColor: palette.border }]}>
-                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Open table</Text>
+                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
+                    No sessions here yet
+                  </Text>
                   <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                    No one has planned a session here yet.
+                    Create one for classmates to join.
                   </Text>
                   <Pressable
                     accessibilityRole="button"
@@ -725,9 +704,9 @@ export default function StudyLocationsScreen() {
         ) : !isLoading ? (
           <EmptyState
             icon="spot"
-            headline="No pins over here"
-            body="Try another search or widen the map filters."
-            actionLabel="Show every spot"
+            headline="No study spots found"
+            body="Try another search or clear the current filters."
+            actionLabel="Clear filters"
             onAction={clearFilters}
             style={styles.noPinsState}
           />
@@ -751,38 +730,17 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 8,
   },
-  header: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  headerCopy: {
-    gap: 2,
-  },
   headerActions: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: Space.sm,
-  },
-  searchBar: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    flexDirection: 'row',
-    gap: Space.sm,
-    minHeight: 50,
-    paddingHorizontal: Space.lg,
-  },
-  searchInput: {
-    flex: 1,
-    paddingVertical: Space.sm,
   },
   filterRail: {
     gap: Space.sm,
     paddingRight: Space.lg,
   },
   filterChip: {
-    borderRadius: Radius.pill,
+    borderRadius: Radius.md,
     justifyContent: 'center',
     minHeight: 36,
     paddingHorizontal: Space.md + 2,
@@ -798,18 +756,16 @@ const styles = StyleSheet.create({
     paddingTop: Space.lg,
   },
   locationList: {
-    borderRadius: Radius.xxl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    gap: Space.sm,
-    padding: Space.md,
+    borderTopWidth: 1,
   },
   locationListHeader: {
     gap: 2,
+    paddingBottom: Space.md,
+    paddingTop: Space.lg,
   },
   locationListItem: {
     alignItems: 'center',
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
@@ -826,11 +782,9 @@ const styles = StyleSheet.create({
   },
   locationListButton: {
     alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
     justifyContent: 'center',
-    minHeight: 34,
-    paddingHorizontal: Space.md,
+    minHeight: 44,
+    paddingHorizontal: Space.sm,
   },
   locationSheet: {
     borderRadius: Radius.xxl,
@@ -858,7 +812,7 @@ const styles = StyleSheet.create({
   },
   directionsButton: {
     alignItems: 'center',
-    borderRadius: Radius.pill,
+    borderRadius: Radius.md,
     flexDirection: 'row',
     gap: Space.xs,
     minHeight: 42,
@@ -877,17 +831,16 @@ const styles = StyleSheet.create({
     gap: Space.sm,
   },
   tag: {
-    borderRadius: Radius.pill,
+    borderRadius: Radius.sm,
     paddingHorizontal: Space.sm + 2,
     paddingVertical: Space.xs,
   },
   sessionList: {
-    gap: Space.sm,
+    borderTopWidth: 1,
   },
   sessionRow: {
     alignItems: 'center',
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.sm,
     minHeight: 72,
