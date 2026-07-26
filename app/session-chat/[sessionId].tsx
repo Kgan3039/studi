@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { IconButton } from '@/components/ui/IconButton';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -424,32 +424,31 @@ export default function SessionChatScreen() {
     );
   }
 
+  // Both of these use the shared empty state so a chat that can't open looks
+  // like every other dead end in the app rather than a bare block of text.
   if (!session) {
     return (
-      <View style={[styles.centered, { backgroundColor: palette.background }]}>
-        <Text style={[styles.emptyHeadline, { color: palette.text }]}>
-          Session chat unavailable
-        </Text>
-        <Text style={[TypeScale.body, styles.emptyBody, { color: palette.icon }]}>
-          This session may have been removed, or the link is no longer valid.
-        </Text>
-        <Button label="Try again" variant="secondary" size="sm" onPress={() => setRetryNonce((n) => n + 1)} />
+      <View style={[styles.screen, { backgroundColor: palette.background }]}>
+        <EmptyState
+          icon="chat"
+          headline="Chat unavailable"
+          body="This session was removed or the link expired."
+          actionLabel="Try again"
+          onAction={() => setRetryNonce((n) => n + 1)}
+        />
       </View>
     );
   }
 
   if (!isParticipant) {
     return (
-      <View style={[styles.centered, { backgroundColor: palette.background }]}>
-        <Text style={[styles.emptyHeadline, { color: palette.text }]}>Join to chat</Text>
-        <Text style={[TypeScale.body, styles.emptyBody, { color: palette.icon }]}>
-          The session chat is just for people who are going.
-        </Text>
-        <Button
-          label="View session"
-          variant="secondary"
-          size="sm"
-          onPress={() =>
+      <View style={[styles.screen, { backgroundColor: palette.background }]}>
+        <EmptyState
+          icon="chat"
+          headline="Join to chat"
+          body="Session chat is for people who are going."
+          actionLabel="View session"
+          onAction={() =>
             router.push({ pathname: '/session/[sessionId]', params: { sessionId: session.sessionId } })
           }
         />
@@ -701,12 +700,10 @@ const styles = StyleSheet.create({
   daySeparator: {
     alignSelf: 'center',
     fontFamily: FontFamily.bodySemiBold,
-    fontSize: 10,
-    letterSpacing: 0.8,
-    lineHeight: 13,
+    fontSize: 11,
+    lineHeight: 14,
     marginVertical: Space.sm,
     textAlign: 'center',
-    textTransform: 'uppercase',
   },
   senderName: {
     fontFamily: FontFamily.bodyMedium,
