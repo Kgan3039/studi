@@ -1,6 +1,6 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { type ComponentProps, useCallback, useEffect, useState } from 'react';
+import { type ComponentProps, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -68,10 +68,17 @@ export function NotificationCenterButton() {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewItems, setPreviewItems] = useState<AppNotification[]>([]);
+  const pendingRouteRef = useRef<string | null>(null);
+  const navigationFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState(setCurrentUser);
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      if (navigationFallbackRef.current) {
+        clearTimeout(navigationFallbackRef.current);
+      }
+    };
   }, []);
 
   const loadUnreadCount = useCallback(async () => {
@@ -134,9 +141,10 @@ export function NotificationCenterButton() {
       });
     }
 
-    setIsOpen(false);
     if (isAllowedNotificationUrl(notification.url) && notification.url !== '/notifications') {
-      router.push(notification.url as never);
+      closeAndNavigate(notification.url);
+    } else {
+      setIsOpen(false);
     }
   }
 
@@ -160,9 +168,30 @@ export function NotificationCenterButton() {
     }
   }
 
-  function handleViewAll() {
+  function finishPendingNavigation() {
+    if (navigationFallbackRef.current) {
+      clearTimeout(navigationFallbackRef.current);
+      navigationFallbackRef.current = null;
+    }
+
+    const route = pendingRouteRef.current;
+    pendingRouteRef.current = null;
+    if (route) {
+      router.push(route as never);
+    }
+  }
+
+  function closeAndNavigate(route: string) {
+    pendingRouteRef.current = route;
     setIsOpen(false);
-    router.push('/notifications');
+
+    // Native Modal dismissal is asynchronous. onDismiss handles iOS; this
+    // fallback keeps the same interaction reliable on Android.
+    navigationFallbackRef.current = setTimeout(finishPendingNavigation, 350);
+  }
+
+  function handleViewAll() {
+    closeAndNavigate('/notifications');
   }
 
   const badgeLabel = unreadCount > 99 ? '99+' : String(unreadCount);
@@ -198,6 +227,7 @@ export function NotificationCenterButton() {
 
       <Modal
         animationType="fade"
+        onDismiss={finishPendingNavigation}
         onRequestClose={() => setIsOpen(false)}
         statusBarTranslucent
         transparent
