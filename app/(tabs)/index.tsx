@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
   Alert,
-  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -19,7 +18,7 @@ import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { IconButton } from '@/components/ui/IconButton';
-import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
@@ -127,6 +126,7 @@ function HeroCard({
           borderColor: palette.border,
           opacity: pressed ? 0.92 : 1,
         },
+        pressed ? styles.pressed : null,
       ]}>
       <View style={styles.heroTopRow}>
         <View style={styles.heroEyebrowRow}>
@@ -526,36 +526,17 @@ export default function HomeScreen() {
           />
         }
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-        {/* Home is the app's front page, so it carries the mark. Other tabs
-            stay title-only. */}
-        <View style={styles.brandRow}>
-          <View style={styles.brandLockup}>
-            <Image
-              accessibilityIgnoresInvertColors
-              source={require('@/assets/images/studi-logo.png')}
-              style={styles.brandMark}
-            />
-            <Text style={[styles.brandWord, { color: palette.text }]}>Studi</Text>
-          </View>
-          <View style={styles.brandActions}>
-            <IconButton
-              accessibilityLabel="Refresh home"
-              disabled={isRefreshing}
-              icon="arrow.clockwise"
-              loading={isRefreshing}
-              onPress={handleRefresh}
-            />
-            <NotificationCenterButton />
-          </View>
-        </View>
-
-        <View style={styles.greetingBlock}>
-          <Text style={[TypeScale.body, { color: palette.icon }]}>{timeOfDayGreeting()},</Text>
-          <Text style={[styles.greetingName, { color: palette.text }]} numberOfLines={1}>
-            {savedName.firstName || 'there'}
-          </Text>
-          <Text style={[TypeScale.meta, { color: palette.icon }]}>{dateEyebrow}</Text>
-        </View>
+        {/* Same header shape as every other tab — serif title, supporting line,
+            actions anchored right. The warmth comes from the name, not from a
+            different layout. */}
+        <ScreenHeader
+          onRefresh={handleRefresh}
+          refreshing={isRefreshing}
+          showNotifications
+          subtitle={`${timeOfDayGreeting()} · ${dateEyebrow}`}
+          title={savedName.firstName ? `Hi, ${savedName.firstName}` : 'Home'}
+          titleStyle={styles.greetingName}
+        />
 
         <ScreenTransition style={styles.transition}>
         {hero ? (
@@ -697,38 +678,8 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
   },
-  brandRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  brandLockup: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.sm,
-  },
-  brandMark: {
-    height: 26,
-    resizeMode: 'contain',
-    width: 26,
-  },
-  brandWord: {
-    fontFamily: FontFamily.serif,
-    fontSize: 22,
-    lineHeight: 26,
-  },
-  brandActions: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.xs,
-  },
-  greetingBlock: {
-    gap: 2,
-  },
   greetingName: {
     fontFamily: FontFamily.serifItalic,
-    fontSize: 34,
-    lineHeight: 40,
   },
   transition: {
     gap: Space.xl,
