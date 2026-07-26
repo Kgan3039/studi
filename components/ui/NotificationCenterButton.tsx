@@ -251,7 +251,7 @@ export function NotificationCenterButton() {
               },
             ]}>
             <View style={styles.previewHeader}>
-              <View>
+              <View style={styles.previewHeaderCopy}>
                 <Text style={[TypeScale.h2, { color: palette.text }]}>Notifications</Text>
                 <Text style={[TypeScale.caption, { color: palette.icon }]}>Recent activity</Text>
               </View>
@@ -264,6 +264,17 @@ export function NotificationCenterButton() {
                   <Text style={[TypeScale.label, { color: palette.tint }]}>Mark all read</Text>
                 </Pressable>
               ) : null}
+              <Pressable
+                accessibilityLabel="Close notifications"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => setIsOpen(false)}
+                style={({ pressed }) => [
+                  styles.closeButton,
+                  { backgroundColor: palette.surfaceMuted, opacity: pressed ? 0.6 : 1 },
+                ]}>
+                <MaterialIcons color={palette.text} name="close" size={17} />
+              </Pressable>
             </View>
 
             {isLoadingPreview ? (
@@ -379,8 +390,20 @@ const styles = StyleSheet.create({
   previewHeader: {
     alignItems: 'center',
     flexDirection: 'row',
+    gap: Space.md,
     justifyContent: 'space-between',
     marginBottom: Space.md,
+  },
+  previewHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  closeButton: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
   },
   previewLoading: {
     alignItems: 'center',

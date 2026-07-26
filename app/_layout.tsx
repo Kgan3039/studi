@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 import 'react-native-reanimated';
 
 import { StudiLaunchIntro } from '@/components/studi-launch-intro';
+import { HeaderCloseButton } from '@/components/ui/HeaderCloseButton';
 import { Colors, FontFamily } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initAnalytics, track } from '@/lib/analytics';
@@ -212,12 +213,34 @@ function RootLayout() {
             screens (and their on-mount Firestore reads) never mount otherwise. */}
         <Stack.Protected guard={isSignedIn}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="create-session" options={{ title: 'Create Session' }} />
+          {/* Finish-or-leave tasks present as sheets with an explicit close. */}
+          <Stack.Screen
+            name="create-session"
+            options={{
+              title: 'New session',
+              presentation: 'modal',
+              headerLeft: () => <HeaderCloseButton />,
+            }}
+          />
           <Stack.Screen name="conversation/[conversationId]" options={{ title: 'Conversation' }} />
-          <Stack.Screen name="report-user" options={{ title: 'Report User' }} />
+          <Stack.Screen
+            name="report-user"
+            options={{
+              title: 'Report user',
+              presentation: 'modal',
+              headerLeft: () => <HeaderCloseButton />,
+            }}
+          />
           <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />
           <Stack.Screen name="session-chat/[sessionId]" options={{ title: 'Session Chat' }} />
-          <Stack.Screen name="rate-location" options={{ title: 'Rate This Spot' }} />
+          <Stack.Screen
+            name="rate-location"
+            options={{
+              title: 'Rate this spot',
+              presentation: 'modal',
+              headerLeft: () => <HeaderCloseButton />,
+            }}
+          />
           <Stack.Screen name="settings" options={{ title: 'Settings' }} />
           <Stack.Screen name="notifications" options={{ title: 'Notifications' }} />
           <Stack.Screen name="friends" options={{ title: 'Study Buddies' }} />

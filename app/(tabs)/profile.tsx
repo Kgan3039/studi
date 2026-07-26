@@ -17,13 +17,20 @@ import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { IconButton } from '@/components/ui/IconButton';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
+import { Sheet } from '@/components/ui/Sheet';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { identifyUser, track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
-import { UW_COURSE_CATALOG, UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
+import {
+  UW_COURSE_CATALOG,
+  UW_COURSE_COUNT,
+  formatCourseTitle,
+  searchCourses,
+} from '@/lib/catalog';
 import {
     getLocationRatingAggregates,
     getLocations,
@@ -121,7 +128,10 @@ export default function ProfileScreen() {
   // Course titles for the saved-classes rows (board ProfileScreen) come from
   // the bundled catalog — no extra reads.
   const courseTitlesByCode = useMemo(
-    () => new Map(UW_COURSE_CATALOG.map((course) => [course.code, course.title] as const)),
+    () =>
+      new Map(
+        UW_COURSE_CATALOG.map((course) => [course.code, formatCourseTitle(course.title)] as const)
+      ),
     []
   );
 
@@ -301,6 +311,7 @@ export default function ProfileScreen() {
           ? `You'll see sessions for ${classes.length} class${classes.length === 1 ? '' : 'es'}.`
           : 'No classes saved yet.'
       );
+      setIsEditing(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to save classes right now.';
       setClassesStatus(message);
@@ -383,8 +394,9 @@ export default function ProfileScreen() {
   }
 
   return (
+    <View style={[styles.screen, { backgroundColor: palette.background }]}>
     <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
+      style={styles.screen}
       refreshControl={
         <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
       }
@@ -417,14 +429,11 @@ export default function ProfileScreen() {
             </Text>
           ) : null}
         </View>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => setIsEditingName((editing) => !editing)}
-          hitSlop={8}>
-          <Text style={[TypeScale.label, { color: palette.tint }]}>
-            {isEditingName ? 'Done' : 'Edit'}
-          </Text>
-        </Pressable>
+        <IconButton
+          accessibilityLabel="Edit profile"
+          icon="square.and.pencil"
+          onPress={() => setIsEditingName(true)}
+        />
       </View>
 
       <View
@@ -494,24 +503,19 @@ export default function ProfileScreen() {
         </Pressable>
       </View>
 
-      {isEditingName ? (
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: palette.surface,
-              borderColor: palette.border,
-            },
-          ]}
-        >
-          <Text style={[TypeScale.heading, { color: palette.text }]}>
-            Your profile
-          </Text>
-
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            {nameStatus}
-          </Text>
-
+      <Sheet
+        visible={isEditingName}
+        onClose={() => setIsEditingName(false)}
+        title="Edit profile"
+        subtitle={nameStatus}
+        footer={
+          <Button
+            label="Save profile"
+            fullWidth
+            loading={isSaving}
+            onPress={handleSaveProfile}
+          />
+        }>
           <View style={styles.inlineRow}>
             <TextInput
               autoCapitalize="words"
@@ -602,27 +606,18 @@ export default function ProfileScreen() {
               {bio.length}/{PROFILE_BIO_MAX_LENGTH}
             </Text>
           </View>
-
-          <Button
-            label="Save profile"
-            variant="secondary"
-            fullWidth
-            loading={isSaving}
-            onPress={handleSaveProfile}
-          />
-        </View>
-      ) : null}
+      </Sheet>
 
       {/* Current classes (board ProfileScreen ~1789). */}
       <View style={styles.section}>
         <SectionHeader
           eyebrow="Current classes"
           action={
-            <Pressable accessibilityRole="button" onPress={() => setIsEditing((editing) => !editing)}>
-              <Text style={[TypeScale.label, { color: palette.tint }]}>
-                {isEditing ? 'Done' : 'Edit'}
-              </Text>
-            </Pressable>
+            <IconButton
+              accessibilityLabel="Edit your classes"
+              icon="square.and.pencil"
+              onPress={() => setIsEditing(true)}
+            />
           }
         />
         {classes.length > 0 ? (
@@ -635,8 +630,8 @@ export default function ProfileScreen() {
                   <CourseChip code={classCode} size="sm" />
                   <Text
                     style={[TypeScale.bodyStrong, styles.classTitle, { color: palette.text }]}
-                    numberOfLines={1}>
-                    {courseTitlesByCode.get(classCode) ?? 'UW Madison course'}
+                    numberOfLines={2}>
+                    {courseTitlesByCode.get(classCode) ?? 'UW–Madison course'}
                   </Text>
                 </View>
                 <Text style={[TypeScale.label, { color: palette.icon }]}>
@@ -654,10 +649,14 @@ export default function ProfileScreen() {
 
       {/* Editor panel — kept from the prior screen so classes/name stay
           editable without a separate settings surface; revealed via Edit. */}
-      {isEditing ? (
-        <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <Text style={[TypeScale.heading, { color: palette.text }]}>Your classes</Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>{classesStatus}</Text>
+      <Sheet
+        visible={isEditing}
+        onClose={() => setIsEditing(false)}
+        title="Your classes"
+        subtitle={classesStatus}
+        footer={
+          <Button label="Save classes" fullWidth loading={isSaving} onPress={handleSaveClasses} />
+        }>
           <TextInput
             autoCapitalize="characters"
             editable={!isSaving}
@@ -685,7 +684,7 @@ export default function ProfileScreen() {
                     ]}>
                     <Text style={[TypeScale.code, { color: palette.text }]}>{course.code}</Text>
                     <Text style={[TypeScale.body, { color: palette.text }]} numberOfLines={1}>
-                      {course.title}
+                      {formatCourseTitle(course.title)}
                     </Text>
                     <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
                       {course.subjectName}, {course.credits}
@@ -726,9 +725,7 @@ export default function ProfileScreen() {
               ))}
             </View>
           ) : null}
-          <Button label="Save classes" fullWidth loading={isSaving} onPress={handleSaveClasses} />
-        </View>
-      ) : null}
+      </Sheet>
 
       {/* Top-rated campus locations. */}
       <View style={styles.section}>
@@ -757,6 +754,7 @@ export default function ProfileScreen() {
 
       </ScreenTransition>
     </ScrollView>
+    </View>
   );
 }
 
