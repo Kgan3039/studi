@@ -408,10 +408,19 @@ service cloud.firestore {
         && affectedKeys().hasOnly(['participantIds', 'updatedAt'])
         && request.auth.uid in resource.data.participantIds
         && !(request.auth.uid in incoming().participantIds)
-        && incoming().participantIds.size() == resource.data.participantIds.size() - 1
-        && resource.data.participantIds.toSet().intersection(
-             incoming().participantIds.toSet()
-           ) == incoming().participantIds.toSet();
+        // The post-state must be EXACTLY the prior roster minus the caller.
+        // The previous formulation — a size drop of exactly one plus a subset
+        // test — let a leaver evict someone else by padding a duplicate into
+        // the gap they freed: [alice, bob, mallory] → [alice, alice] satisfied
+        // both checks (size 3-1, and {alice} is a subset of the old roster)
+        // while silently removing bob. Set equality pins the result exactly,
+        // and the uniqueness check stops a duplicate from standing in for a
+        // removed member. The old size test is subsumed: for a duplicate-free
+        // roster it is implied, and dropping it means a roster that somehow
+        // holds duplicates stays leavable rather than trapping its members.
+        && hasUniqueParticipantIds(incoming().participantIds)
+        && incoming().participantIds.toSet() ==
+             resource.data.participantIds.toSet().difference([request.auth.uid].toSet());
     }
 
     match /sessions/{sessionId} {

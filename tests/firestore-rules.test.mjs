@@ -2126,6 +2126,82 @@ describe('PR A hardening', () => {
       }));
     });
 
+    it('denies a duplicate-padded self-leave that evicts another participant', async () => {
+      // The leaver frees a slot and refills it with a duplicate of a member
+      // who stays, so the roster shrinks by exactly one and every entry is
+      // still a prior member — the old size + subset test passed this while
+      // BOB was silently removed.
+      await seed('sessions/leave3', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'leave3'), {
+        participantIds: [ALICE, ALICE],
+        updatedAt: serverTimestamp(),
+      }));
+      // The same trick duplicating the host, and duplicating the other
+      // non-host member, are equally denied.
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'leave3'), {
+        participantIds: [BOB, BOB],
+        updatedAt: serverTimestamp(),
+      }));
+      // And a leaver cannot simply drop someone else alongside themselves.
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'leave3'), {
+        participantIds: [ALICE],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('allows an ordinary self-leave from a multi-person session', async () => {
+      await seed('sessions/leaveOk', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
+      // Mallory leaves; Alice and Bob keep their seats.
+      await assertSucceeds(updateDoc(doc(ctx(MALLORY), 'sessions', 'leaveOk'), {
+        participantIds: [ALICE, BOB],
+        updatedAt: serverTimestamp(),
+      }));
+      // Bob then leaves the remaining pair.
+      await assertSucceeds(updateDoc(doc(ctx(BOB), 'sessions', 'leaveOk'), {
+        participantIds: [ALICE],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('allows a self-leave that reorders the remaining participants', async () => {
+      // arrayRemove preserves order, but the rule pins the SET, not the
+      // sequence — a reordered remainder must stay valid.
+      await seed('sessions/leaveOrder', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
+      await assertSucceeds(updateDoc(doc(ctx(MALLORY), 'sessions', 'leaveOrder'), {
+        participantIds: [BOB, ALICE],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('allows the host to leave their own session', async () => {
+      await seed('sessions/leaveHost', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
+      await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 'leaveHost'), {
+        participantIds: [BOB, MALLORY],
+        updatedAt: serverTimestamp(),
+      }));
+    });
+
+    it('denies a non-host dropping someone else, with or without leaving', async () => {
+      await seed('sessions/leaveBad', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
+      // Caller stays seated and evicts a third party — a kick, which only the
+      // host may do. (Rewriting the roster unchanged is a separate, legitimate
+      // no-op handled by isSelfJoinNoOp.)
+      await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 'leaveBad'), {
+        participantIds: [ALICE, BOB], updatedAt: serverTimestamp(),
+      }));
+
+      await env.clearFirestore();
+      await seed('sessions/leaveBad', sessionWith(ALICE, [ALICE, BOB]));
+      // Leaving while smuggling in a third party.
+      await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 'leaveBad'), {
+        participantIds: [ALICE, MALLORY], updatedAt: serverTimestamp(),
+      }));
+      // A non-participant cannot "leave" on someone else's behalf.
+      await assertFails(updateDoc(doc(ctx(MALLORY), 'sessions', 'leaveBad'), {
+        participantIds: [ALICE], updatedAt: serverTimestamp(),
+      }));
+    });
+
     it('leaves a legacy no-capacity session joinable below the ceiling', async () => {
       await seed('sessions/legacy2', sessionWith(ALICE, [ALICE]));
       await assertSucceeds(updateDoc(doc(ctx(BOB), 'sessions', 'legacy2'), {
