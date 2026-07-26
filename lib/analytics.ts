@@ -77,6 +77,7 @@ export type AnalyticsEvent =
   | "uw_map_opened"
   | "message_sent"
   | "conversation_started"
+  | "conversation_quota_blocked"
   | "session_chat_opened"
   | "group_message_sent"
   | "report_submitted"

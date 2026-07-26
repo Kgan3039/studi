@@ -49,6 +49,7 @@ export const COLLECTIONS = {
 } as const;
 
 type RateLimitedAction =
+  | "createConversation"
   | "createSession"
   | "friendRequest"
   | "locationRating"
@@ -1128,6 +1129,62 @@ export async function createSession(input: {
   return sessionRef.id;
 }
 
+// ---------------------------------------------------------------------------
+// New-conversation quota (security audit H3). Starting a DM was the only
+// abuse-prone create with no throttle at all, so one account could park a
+// top-of-inbox row on every user in the beta. A minimum-interval throttle (the
+// shape the other five actions use) bounds rate but not reach, so this uses a
+// fixed 24h window with a hard cap instead.
+//
+// firestore.rules is the authoritative enforcement layer — these constants
+// mirror conversationQuotaMax()/conversationQuotaWindow() there and exist so
+// the client can fail fast with a precise message instead of surfacing a bare
+// permission-denied. Change both together.
+// ---------------------------------------------------------------------------
+
+export const CONVERSATION_QUOTA_MAX = 10;
+export const CONVERSATION_QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** TTL horizon written on every counter write; rules accept a 24–72h band. */
+const CONVERSATION_QUOTA_TTL_MS = 48 * 60 * 60 * 1000;
+
+/** Thrown when the caller has no new-conversation quota left in the window. */
+export class ConversationQuotaError extends Error {
+  constructor() {
+    // Deliberately does not disclose the cap or when it resets.
+    super("You've started several new chats recently. Try again later.");
+    this.name = "ConversationQuotaError";
+  }
+}
+
+type ConversationQuotaDoc = {
+  windowStart: unknown;
+  count: unknown;
+};
+
+/**
+ * Decide the next counter state from what the transaction actually read.
+ *
+ * Returns null when the quota is spent. Pure and exported so the rollout
+ * can be reasoned about (and tested) without a Firestore round trip; the
+ * server independently re-validates every transition, so a wrong answer here
+ * is denied rather than trusted.
+ */
+export function nextConversationQuotaCount(
+  existing: ConversationQuotaDoc | undefined,
+  now: number
+): number | null {
+  const windowStart =
+    existing?.windowStart instanceof Timestamp ? existing.windowStart.toMillis() : null;
+  const count = typeof existing?.count === "number" ? existing.count : null;
+
+  // No doc, an unreadable doc, or a fully expired window all start over at 1.
+  if (windowStart === null || count === null || now - windowStart >= CONVERSATION_QUOTA_WINDOW_MS) {
+    return 1;
+  }
+
+  return count >= CONVERSATION_QUOTA_MAX ? null : count + 1;
+}
+
 export async function getOrCreateDirectConversation(
   currentUserId: string,
   otherUserId: string
@@ -1137,25 +1194,80 @@ export async function getOrCreateDirectConversation(
   }
 
   const participantIds = [currentUserId, otherUserId].sort();
-  // Conversation doc ID == participantKey: dedup is a one-read getDoc and the
-  // rules (PR 4) enforce the invariant, so the duplicate-thread race is gone.
+  // Conversation doc ID == participantKey: dedup is structural and the rules
+  // (PR 4) enforce the invariant, so the duplicate-thread race is gone.
   const conversationId = buildParticipantKey(currentUserId, otherUserId);
   const conversationRef = doc(db, COLLECTIONS.conversations, conversationId);
-  const existing = await getDoc(conversationRef);
+  const quotaRef = rateLimitDoc(currentUserId, "createConversation");
 
-  if (existing.exists()) {
-    return conversationId;
+  // A transaction, not a read-then-batch: the quota decision must be made
+  // against the same snapshot that the write commits under. With a prior
+  // getDoc, two taps racing (or a retry landing beside the original) could
+  // both read count=n and both write count=n+1, spending one slot for two
+  // conversations. Firestore re-runs this callback on contention, so every
+  // attempt re-reads the counter and recomputes from fresh state.
+  const runCreate = () => runTransaction(db, async (transaction) => {
+    const existing = await transaction.get(conversationRef);
+
+    // Reopening an existing thread is always free — it neither reads nor
+    // consumes quota, and adds no inbox row for anyone.
+    if (existing.exists()) {
+      return false;
+    }
+
+    const quotaSnap = await transaction.get(quotaRef);
+    const nextCount = nextConversationQuotaCount(
+      quotaSnap.exists() ? (quotaSnap.data() as ConversationQuotaDoc) : undefined,
+      Date.now()
+    );
+
+    if (nextCount === null) {
+      throw new ConversationQuotaError();
+    }
+
+    transaction.set(conversationRef, {
+      participantIds,
+      participantKey: conversationId,
+      lastMessagePreview: "",
+      lastMessageAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    // windowStart is pinned to the server clock on a reset (rules require
+    // == request.time) and carried forward verbatim on an increment, so the
+    // window can never be backdated or restarted early.
+    transaction.set(quotaRef, {
+      windowStart:
+        nextCount === 1 ? serverTimestamp() : (quotaSnap.data() as ConversationQuotaDoc).windowStart,
+      count: nextCount,
+      updatedAt: serverTimestamp(),
+      expiresAt: Timestamp.fromMillis(Date.now() + CONVERSATION_QUOTA_TTL_MS),
+    });
+
+    return true;
+  });
+
+  let created: boolean;
+  try {
+    created = await runCreate();
+  } catch (error) {
+    // Tracked outside the transaction callback: Firestore re-runs that callback
+    // on contention, and counting a retry as a separate block would inflate the
+    // signal we tune the cap against.
+    if (error instanceof ConversationQuotaError) {
+      track("conversation_quota_blocked");
+    }
+    throw error;
   }
 
-  await setDoc(conversationRef, {
-    participantIds,
-    participantKey: conversationId,
-    lastMessagePreview: "",
-    lastMessageAt: serverTimestamp(),
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-  track("conversation_started");
+  if (created) {
+    // Rollout signal: presence of quota_written distinguishes updated clients
+    // (which write the counter) from legacy ones (which do not). Phase 2 is
+    // gated on this reaching ~100% of conversation_started events — see
+    // docs/conversation-quota-rollout.md.
+    track("conversation_started", { quota_written: true });
+  }
 
   return conversationId;
 }

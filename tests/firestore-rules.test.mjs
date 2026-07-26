@@ -2233,3 +2233,265 @@ describe('PR A hardening', () => {
     });
   });
 });
+
+// ------------------------------------------- PR B: new-conversation quota
+// Phase 1 coverage. The counter doc is fully validated wherever it is written,
+// but conversation create does NOT yet require it (old clients write none).
+// The Phase 2 flip adds one clause to the create rule; the tests that will
+// change are called out in docs/conversation-quota-rollout.md.
+describe('PR B conversation quota (phase 1)', () => {
+  const QUOTA_MAX = 10;
+  const quotaPath = (uid) => `rateLimits/${uid}/actions/createConversation`;
+  const quotaRef = (db, uid) => doc(db, 'rateLimits', uid, 'actions', 'createConversation');
+  const ttl = (hours = 48) => Timestamp.fromMillis(Date.now() + hours * 3600 * 1000);
+  const liveWindow = (count) => ({
+    windowStart: Timestamp.now(), count, updatedAt: Timestamp.now(), expiresAt: ttl(),
+  });
+  const seedUser = (uid) => seed(`users/${uid}`, { displayName: uid, classes: [] });
+
+  // A fresh-window counter write, as the client transaction emits it.
+  const openWindow = () => ({
+    windowStart: serverTimestamp(), count: 1,
+    updatedAt: serverTimestamp(), expiresAt: ttl(),
+  });
+
+  describe('counter transitions', () => {
+    it('opens a window at count 1 and increments inside it', async () => {
+      await assertSucceeds(setDoc(quotaRef(ctx(ALICE), ALICE), openWindow()));
+
+      await env.clearFirestore();
+      await seed(quotaPath(ALICE), liveWindow(1));
+      await assertSucceeds(setDoc(quotaRef(ctx(ALICE), ALICE), {
+        windowStart: (await getDocAsOwner(ALICE)).windowStart,
+        count: 2, updatedAt: serverTimestamp(), expiresAt: ttl(),
+      }));
+    });
+
+    it('denies exceeding the cap', async () => {
+      await seed(quotaPath(ALICE), liveWindow(QUOTA_MAX));
+      const stored = await getDocAsOwner(ALICE);
+      await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), {
+        windowStart: stored.windowStart, count: QUOTA_MAX + 1,
+        updatedAt: serverTimestamp(), expiresAt: ttl(),
+      }));
+    });
+
+    it('denies an early window reset while the window is still live', async () => {
+      // The whole point: a spender cannot start over before the window closes.
+      await seed(quotaPath(ALICE), liveWindow(QUOTA_MAX));
+      await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), openWindow()));
+    });
+
+    it('allows a reset once the window has fully expired', async () => {
+      await seed(quotaPath(ALICE), {
+        windowStart: Timestamp.fromMillis(Date.now() - 25 * 3600 * 1000),
+        count: QUOTA_MAX,
+        updatedAt: Timestamp.fromMillis(Date.now() - 25 * 3600 * 1000),
+        expiresAt: ttl(),
+      });
+      await assertSucceeds(setDoc(quotaRef(ctx(ALICE), ALICE), openWindow()));
+    });
+
+    it('denies forged counts, forged windowStart, and backdating', async () => {
+      await seed(quotaPath(ALICE), liveWindow(3));
+      const stored = await getDocAsOwner(ALICE);
+
+      // Skipping ahead, standing still, and going backwards are all denied.
+      for (const count of [5, 3, 2]) {
+        await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), {
+          windowStart: stored.windowStart, count,
+          updatedAt: serverTimestamp(), expiresAt: ttl(),
+        }));
+      }
+
+      // Carrying a different windowStart on an increment.
+      await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), {
+        windowStart: Timestamp.fromMillis(Date.now() - 60 * 1000), count: 4,
+        updatedAt: serverTimestamp(), expiresAt: ttl(),
+      }));
+
+      // Backdating the window on a reset (would shorten the next window).
+      await env.clearFirestore();
+      await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), {
+        windowStart: Timestamp.fromMillis(Date.now() - 23 * 3600 * 1000), count: 1,
+        updatedAt: serverTimestamp(), expiresAt: ttl(),
+      }));
+    });
+
+    it('pins updatedAt, the expiresAt band, and the exact key set', async () => {
+      await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), {
+        ...openWindow(), updatedAt: Timestamp.fromMillis(0),
+      }));
+      // TTL horizon must land at or after the window closes, and not absurdly far.
+      await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), { ...openWindow(), expiresAt: ttl(1) }));
+      await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), { ...openWindow(), expiresAt: ttl(200) }));
+      // No smuggled fields.
+      await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), { ...openWindow(), bonus: 99 }));
+      // count must be a positive int.
+      await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), { ...openWindow(), count: 0 }));
+      await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), { ...openWindow(), count: 1.5 }));
+    });
+
+    it('denies deletion and third-party writes', async () => {
+      await seed(quotaPath(ALICE), liveWindow(5));
+      await assertFails(deleteDoc(quotaRef(ctx(ALICE), ALICE)));
+      await assertFails(setDoc(quotaRef(ctx(MALLORY), ALICE), openWindow()));
+    });
+  });
+
+  describe('read access', () => {
+    it('owner reads own counter; nobody else can', async () => {
+      await seed(quotaPath(ALICE), liveWindow(4));
+      await assertSucceeds(getDoc(quotaRef(ctx(ALICE), ALICE)));
+      await assertFails(getDoc(quotaRef(ctx(MALLORY), ALICE)));
+      await assertFails(getDoc(doc(ctx(MALLORY), 'rateLimits', ALICE, 'actions', 'sendMessage')));
+    });
+  });
+
+  describe('the two rate-limit shapes stay separate', () => {
+    it('createConversation rejects the interval shape', async () => {
+      await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), { updatedAt: serverTimestamp() }));
+    });
+
+    it('interval actions reject the counter shape', async () => {
+      for (const action of ['sendMessage', 'createSession', 'reportUser',
+                            'locationRating', 'friendRequest']) {
+        await assertFails(setDoc(
+          doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', action), openWindow()));
+      }
+    });
+
+    it('interval actions keep their original behavior', async () => {
+      // Regression guard on the shared isValidRateLimitWrite branch.
+      for (const action of ['sendMessage', 'createSession', 'reportUser',
+                            'locationRating', 'friendRequest']) {
+        await assertSucceeds(setDoc(
+          doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', action),
+          { updatedAt: serverTimestamp() }));
+      }
+      // ...and still throttle: an immediate second write is denied.
+      await assertFails(setDoc(
+        doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', 'createSession'),
+        { updatedAt: serverTimestamp() }));
+    });
+
+    it('rejects an unknown action name in either shape', async () => {
+      await assertFails(setDoc(
+        doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', 'madeUpAction'), openWindow()));
+    });
+  });
+
+  describe('conversation create during phase 1', () => {
+    it('still succeeds WITHOUT a counter (already-installed clients)', async () => {
+      await seedUser(BOB);
+      await assertSucceeds(setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
+        validConversation(ALICE, BOB)));
+    });
+
+    it('succeeds WITH the counter written in the same atomic commit', async () => {
+      await seedUser(BOB);
+      const db = ctx(ALICE);
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'conversations', convoId(ALICE, BOB)), validConversation(ALICE, BOB));
+      batch.set(quotaRef(db, ALICE), openWindow());
+      await assertSucceeds(batch.commit());
+    });
+
+    it('a spent quota does not block create yet (phase 1 has no enforcement)', async () => {
+      // Documents the deliberate Phase 1 gap. This assertion INVERTS at Phase 2.
+      await seedUser(BOB);
+      await seed(quotaPath(ALICE), liveWindow(QUOTA_MAX));
+      await assertSucceeds(setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
+        validConversation(ALICE, BOB)));
+    });
+  });
+
+  // Mirrors the exact write sequence getOrCreateDirectConversation emits, so
+  // the integration risk (serverTimestamp resolved inside a transaction, the
+  // expiresAt band, reset-vs-increment) is proven against real rules rather
+  // than assumed. The client's own decision logic is re-validated server-side,
+  // so a bug there is denied rather than trusted.
+  describe('client transaction shape', () => {
+    const TTL_MS = 48 * 3600 * 1000;
+
+    function clientOpenChat(db, uid, otherUid) {
+      const cid = convoId(uid, otherUid);
+      return runTransaction(db, async (tx) => {
+        const existing = await tx.get(doc(db, 'conversations', cid));
+        if (existing.exists()) {
+          return 'existing';
+        }
+        const quotaSnap = await tx.get(quotaRef(db, uid));
+        const stored = quotaSnap.exists() ? quotaSnap.data() : undefined;
+        const startedAt = stored?.windowStart?.toMillis?.() ?? null;
+        const live = startedAt !== null && Date.now() - startedAt < 24 * 3600 * 1000;
+        const nextCount = live ? stored.count + 1 : 1;
+
+        tx.set(doc(db, 'conversations', cid), validConversation(uid, otherUid));
+        tx.set(quotaRef(db, uid), {
+          windowStart: live ? stored.windowStart : serverTimestamp(),
+          count: nextCount,
+          updatedAt: serverTimestamp(),
+          expiresAt: Timestamp.fromMillis(Date.now() + TTL_MS),
+        });
+        return 'created';
+      });
+    }
+
+    it('opens the window and creates the thread in one commit', async () => {
+      await seedUser(BOB);
+      await assertSucceeds(clientOpenChat(ctx(ALICE), ALICE, BOB));
+
+      let stored;
+      await env.withSecurityRulesDisabled(async (c) => {
+        stored = (await getDoc(doc(c.firestore(), quotaPath(ALICE)))).data();
+      });
+      assert.equal(stored.count, 1);
+    });
+
+    it('increments the live window on a second, different counterpart', async () => {
+      await seedUser(BOB);
+      await seedUser(MALLORY);
+      await assertSucceeds(clientOpenChat(ctx(ALICE), ALICE, BOB));
+      await assertSucceeds(clientOpenChat(ctx(ALICE), ALICE, MALLORY));
+
+      let stored;
+      await env.withSecurityRulesDisabled(async (c) => {
+        stored = (await getDoc(doc(c.firestore(), quotaPath(ALICE)))).data();
+      });
+      assert.equal(stored.count, 2, 'two distinct counterparts consumed two slots');
+    });
+
+    it('reopening an existing thread consumes no quota', async () => {
+      await seedUser(BOB);
+      await assertSucceeds(clientOpenChat(ctx(ALICE), ALICE, BOB));
+      // Second open short-circuits before the quota read.
+      assert.equal(await clientOpenChat(ctx(ALICE), ALICE, BOB), 'existing');
+
+      let stored;
+      await env.withSecurityRulesDisabled(async (c) => {
+        stored = (await getDoc(doc(c.firestore(), quotaPath(ALICE)))).data();
+      });
+      assert.equal(stored.count, 1, 'still 1 — reopening is free');
+    });
+
+    it('is rejected by rules if the client miscounts past the cap', async () => {
+      // Safety net: even a buggy or patched client cannot exceed the cap,
+      // because the transition is re-validated server-side.
+      await seedUser(BOB);
+      await seed(quotaPath(ALICE), liveWindow(QUOTA_MAX));
+      await assertFails(clientOpenChat(ctx(ALICE), ALICE, BOB));
+    });
+  });
+
+  // Reads the stored counter with rules bypassed so a test can echo windowStart
+  // back on an increment (the client does this from its transaction read).
+  async function getDocAsOwner(uid) {
+    let data;
+    await env.withSecurityRulesDisabled(async (c) => {
+      const snap = await getDoc(doc(c.firestore(), quotaPath(uid)));
+      data = snap.data();
+    });
+    return data;
+  }
+});

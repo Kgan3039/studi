@@ -77,7 +77,89 @@ service cloud.firestore {
 
     function isKnownRateLimitedAction(action) {
       return action in ['sendMessage', 'createSession', 'reportUser', 'locationRating',
-                        'friendRequest'];
+                        'friendRequest', 'createConversation'];
+    }
+
+    // Two rate-limit shapes share the rateLimits/{uid}/actions/{action} path:
+    //
+    //  - INTERVAL (the original five actions): a single `updatedAt`, valid when
+    //    enough time has passed since the last one. Bounds RATE, not total
+    //    volume — at a 10s interval that is still ~8,600 writes/day.
+    //  - COUNTER (createConversation): a fixed 24h window with a hard cap.
+    //    Unsolicited DM threads need total reach bounded, not just slowed, so
+    //    an interval throttle is the wrong instrument (security audit H3).
+    //
+    // The two are kept strictly separate: the five interval actions keep their
+    // exact prior schema and semantics, and only createConversation may use the
+    // counter shape.
+    function isCounterRateLimitedAction(action) {
+      return action == 'createConversation';
+    }
+
+    // New conversation partners allowed per window. A conversation ID is the
+    // deterministic sorted pair and can only ever be CREATED once (update
+    // cannot touch participantIds), so counting creates counts distinct
+    // counterparts exactly — no separate distinct-tracking is needed.
+    // Mirrors CONVERSATION_QUOTA_MAX in lib/firestore.ts; change both together.
+    function conversationQuotaMax() {
+      return 10;
+    }
+
+    function conversationQuotaWindow() {
+      return duration.value(24, 'h');
+    }
+
+    // The counter is unforgeable:
+    //  - a new window may start ONLY when no doc exists or the stored window is
+    //    genuinely older than the window length (no early reset),
+    //  - a reset pins windowStart to the server clock (no backdating),
+    //  - an increment must carry the SAME windowStart and exactly count + 1,
+    //    capped at the max (no skipping, no rewriting history),
+    //  - delete is denied outright (see the rateLimits match block).
+    // Writing this doc without creating a conversation only burns the caller's
+    // own quota, so there is nothing to gain by it.
+    function isValidQuotaCounterWrite(userId, action) {
+      return incoming().keys().hasOnly(['windowStart', 'count', 'updatedAt', 'expiresAt'])
+        && incoming().updatedAt == request.time
+        && incoming().windowStart is timestamp
+        && incoming().count is int
+        && incoming().count >= 1
+        // TTL horizon. Bounded against the SERVER clock on both sides rather
+        // than derived from windowStart, because on a reset windowStart is a
+        // server sentinel the client cannot do arithmetic on. The band still
+        // guarantees expiresAt lands at or after the window closes, so TTL can
+        // only ever remove a doc whose window is already dead — and removing
+        // one of those is behaviourally identical to the reset branch below,
+        // never a way to recycle quota early.
+        && incoming().expiresAt >= request.time + conversationQuotaWindow()
+        && incoming().expiresAt <= request.time + duration.value(72, 'h')
+        && (
+          // Fresh window: first ever, or the previous one has fully expired.
+          (
+            (!exists(rateLimitRef(userId, action))
+              || resource.data.windowStart <= request.time - conversationQuotaWindow())
+            && incoming().windowStart == request.time
+            && incoming().count == 1
+          )
+          // Increment inside a still-live window.
+          || (
+            exists(rateLimitRef(userId, action))
+            && resource.data.windowStart > request.time - conversationQuotaWindow()
+            && incoming().windowStart == resource.data.windowStart
+            && incoming().count == resource.data.count + 1
+            && incoming().count <= conversationQuotaMax()
+          )
+        );
+    }
+
+    // Unchanged behavior for the original five actions.
+    function isValidIntervalRateLimitWrite(userId, action) {
+      return incoming().keys().hasOnly(['updatedAt'])
+        && incoming().updatedAt == request.time
+        && (
+          !exists(rateLimitRef(userId, action))
+          || respectsRateLimit(userId, action, resource.data.updatedAt)
+        );
     }
 
     function respectsRateLimit(userId, action, previousUpdatedAt) {
@@ -100,11 +182,10 @@ service cloud.firestore {
       return isVerifiedUwUser()
         && isKnownRateLimitedAction(action)
         && userId == request.auth.uid
-        && incoming().keys().hasOnly(['updatedAt'])
-        && incoming().updatedAt == request.time
         && (
-          !exists(rateLimitRef(userId, action))
-          || respectsRateLimit(userId, action, resource.data.updatedAt)
+          isCounterRateLimitedAction(action)
+            ? isValidQuotaCounterWrite(userId, action)
+            : isValidIntervalRateLimitWrite(userId, action)
         );
     }
 
@@ -539,6 +620,15 @@ service cloud.firestore {
         && isDeterministicPairMember(conversationId);
       allow list: if isVerifiedUwUser()
         && request.auth.uid in resource.data.participantIds;
+      // createConversation quota — PHASE 1 (this release): the counter doc is
+      // validated wherever it is written (see isValidQuotaCounterWrite) and the
+      // updated client writes it inside the creation transaction, but create
+      // does NOT yet require it — already-installed clients write no counter
+      // and must keep working. There is therefore NO enforcement yet.
+      // PHASE 2 (deploy promptly after the client rollout is verified — see
+      // docs/conversation-quota-rollout.md) adds exactly one line here:
+      //     && hasFreshRateLimit(request.auth.uid, 'createConversation')
+      // which is the same helper every other throttled create already uses.
       allow create: if isVerifiedUwUser() && isValidNewConversation(conversationId);
       // Metadata bumps are only valid as part of the send-message batch: they
       // must ride the same fresh sendMessage rate-limit write as the message
@@ -648,7 +738,13 @@ service cloud.firestore {
     // ------------------------------------------------------------------
 
     match /rateLimits/{userId}/actions/{action} {
-      allow read: if false;
+      // Owner-only read. The interval actions never needed it, but the
+      // createConversation counter does: the client reads its own quota inside
+      // the creation transaction to decide reset-vs-increment, and reads it
+      // again after a denial to tell "quota spent" from "blocked"/"no such
+      // user" so it can show the right message instead of a generic failure.
+      // Reading your own counter reveals nothing you did not already do.
+      allow read: if isOwner(userId);
       allow create, update: if isValidRateLimitWrite(userId, action);
       allow delete: if false;
     }
