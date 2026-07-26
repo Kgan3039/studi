@@ -5,10 +5,13 @@ import {
   View,
   type LayoutChangeEvent,
   type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from 'react-native';
 
 import { Colors, Space, TypeScale } from '@/constants/theme';
+import { IconButton } from '@/components/ui/IconButton';
+import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export type ScreenHeaderProps = {
@@ -16,7 +19,11 @@ export type ScreenHeaderProps = {
   subtitle?: string;
   status?: string;
   action?: ReactNode;
+  showNotifications?: boolean;
+  onRefresh?: () => void;
+  refreshing?: boolean;
   align?: 'start' | 'center';
+  titleStyle?: StyleProp<TextStyle>;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -29,13 +36,18 @@ export function ScreenHeader({
   subtitle,
   status,
   action,
+  showNotifications = false,
+  onRefresh,
+  refreshing = false,
   align = 'start',
+  titleStyle,
   style,
 }: ScreenHeaderProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const centered = align === 'center';
   const [actionWidth, setActionWidth] = useState(0);
+  const hasActions = !!action || !!onRefresh || showNotifications;
 
   function handleActionLayout(event: LayoutChangeEvent) {
     if (!centered) {
@@ -48,7 +60,7 @@ export function ScreenHeader({
   return (
     <View style={[styles.container, centered && styles.centered, style]}>
       <View style={[styles.headingRow, centered && styles.centeredHeadingRow]}>
-        {centered && action ? (
+        {centered && hasActions ? (
           <View
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
@@ -62,6 +74,7 @@ export function ScreenHeader({
               TypeScale.screenTitle,
               styles.title,
               centered && styles.centeredText,
+              titleStyle,
               { color: palette.primaryText },
             ]}>
             {title}
@@ -90,9 +103,24 @@ export function ScreenHeader({
             </Text>
           ) : null}
         </View>
-        {action ? (
-          <View onLayout={centered ? handleActionLayout : undefined} style={styles.action}>
-            {action}
+        {hasActions ? (
+          <View
+            onLayout={centered ? handleActionLayout : undefined}
+            style={styles.actions}>
+            {/* Button sets alignSelf: 'flex-start', which would pin it to the
+                top of this row next to the taller icon buttons. Wrapping it
+                lets the row centre it like everything else. */}
+            {action ? <View style={styles.actionSlot}>{action}</View> : null}
+            {onRefresh ? (
+              <IconButton
+                accessibilityLabel={`Refresh ${title.toLowerCase()}`}
+                disabled={refreshing}
+                icon="arrow.clockwise"
+                loading={refreshing}
+                onPress={onRefresh}
+              />
+            ) : null}
+            {showNotifications ? <NotificationCenterButton /> : null}
           </View>
         ) : null}
       </View>
@@ -138,8 +166,23 @@ const styles = StyleSheet.create({
   supportingText: {
     flexShrink: 1,
   },
-  action: {
+  actions: {
+    alignItems: 'center',
+    flexDirection: 'row',
     flexShrink: 0,
-    paddingTop: Space.xs,
+    gap: Space.xs,
+    // Fixed to the title's line height, not the 44pt icon buttons: the buttons
+    // then centre on the title's optical centre and keep their tap targets by
+    // overflowing this box evenly. minHeight would let the row grow to 44 and
+    // push every action below the title.
+    height: 36,
+  },
+  actionSlot: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    // A filled button ends at a hard edge while an icon sits ~11pt inside its
+    // tap target, so the same gap value reads much tighter next to a pill.
+    // This makes the visible spacing match the icon-to-icon spacing.
+    marginRight: Space.sm + 4,
   },
 });

@@ -1,9 +1,5 @@
-import {
-  CormorantGaramond_500Medium,
-  CormorantGaramond_500Medium_Italic,
-} from '@expo-google-fonts/cormorant-garamond';
+import { Arapey_400Regular, Arapey_400Regular_Italic } from '@expo-google-fonts/arapey';
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-google-fonts/inter';
-import { SpaceGrotesk_500Medium } from '@expo-google-fonts/space-grotesk';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sentry from '@sentry/react-native';
@@ -15,6 +11,8 @@ import { useCallback, useEffect, useState } from 'react';
 import 'react-native-reanimated';
 
 import { StudiLaunchIntro } from '@/components/studi-launch-intro';
+import { HeaderCloseButton } from '@/components/ui/HeaderCloseButton';
+import { Colors, FontFamily } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initAnalytics, track } from '@/lib/analytics';
 import { subscribeToAuthState, waitForAuthReady } from '@/lib/auth';
@@ -52,18 +50,18 @@ export const unstable_settings = {
 
 function RootLayout() {
   const colorScheme = useColorScheme();
+  const palette = Colors[colorScheme ?? 'light'];
   const pathname = usePathname();
   const router = useRouter();
   const segments = useSegments();
   const [authState, setAuthState] = useState<AuthGateState>('pending');
   const [launchIntroState, setLaunchIntroState] = useState<LaunchIntroState>('checking');
   const [fontsLoaded, fontError] = useFonts({
-    CormorantGaramond_500Medium,
-    CormorantGaramond_500Medium_Italic,
+    Arapey_400Regular,
+    Arapey_400Regular_Italic,
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,
-    SpaceGrotesk_500Medium,
   });
 
   useEffect(() => {
@@ -195,6 +193,14 @@ function RootLayout() {
       <Stack
         screenOptions={{
           headerBackTitle: 'Back',
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: palette.background },
+          headerTintColor: palette.text,
+          headerTitleStyle: {
+            fontFamily: FontFamily.bodySemiBold,
+            fontSize: 16,
+          },
+          contentStyle: { backgroundColor: palette.background },
         }}
       >
         {/* Public — always registered. */}
@@ -207,12 +213,34 @@ function RootLayout() {
             screens (and their on-mount Firestore reads) never mount otherwise. */}
         <Stack.Protected guard={isSignedIn}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="create-session" options={{ title: 'Create Session' }} />
+          {/* Finish-or-leave tasks present as sheets with an explicit close. */}
+          <Stack.Screen
+            name="create-session"
+            options={{
+              title: 'New session',
+              presentation: 'modal',
+              headerLeft: () => <HeaderCloseButton />,
+            }}
+          />
           <Stack.Screen name="conversation/[conversationId]" options={{ title: 'Conversation' }} />
-          <Stack.Screen name="report-user" options={{ title: 'Report User' }} />
+          <Stack.Screen
+            name="report-user"
+            options={{
+              title: 'Report user',
+              presentation: 'modal',
+              headerLeft: () => <HeaderCloseButton />,
+            }}
+          />
           <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />
           <Stack.Screen name="session-chat/[sessionId]" options={{ title: 'Session Chat' }} />
-          <Stack.Screen name="rate-location" options={{ title: 'Rate This Spot' }} />
+          <Stack.Screen
+            name="rate-location"
+            options={{
+              title: 'Rate this spot',
+              presentation: 'modal',
+              headerLeft: () => <HeaderCloseButton />,
+            }}
+          />
           <Stack.Screen name="settings" options={{ title: 'Settings' }} />
           <Stack.Screen name="notifications" options={{ title: 'Notifications' }} />
           <Stack.Screen name="friends" options={{ title: 'Study Buddies' }} />

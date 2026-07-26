@@ -12,8 +12,7 @@ export type CourseChipProps = {
 };
 
 /**
- * Dept-colored course chip (handoff §1.2, §2): pill with a dept dot and the
- * code in the mono face. Department colors apply ONLY here and to dept dots.
+ * Dept-colored course label with a restrained edge accent and mono code.
  * Unknown departments fall back to the foreground tint. Selected state adds
  * a foreground ring (board: ring-2 ring-foreground).
  */
@@ -27,25 +26,24 @@ export function CourseChip({ code, size = 'md', selected = false, onPress, style
   // foreground with the dept dot carrying the color.
   const tint = dept ?? palette.text;
   const textColor = isDark ? palette.text : tint;
-  const backgroundColor = isDark ? `${tint}33` : `${tint}1A`;
-  const borderColor = isDark ? `${tint}4D` : `${tint}33`;
+  // Selection is crimson everywhere else in the app (filters, primary action),
+  // so a course chip selects the same way rather than inventing an ink fill.
+  const backgroundColor = selected ? palette.tint : palette.mutedSurface;
+  const borderColor = selected ? palette.tint : palette.border;
+  const resolvedTextColor = selected ? '#FFFFFF' : textColor;
 
   const content = (
-    <>
-      <View style={[styles.dot, dotSizes[size], { backgroundColor: tint }]} />
-      <Text
-        style={[TypeScale.code, textSizes[size], { color: textColor }]}
-        numberOfLines={1}>
-        {code}
-      </Text>
-    </>
+    <Text
+      style={[TypeScale.code, textSizes[size], styles.label, { color: resolvedTextColor }]}
+      numberOfLines={1}>
+      {code}
+    </Text>
   );
 
   const chipStyle = [
     styles.chip,
     chipSizes[size],
-    { backgroundColor, borderColor },
-    selected && { borderColor: palette.text, borderWidth: 1.5 },
+    { backgroundColor, borderColor, borderLeftColor: selected ? palette.tint : tint },
     style,
   ];
 
@@ -65,9 +63,9 @@ export function CourseChip({ code, size = 'md', selected = false, onPress, style
 }
 
 const chipSizes = StyleSheet.create({
-  sm: { minHeight: 24, paddingHorizontal: Space.sm + 2 },
-  md: { minHeight: 32, paddingHorizontal: Space.md },
-  lg: { minHeight: 40, paddingHorizontal: Space.lg },
+  sm: { minHeight: 24, paddingHorizontal: Space.sm, paddingVertical: Space.xs },
+  md: { minHeight: 30, paddingHorizontal: Space.sm + 2, paddingVertical: Space.xs + 1 },
+  lg: { minHeight: 36, paddingHorizontal: Space.md, paddingVertical: Space.sm },
 });
 
 const textSizes = StyleSheet.create({
@@ -76,22 +74,22 @@ const textSizes = StyleSheet.create({
   lg: { fontSize: 15, lineHeight: 18 },
 });
 
-const dotSizes = StyleSheet.create({
-  sm: { width: 5, height: 5, borderRadius: 2.5 },
-  md: { width: 6, height: 6, borderRadius: 3 },
-  lg: { width: 7, height: 7, borderRadius: 3.5 },
-});
-
 const styles = StyleSheet.create({
   chip: {
     alignSelf: 'flex-start',
     alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.sm - 2,
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    // Column flex defaults to top-aligned content; without this the code sits
+    // against the chip's top edge instead of centering in the box.
+    justifyContent: 'center',
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    // The dept accent bar eats into the leading edge, so the label is nudged
+    // back by the same amount to stay optically centered.
+    borderLeftWidth: 3,
   },
-  dot: {},
+  label: {
+    marginLeft: -2,
+  },
   pressed: {
     opacity: 0.7,
   },

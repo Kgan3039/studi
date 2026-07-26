@@ -1,176 +1,172 @@
 import { type Href } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import React from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { Button } from '@/components/ui/Button';
 import { ExternalLink } from '@/components/external-link';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import {
-  STUDI_APP_NAME,
   STUDI_CONTACT_EMAIL,
   STUDI_PRIVACY_POLICY_URL,
   STUDI_SUPPORT_EMAIL,
 } from '@/constants/app-info';
-import { Colors } from '@/constants/theme';
+import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-function buildMailtoHref(subject: string) {
-  return `mailto:${STUDI_SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}` as Href & string;
-}
+const supportEmailHref =
+  `mailto:${STUDI_SUPPORT_EMAIL}?subject=${encodeURIComponent('Studi Support Request')}` as Href &
+    string;
+const privacyEmailHref =
+  `mailto:${STUDI_CONTACT_EMAIL}?subject=${encodeURIComponent('Studi Privacy Request')}` as Href &
+    string;
 
-export default function SupportScreen() {
-  const colorScheme = useColorScheme() ?? 'light';
-  const palette = Colors[colorScheme];
-  const insets = useSafeAreaInsets();
+function HelpItem({
+  icon,
+  title,
+  children,
+}: {
+  icon: IconSymbolName;
+  title: string;
+  children: React.ReactNode;
+}) {
+  const palette = Colors[useColorScheme() ?? 'light'];
 
-  return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView style={[styles.hero, { backgroundColor: palette.hero }]}>
-        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Support</ThemedText>
-        <ThemedText type="title">Contact {STUDI_APP_NAME}</ThemedText>
-        <ThemedText style={styles.heroText}>
-          Get help with your account, study sessions, messages, location ratings, or privacy
-          requests.
-        </ThemedText>
-      </ThemedView>
-
-      <ThemedView
-        style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.sectionLabel}>Contact</ThemedText>
-        <ThemedText type="subtitle">Support email</ThemedText>
-        <ThemedText style={styles.bodyText}>{STUDI_SUPPORT_EMAIL}</ThemedText>
-        <ExternalLink href={buildMailtoHref('Studi Support Request')} asChild>
-          <Pressable style={[styles.primaryButton, { backgroundColor: palette.tint }]}>
-            <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-              Email Support
-            </ThemedText>
-          </Pressable>
-        </ExternalLink>
-      </ThemedView>
-
-      <ThemedView
-        style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.sectionLabel}>Common Help</ThemedText>
-        <HelpItem
-          title="Account deletion"
-          text="Open Profile, scroll to Account actions, and choose Delete Account. The app will remove your Studi account data and Firebase Authentication account."
-        />
-        <HelpItem
-          title="Profile updates"
-          text="Use Profile to update your display name and classes."
-        />
-        <HelpItem
-          title="Study sessions"
-          text="Use Sessions to browse open study sessions, join available sessions, or create a new session with a real campus study location."
-        />
-        <HelpItem
-          title="Safety and reports"
-          text="Use the report and block actions in the app if another user misuses Studi or makes you feel unsafe."
-        />
-      </ThemedView>
-
-      <ThemedView
-        style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.sectionLabel}>Privacy</ThemedText>
-        <ThemedText type="subtitle">Data and privacy requests</ThemedText>
-        <ThemedText style={styles.bodyText}>
-          For data access, correction, deletion, or consent withdrawal help, contact{' '}
-          {STUDI_CONTACT_EMAIL}.
-        </ThemedText>
-        <View style={styles.buttonStack}>
-          <ExternalLink href={STUDI_PRIVACY_POLICY_URL as Href & string} asChild>
-            <Pressable style={[styles.secondaryButton, { borderColor: palette.outline }]}>
-              <ThemedText type="defaultSemiBold">Privacy Policy</ThemedText>
-            </Pressable>
-          </ExternalLink>
-          <ExternalLink
-            href={`mailto:${STUDI_CONTACT_EMAIL}?subject=${encodeURIComponent(
-              'Studi Privacy Request'
-            )}` as Href & string}
-            asChild>
-            <Pressable style={[styles.secondaryButton, { borderColor: palette.outline }]}>
-              <ThemedText type="defaultSemiBold">Email Privacy Request</ThemedText>
-            </Pressable>
-          </ExternalLink>
-        </View>
-      </ThemedView>
-    </ScrollView>
-  );
-}
-
-function HelpItem({ text, title }: { text: string; title: string }) {
   return (
     <View style={styles.helpItem}>
-      <ThemedText type="defaultSemiBold">{title}</ThemedText>
-      <ThemedText style={styles.bodyText}>{text}</ThemedText>
+      <View style={[styles.helpIcon, { backgroundColor: palette.hero }]}>
+        <IconSymbol name={icon} size={20} color={palette.tint} />
+      </View>
+      <View style={styles.helpCopy}>
+        <Text style={[styles.helpTitle, { color: palette.text }]}>{title}</Text>
+        <Text style={[styles.body, { color: palette.secondaryText }]}>{children}</Text>
+      </View>
     </View>
   );
 }
 
+export default function SupportScreen() {
+  const palette = Colors[useColorScheme() ?? 'light'];
+
+  return (
+    <ScrollView
+      style={{ backgroundColor: palette.background }}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}>
+      <ScreenTransition>
+        <View style={styles.intro}>
+          <Text style={[styles.title, { color: palette.text }]}>How can we help?</Text>
+          <Text style={[styles.lead, { color: palette.secondaryText }]}>
+            Tell us what happened and we will get back to you.
+          </Text>
+          <ExternalLink href={supportEmailHref} asChild>
+            <Button label="Email Studi support" icon="envelope.fill" fullWidth />
+          </ExternalLink>
+        </View>
+
+        <View style={[styles.section, { borderTopColor: palette.border }]}>
+          <Text style={[styles.sectionTitle, { color: palette.text }]}>Common help</Text>
+          <View style={styles.helpList}>
+            <HelpItem icon="trash.fill" title="Delete your account">
+              Open Profile, choose Settings, then Delete account. Studi removes your account data
+              after you confirm.
+            </HelpItem>
+            <HelpItem icon="square.and.pencil" title="Update your profile">
+              Open Profile to change your name, classes, and other account details.
+            </HelpItem>
+            <HelpItem icon="calendar" title="Sessions and attendance">
+              Refresh Sessions if a new event is missing. Contact support if a session still looks
+              wrong.
+            </HelpItem>
+            <HelpItem icon="hand.raised.fill" title="Safety and reports">
+              Open a student profile to block or report them. Include a short description so we can
+              review it quickly.
+            </HelpItem>
+          </View>
+        </View>
+
+        <View style={[styles.section, { borderTopColor: palette.border }]}>
+          <Text style={[styles.sectionTitle, { color: palette.text }]}>Privacy</Text>
+          <Text style={[styles.body, { color: palette.secondaryText }]}>
+            Read how Studi handles account, session, message, and analytics data, or email us with
+            a specific request.
+          </Text>
+          <View style={styles.actions}>
+            <ExternalLink href={STUDI_PRIVACY_POLICY_URL as Href & string} asChild>
+              <Button
+                label="Read the privacy policy"
+                icon="lock.shield.fill"
+                variant="secondary"
+                fullWidth
+              />
+            </ExternalLink>
+            <ExternalLink href={privacyEmailHref} asChild>
+              <Button
+                label="Email a privacy request"
+                icon="envelope.fill"
+                variant="ghost"
+                fullWidth
+              />
+            </ExternalLink>
+          </View>
+        </View>
+      </ScreenTransition>
+    </ScrollView>
+  );
+}
+
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-  },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    paddingHorizontal: 20,
+    paddingTop: Space.lg,
+    paddingBottom: 64,
   },
-  hero: {
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
+  intro: {
+    gap: Space.md,
+    paddingBottom: Space.xl,
   },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
+  title: {
+    ...TypeScale.display,
+    fontFamily: FontFamily.serifItalic,
   },
-  heroText: {
-    lineHeight: 28,
-    maxWidth: 640,
+  lead: {
+    ...TypeScale.body,
+    maxWidth: 520,
   },
-  card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
+  section: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: Space.lg,
+    paddingVertical: Space.xl,
   },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
+  sectionTitle: {
+    ...TypeScale.sectionTitle,
   },
-  bodyText: {
-    lineHeight: 24,
-    opacity: 0.84,
+  body: {
+    ...TypeScale.body,
+  },
+  helpList: {
+    gap: Space.xl,
   },
   helpItem: {
-    gap: 4,
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: Space.md,
   },
-  buttonStack: {
-    gap: 10,
-  },
-  primaryButton: {
+  helpIcon: {
     alignItems: 'center',
-    borderRadius: 14,
+    borderRadius: 12,
+    height: 40,
     justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
+    width: 40,
   },
-  secondaryButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 52,
-    paddingHorizontal: 16,
+  helpCopy: {
+    flex: 1,
+    gap: Space.xs,
+  },
+  helpTitle: {
+    ...TypeScale.bodyStrong,
+  },
+  actions: {
+    gap: Space.sm,
   },
 });

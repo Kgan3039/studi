@@ -36,8 +36,8 @@ export function SeatPips({ going, capacity, showLabel = true, style }: SeatPipsP
     spotsLeft === undefined
       ? ''
       : spotsLeft === 0
-        ? ' · Full'
-        : ` · ${spotsLeft} ${spotsLeft === 1 ? 'spot' : 'spots'} left`;
+        ? ', full'
+        : `, ${spotsLeft} ${spotsLeft === 1 ? 'spot' : 'spots'} left`;
   const label = countLabel + suffix;
 
   return (

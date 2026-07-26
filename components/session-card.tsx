@@ -102,7 +102,7 @@ export function formatSessionStart(startTime: Timestamp, now: Date = new Date())
     return `in ${Math.max(Math.round(diffMs / 60000), 1)} min`;
   }
   const dayLabel = formatDayLabel(start, now);
-  const separator = dayLabel.includes(',') ? ' · ' : ' ';
+  const separator = dayLabel.includes(',') ? ', ' : ' ';
   return `${dayLabel}${separator}${formatTime(start)}`;
 }
 
@@ -126,7 +126,7 @@ export function formatSessionWindow(
     return formatSessionStart(startTime, now);
   }
   const dayLabel = formatDayLabel(start, now);
-  const separator = dayLabel.includes(',') ? ' · ' : ' ';
+  const separator = dayLabel.includes(',') ? ', ' : ' ';
   return `${dayLabel}${separator}${formatTimeRange(start, end)}`;
 }
 
@@ -184,7 +184,7 @@ export function SessionCard({
     isOnline ? 'Online' : locationName,
     locationRating !== undefined && !isOnline ? `★ ${locationRating.toFixed(1)}` : undefined,
   ].filter(Boolean);
-  const metaLine = [timeLine, ...placeParts].join(' · ');
+  const metaLine = [timeLine, ...placeParts].join(', ');
 
   const dept = deptColorFor(session.classId) ?? palette.text;
   const hostFirstName = hostName?.trim().split(' ')[0];
@@ -198,7 +198,13 @@ export function SessionCard({
   const joinAction =
     onJoin && !isCancelled ? (
       joined ? (
-        <Button label="✓ Going" variant="success" size="sm" onPress={onPress} />
+        <Button
+          icon="checkmark.circle.fill"
+          label="Going"
+          variant="success"
+          size="sm"
+          onPress={onPress}
+        />
       ) : (
         <Button
           label="Join"
@@ -235,7 +241,7 @@ export function SessionCard({
             {deptCode}
           </Text>
           <Text style={[styles.deptTileNumber, { color: isDark ? palette.text : dept }]} numberOfLines={1}>
-            {numberParts.join(' ') || '—'}
+            {numberParts.join(' ') || 'Course'}
           </Text>
         </View>
         <View style={styles.listBody}>
@@ -266,6 +272,7 @@ export function SessionCard({
             borderColor: palette.border,
             opacity: dimmed ? 0.6 : pressed ? 0.85 : 1,
           },
+          pressed && !dimmed ? styles.pressed : null,
           style,
         ]}>
         <CourseChip code={session.classId} size="sm" />
@@ -277,7 +284,7 @@ export function SessionCard({
         </Text>
         {placeParts.length > 0 ? (
           <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-            {placeParts.join(' · ')}
+            {placeParts.join(', ')}
           </Text>
         ) : null}
         <SeatPips going={going} capacity={capacity} style={styles.compactPips} />
@@ -300,6 +307,7 @@ export function SessionCard({
             borderColor: palette.border,
             opacity: dimmed ? 0.6 : pressed ? 0.9 : 1,
           },
+          pressed && !dimmed ? styles.pressed : null,
           style,
         ]}>
         <View
@@ -363,6 +371,7 @@ export function SessionCard({
           borderColor: palette.border,
           opacity: dimmed ? 0.6 : pressed ? 0.85 : 1,
         },
+        pressed && !dimmed ? styles.pressed : null,
         style,
       ]}>
       <View style={styles.headerRow}>
@@ -404,6 +413,10 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: Radius.xl,
     borderWidth: StyleSheet.hairlineWidth * 2,
+  },
+  // Confirms the tap on the app's most-tapped surface. Nothing moves at rest.
+  pressed: {
+    transform: [{ scale: 0.985 }],
   },
   fullCard: {
     paddingHorizontal: Space.lg,

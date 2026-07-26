@@ -13,8 +13,10 @@ import {
 } from 'react-native';
 
 import { ExternalLink } from '@/components/external-link';
+import { ActionRow } from '@/components/ui/ActionRow';
 import { Button } from '@/components/ui/Button';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import {
     STUDI_CONTACT_EMAIL,
@@ -42,31 +44,37 @@ const NOTIFICATION_ROWS: {
   key: NotificationPrefKey;
   label: string;
   description: string;
+  icon: 'calendar' | 'message.fill' | 'person.2.fill';
 }[] = [
   {
     key: 'sessionReminders',
     label: 'Session reminders',
     description: 'Before study sessions you joined start.',
+    icon: 'calendar',
   },
   {
     key: 'sessionActivity',
     label: 'Session activity',
     description: 'Joins, changes, and cancellations for your sessions.',
+    icon: 'calendar',
   },
   {
     key: 'dmMessages',
     label: 'Direct messages',
     description: 'New messages sent directly to you.',
+    icon: 'message.fill',
   },
   {
     key: 'groupMessages',
     label: 'Group messages',
     description: 'New messages in session group chats.',
+    icon: 'message.fill',
   },
   {
     key: 'friendRequests',
     label: 'Friend requests',
     description: 'New requests and accepted requests.',
+    icon: 'person.2.fill',
   },
 ];
 
@@ -230,54 +238,48 @@ export default function SettingsScreen() {
     borderColor: palette.border,
     color: palette.text,
   };
-  const academicLine = [profile?.year, profile?.major].filter(Boolean).join(' · ');
+  const academicLine = [profile?.year, profile?.major].filter(Boolean).join(', ');
 
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
       contentContainerStyle={styles.content}>
+      <ScreenTransition style={styles.transition}>
       {/* Account (design spec §3.13 grouped list). */}
       <View style={styles.section}>
         <SectionHeader eyebrow="Account" />
-        <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <View style={styles.row}>
-            <Text style={[TypeScale.body, { color: palette.text }]}>UW email</Text>
-            <Text style={[TypeScale.meta, styles.rowValue, { color: palette.icon }]} numberOfLines={1}>
-              {currentUser?.email ?? '—'}
-            </Text>
-          </View>
-          <View style={[styles.rowDivider, { backgroundColor: palette.border }]} />
-          <View style={styles.row}>
-            <Text style={[TypeScale.body, { color: palette.text }]}>Year &amp; major</Text>
-            <Text style={[TypeScale.meta, styles.rowValue, { color: palette.icon }]} numberOfLines={1}>
-              {academicLine || 'Not set'}
-            </Text>
-          </View>
-          <View style={[styles.rowDivider, { backgroundColor: palette.border }]} />
-          <View style={styles.row}>
-            <Text style={[TypeScale.body, { color: palette.text }]}>Status</Text>
-            <View style={styles.verifiedValue}>
-              <View style={[styles.verifiedDot, { backgroundColor: palette.tint }]}>
-                <Text style={styles.verifiedDotMark}>✓</Text>
-              </View>
-              <Text style={[TypeScale.meta, { color: palette.icon }]}>Verified student</Text>
-            </View>
-          </View>
-          <View style={[styles.rowDivider, { backgroundColor: palette.border }]} />
-          <Pressable
-            accessibilityRole="button"
+        <View style={[styles.groupList, { borderColor: palette.border }]}>
+          <ActionRow
+            icon="envelope.fill"
+            label="UW email"
+            showChevron={false}
+            value={currentUser?.email ?? 'Unavailable'}
+          />
+          <ActionRow
+            icon="book.closed"
+            label="Year and major"
+            showChevron={false}
+            value={academicLine || 'Not set'}
+          />
+          <ActionRow
+            icon="lock.shield.fill"
+            label="Student status"
+            showChevron={false}
+            value="Verified"
+          />
+          <ActionRow
+            divided={false}
+            icon="square.and.pencil"
+            label="Edit profile"
             onPress={() => router.push('/(tabs)/profile')}
-            style={({ pressed }) => [styles.row, { opacity: pressed ? 0.6 : 1 }]}>
-            <Text style={[TypeScale.bodyStrong, { color: palette.tint }]}>Edit profile</Text>
-            <Text style={[TypeScale.caption, { color: palette.icon }]}>›</Text>
-          </Pressable>
+          />
         </View>
       </View>
 
       {/* Notifications — real switches, optimistic saves (design spec §3.13). */}
       <View style={styles.section}>
         <SectionHeader eyebrow="Notifications" />
-        <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+        <View style={[styles.groupList, { borderColor: palette.border }]}>
           {prefsState === 'error' ? (
             <View style={styles.errorBody}>
               <Text style={[TypeScale.body, { color: palette.text }]}>
@@ -289,17 +291,8 @@ export default function SettingsScreen() {
             </View>
           ) : (
             NOTIFICATION_ROWS.map((row, index) => (
-              <View key={row.key}>
-                {index > 0 ? (
-                  <View style={[styles.rowDivider, { backgroundColor: palette.border }]} />
-                ) : null}
-                <View style={styles.row}>
-                  <View style={styles.rowBody}>
-                    <Text style={[TypeScale.body, { color: palette.text }]}>{row.label}</Text>
-                    <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                      {row.description}
-                    </Text>
-                  </View>
+              <ActionRow
+                accessory={
                   <Switch
                     accessibilityLabel={row.label}
                     disabled={prefsState !== 'ready'}
@@ -309,8 +302,14 @@ export default function SettingsScreen() {
                     trackColor={{ false: palette.surfaceMuted, true: palette.tint }}
                     value={prefs[row.key]}
                   />
-                </View>
-              </View>
+                }
+                description={row.description}
+                divided={index < NOTIFICATION_ROWS.length - 1}
+                icon={row.icon}
+                key={row.key}
+                label={row.label}
+                showChevron={false}
+              />
             ))
           )}
         </View>
@@ -322,28 +321,20 @@ export default function SettingsScreen() {
       {/* Privacy and support (moved from Profile). */}
       <View style={styles.section}>
         <SectionHeader eyebrow="Privacy and support" />
-        <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+        <View style={[styles.groupList, { borderColor: palette.border }]}>
           <ExternalLink href={STUDI_PRIVACY_POLICY_URL as Href & string} asChild>
-            <Pressable style={({ pressed }) => [styles.row, { opacity: pressed ? 0.6 : 1 }]}>
-              <Text style={[TypeScale.body, { color: palette.text }]}>Privacy Policy</Text>
-              <Text style={[TypeScale.caption, { color: palette.icon }]}>›</Text>
-            </Pressable>
+            <ActionRow icon="hand.raised.fill" label="Privacy policy" />
           </ExternalLink>
-          <View style={[styles.rowDivider, { backgroundColor: palette.border }]} />
           <ExternalLink href={STUDI_SUPPORT_URL as Href & string} asChild>
-            <Pressable style={({ pressed }) => [styles.row, { opacity: pressed ? 0.6 : 1 }]}>
-              <Text style={[TypeScale.body, { color: palette.text }]}>Support</Text>
-              <Text style={[TypeScale.caption, { color: palette.icon }]}>›</Text>
-            </Pressable>
+            <ActionRow icon="questionmark.circle.fill" label="Support" />
           </ExternalLink>
-          <View style={[styles.rowDivider, { backgroundColor: palette.border }]} />
           <ExternalLink href={buildMailtoHref(STUDI_CONTACT_EMAIL, 'Studi Contact')} asChild>
-            <Pressable style={({ pressed }) => [styles.row, { opacity: pressed ? 0.6 : 1 }]}>
-              <Text style={[TypeScale.body, { color: palette.text }]}>Contact</Text>
-              <Text style={[TypeScale.meta, styles.rowValue, { color: palette.icon }]} numberOfLines={1}>
-                {STUDI_CONTACT_EMAIL}
-              </Text>
-            </Pressable>
+            <ActionRow
+              divided={false}
+              icon="envelope.fill"
+              label="Contact"
+              value={STUDI_CONTACT_EMAIL}
+            />
           </ExternalLink>
         </View>
       </View>
@@ -351,6 +342,7 @@ export default function SettingsScreen() {
       {/* Account actions (moved from Profile). */}
       <View style={styles.accountActions}>
         <Button
+          icon="rectangle.portrait.and.arrow.right"
           label="Sign out"
           variant="secondary"
           fullWidth
@@ -364,9 +356,13 @@ export default function SettingsScreen() {
             styles.deleteLink,
             { opacity: isBusy || pressed ? 0.6 : 1 },
           ]}>
-          <Text style={[TypeScale.label, { color: palette.tint }]}>Delete account</Text>
+          <View style={styles.deleteContent}>
+            <IconSymbol color={palette.destructive} name="trash.fill" size={17} />
+            <Text style={[TypeScale.label, { color: palette.destructive }]}>Delete account</Text>
+          </View>
         </Pressable>
       </View>
+      </ScreenTransition>
 
       <Modal
         animationType="fade"
@@ -433,50 +429,15 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
   },
+  transition: {
+    gap: Space.xl,
+  },
   section: {
     gap: Space.md,
   },
-  card: {
-    borderRadius: Radius.card,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    paddingHorizontal: Space.lg + 4,
-    paddingVertical: Space.xs,
-  },
-  row: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.md,
-    justifyContent: 'space-between',
-    minHeight: 56,
-    paddingVertical: Space.sm,
-  },
-  rowBody: {
-    flex: 1,
-    gap: 2,
-  },
-  rowValue: {
-    flexShrink: 1,
-  },
-  rowDivider: {
-    height: StyleSheet.hairlineWidth,
-  },
-  verifiedValue: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.sm - 2,
-  },
-  verifiedDot: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    height: 16,
-    justifyContent: 'center',
-    width: 16,
-  },
-  verifiedDotMark: {
-    color: '#FFFFFF',
-    fontFamily: FontFamily.bodySemiBold,
-    fontSize: 9,
-    lineHeight: 11,
+  groupList: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   errorBody: {
     alignItems: 'flex-start',
@@ -490,6 +451,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 40,
+  },
+  deleteContent: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
   },
   input: {
     borderRadius: Radius.chip + 4,

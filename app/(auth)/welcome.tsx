@@ -68,7 +68,7 @@ export default function WelcomeScreen() {
           onPress={() => router.push('/sign-in')}
         />
         <Text style={[TypeScale.caption, styles.microcopy, { color: palette.icon }]}>
-          UW–Madison students only. Verified by @wisc.edu
+          UW Madison students only. Verified by @wisc.edu
         </Text>
       </View>
     </View>

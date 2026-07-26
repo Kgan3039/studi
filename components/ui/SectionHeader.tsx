@@ -13,7 +13,7 @@ export type SectionHeaderProps = {
   style?: StyleProp<ViewStyle>;
 };
 
-/** Section header (handoff §2): eyebrow + sans title + optional action. */
+/** Sentence-case section heading with an optional supporting label and action. */
 export function SectionHeader({ eyebrow, title, action, style }: SectionHeaderProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
@@ -22,7 +22,13 @@ export function SectionHeader({ eyebrow, title, action, style }: SectionHeaderPr
     <View style={[styles.row, style]}>
       <View style={styles.titles}>
         {eyebrow ? (
-          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{eyebrow}</Text>
+          <Text
+            style={[
+              title ? TypeScale.micro : TypeScale.sectionTitle,
+              { color: title ? palette.icon : palette.text },
+            ]}>
+            {eyebrow}
+          </Text>
         ) : null}
         {title ? (
           <Text style={[TypeScale.heading, { color: palette.text }]}>{title}</Text>
@@ -36,12 +42,16 @@ export function SectionHeader({ eyebrow, title, action, style }: SectionHeaderPr
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    // Centred, not bottom-aligned: a 44pt icon action bottom-aligned to a 23pt
+    // title floats above the text it belongs to.
+    alignItems: 'center',
     justifyContent: 'space-between',
     gap: Space.md,
+    minHeight: 44,
   },
   titles: {
     flexShrink: 1,
     gap: Space.xs,
+    minWidth: 0,
   },
 });

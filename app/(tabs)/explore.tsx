@@ -9,7 +9,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -19,8 +18,15 @@ import { CampusMap } from '@/components/campus-map';
 import type { MapSessionTiming } from '@/components/campus-map.types';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
-import { Brand, Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
+import { Button } from '@/components/ui/Button';
+import { FilterChip } from '@/components/ui/FilterChip';
+import { Sheet } from '@/components/ui/Sheet';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import type { IconSymbolName } from '@/components/ui/icon-symbol';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
+import { SearchBar } from '@/components/ui/SearchBar';
+import { Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
 import { getAtmosphereFiltersForLocationTags } from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
@@ -46,6 +52,14 @@ const MAP_FILTERS: { id: MapFilter; label: string }[] = [
   { id: 'my-classes', label: 'My classes' },
   { id: 'quiet', label: 'Quiet spots' },
 ];
+
+const MAP_FILTER_ICONS: Record<MapFilter, IconSymbolName> = {
+  all: 'line.3.horizontal.decrease',
+  live: 'clock',
+  'next-hour': 'calendar',
+  'my-classes': 'person.2.fill',
+  quiet: 'book.closed',
+};
 
 function isLive(session: StudySession, now: number) {
   const start = getTimestampMillis(session.startTime);
@@ -104,10 +118,10 @@ function formatSessionTime(session: StudySession) {
   }
 
   if (start.toDateString() === tomorrow.toDateString()) {
-    return `Tomorrow · ${time}`;
+    return `Tomorrow, ${time}`;
   }
 
-  return `${start.toLocaleDateString('en-US', { weekday: 'short' })} · ${time}`;
+  return `${start.toLocaleDateString('en-US', { weekday: 'short' })}, ${time}`;
 }
 
 export default function StudyLocationsScreen() {
@@ -127,6 +141,9 @@ export default function StudyLocationsScreen() {
     new Map()
   );
   const [selectedFilter, setSelectedFilter] = useState<MapFilter>('all');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFilterLabel =
+    MAP_FILTERS.find((filter) => filter.id === selectedFilter)?.label ?? 'All spots';
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -441,6 +458,7 @@ export default function StudyLocationsScreen() {
   }
 
   return (
+    <>
     <ScrollView
       ref={scrollViewRef}
       keyboardShouldPersistTaps="handled"
@@ -453,77 +471,58 @@ export default function StudyLocationsScreen() {
       }
       style={[styles.screen, { backgroundColor: palette.background }]}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      <View style={styles.header}>
-        <View style={styles.headerCopy}>
-          <Text style={[TypeScale.title, { color: palette.text }]}>Study spots</Text>
-          <Text style={[TypeScale.meta, { color: palette.icon }]}>{loadMessage}</Text>
+      <ScreenHeader
+        onRefresh={handleRefresh}
+        refreshing={isRefreshing}
+        showNotifications
+        title="Study spots"
+        status={loadMessage}
+      />
+
+      <ScreenTransition style={styles.transition}>
+      {/* Same search band as Sessions: field plus its filter control on one
+          row, with the options themselves behind the button. */}
+      <View style={styles.searchRow}>
+        <View style={styles.searchField}>
+          <SearchBar
+            accessibilityLabel="Search study spots and sessions"
+            onChangeText={setSearchQuery}
+            placeholder="Search spots"
+            value={searchQuery}
+          />
         </View>
-        <View style={styles.headerActions}>
-          {isLoading ? <ActivityIndicator color={palette.tint} size="small" /> : null}
-          <NotificationCenterButton />
-        </View>
+        <Pressable
+          accessibilityLabel={
+            selectedFilter === 'all' ? 'Filters' : `Filters, ${activeFilterLabel} applied`
+          }
+          accessibilityRole="button"
+          onPress={() => setFiltersOpen(true)}
+          style={({ pressed }) => [
+            styles.filterButton,
+            {
+              backgroundColor: selectedFilter === 'all' ? 'transparent' : palette.tint,
+              borderColor: selectedFilter === 'all' ? palette.outline : palette.tint,
+              opacity: pressed ? 0.7 : 1,
+              transform: [{ scale: pressed ? 0.96 : 1 }],
+            },
+          ]}>
+          <IconSymbol
+            color={selectedFilter === 'all' ? palette.icon : '#FFFFFF'}
+            name="slider.horizontal.3"
+            size={20}
+          />
+        </Pressable>
       </View>
 
-      <View
-        style={[
-          styles.searchBar,
-          { backgroundColor: palette.surface, borderColor: palette.border },
-          Elevation.e1,
-        ]}>
-        <MaterialIcons color={palette.icon} name="search" size={22} />
-        <TextInput
-          accessibilityLabel="Search study spots and sessions"
-          autoCapitalize="none"
-          onChangeText={setSearchQuery}
-          placeholder="Search sessions or study spots"
-          placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
-          returnKeyType="search"
-          style={[TypeScale.body, styles.searchInput, { color: palette.text }]}
-          value={searchQuery}
-        />
-        {searchQuery ? (
-          <Pressable
-            accessibilityLabel="Clear search"
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => setSearchQuery('')}>
-            <MaterialIcons color={palette.icon} name="cancel" size={20} />
-          </Pressable>
-        ) : null}
-      </View>
-
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterRail}>
-        {MAP_FILTERS.map((filter) => {
-          const isSelected = selectedFilter === filter.id;
-
-          return (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ selected: isSelected }}
-              key={filter.id}
-              onPress={() => setSelectedFilter(filter.id)}
-              style={({ pressed }) => [
-                styles.filterChip,
-                isSelected
-                  ? { backgroundColor: palette.tint }
-                  : {
-                      backgroundColor: palette.surface,
-                      borderColor: palette.border,
-                      borderWidth: StyleSheet.hairlineWidth * 2,
-                    },
-                pressed && styles.pressed,
-              ]}>
-              <Text
-                style={[TypeScale.label, { color: isSelected ? '#FFFFFF' : palette.icon }]}>
-                {filter.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+      {selectedFilter !== 'all' ? (
+        <View style={styles.filterRow}>
+          <FilterChip
+            icon="xmark"
+            label={activeFilterLabel}
+            onPress={() => setSelectedFilter('all')}
+          />
+        </View>
+      ) : null}
 
       <View style={styles.mapAndSheet}>
         <CampusMap
@@ -541,13 +540,12 @@ export default function StudyLocationsScreen() {
           <View
             style={[
               styles.locationList,
-              Elevation.e1,
-              { backgroundColor: palette.surface, borderColor: palette.border },
+              { borderTopColor: palette.border },
             ]}>
             <View style={styles.locationListHeader}>
-              <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Study spots</Text>
+              <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>Nearby spots</Text>
               <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                Select from the list for details and ratings.
+                Select a spot for details and ratings.
               </Text>
             </View>
 
@@ -563,7 +561,7 @@ export default function StudyLocationsScreen() {
                     styles.locationListItem,
                     {
                       backgroundColor: isSelected ? palette.surfaceMuted : palette.background,
-                      borderColor: isSelected ? palette.tint : palette.border,
+                      borderBottomColor: palette.border,
                     },
                   ]}>
                   <View style={styles.locationListCopy}>
@@ -571,9 +569,9 @@ export default function StudyLocationsScreen() {
                       {location.name}
                     </Text>
                     <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                      {location.campusArea} · {sessionCount} upcoming{' '}
+                      {location.campusArea}, {sessionCount} upcoming{' '}
                       {sessionCount === 1 ? 'session' : 'sessions'}
-                      {aggregate ? ` · ★ ${aggregate.averageStars}` : ''}
+                      {aggregate ? `, ${aggregate.averageStars} stars` : ''}
                     </Text>
                   </View>
                   <View style={styles.locationListActions}>
@@ -583,17 +581,15 @@ export default function StudyLocationsScreen() {
                       onPress={() => selectLocation(location.locationId)}
                       style={({ pressed }) => [
                         styles.locationListButton,
-                        { borderColor: palette.border },
                         pressed && styles.pressed,
                       ]}>
-                      <Text style={[TypeScale.label, { color: palette.text }]}>Details</Text>
+                      <Text style={[TypeScale.label, { color: palette.tint }]}>Details</Text>
                     </Pressable>
                     <Pressable
                       accessibilityRole="button"
                       onPress={() => rateLocation(location)}
                       style={({ pressed }) => [
                         styles.locationListButton,
-                        { borderColor: palette.border },
                         pressed && styles.pressed,
                       ]}>
                       <Text style={[TypeScale.label, { color: palette.tint }]}>Rate</Text>
@@ -614,7 +610,7 @@ export default function StudyLocationsScreen() {
               <View style={[styles.sheetHandle, { backgroundColor: palette.outline }]} />
               <View style={styles.sheetHeadingRow}>
                 <View style={styles.locationHeading}>
-                  <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
+                  <Text style={[TypeScale.meta, { color: palette.icon }]}>
                     {selectedLocation.campusArea}
                   </Text>
                   <Text style={[TypeScale.h2, { color: palette.text }]}>
@@ -623,7 +619,7 @@ export default function StudyLocationsScreen() {
                   <Text style={[TypeScale.meta, { color: palette.icon }]}>
                     {selectedSessions.length} upcoming{' '}
                     {selectedSessions.length === 1 ? 'session' : 'sessions'}
-                    {selectedRating ? ` · ★ ${selectedRating.averageStars}` : ''}
+                    {selectedRating ? `, ${selectedRating.averageStars} stars` : ''}
                   </Text>
                 </View>
                 <Pressable
@@ -663,7 +659,7 @@ export default function StudyLocationsScreen() {
               </View>
 
               {selectedSessions.length > 0 ? (
-                <View style={styles.sessionList}>
+                <View style={[styles.sessionList, { borderTopColor: palette.border }]}>
                   {selectedSessions.slice(0, 3).map((session) => {
                     const live = isLive(session, Date.now());
                     const participantCount = Array.isArray(session.participantIds)
@@ -675,9 +671,9 @@ export default function StudyLocationsScreen() {
                         accessibilityRole="button"
                         key={session.sessionId}
                         onPress={() => router.push(`/session/${session.sessionId}`)}
-                        style={({ pressed }) => [
+                      style={({ pressed }) => [
                           styles.sessionRow,
-                          { backgroundColor: palette.surface, borderColor: palette.border },
+                          { borderBottomColor: palette.border },
                           pressed && styles.pressed,
                         ]}>
                         <CourseChip code={session.classId} size="sm" />
@@ -688,11 +684,11 @@ export default function StudyLocationsScreen() {
                             {session.title}
                           </Text>
                           <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                            {formatSessionTime(session)} · {participantCount} going
+                            {formatSessionTime(session)}, {participantCount} going
                           </Text>
                         </View>
                         {live ? (
-                          <Text style={[TypeScale.eyebrow, { color: palette.tint }]}>● LIVE</Text>
+                          <Text style={[TypeScale.meta, { color: palette.tint }]}>● Live</Text>
                         ) : (
                           <MaterialIcons color={palette.icon} name="chevron-right" size={20} />
                         )}
@@ -702,9 +698,11 @@ export default function StudyLocationsScreen() {
                 </View>
               ) : (
                 <View style={[styles.noSessions, { borderColor: palette.border }]}>
-                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Open table</Text>
+                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
+                    No sessions here yet
+                  </Text>
                   <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                    No one has planned a session here yet.
+                    Create one for classmates to join.
                   </Text>
                   <Pressable
                     accessibilityRole="button"
@@ -725,15 +723,54 @@ export default function StudyLocationsScreen() {
         ) : !isLoading ? (
           <EmptyState
             icon="spot"
-            headline="No pins over here"
-            body="Try another search or widen the map filters."
-            actionLabel="Show every spot"
+            headline="No study spots found"
+            body="Try another search or clear the current filters."
+            actionLabel="Clear filters"
             onAction={clearFilters}
             style={styles.noPinsState}
           />
         ) : null}
       </View>
+      </ScreenTransition>
     </ScrollView>
+
+    <Sheet
+      visible={filtersOpen}
+      onClose={() => setFiltersOpen(false)}
+      title="Filters"
+      subtitle={`${filteredLocations.length} of ${locations.length} spots shown`}
+      footer={
+        <View style={styles.filterFooter}>
+          <Button
+            label="Clear all"
+            variant="secondary"
+            onPress={() => setSelectedFilter('all')}
+            disabled={selectedFilter === 'all'}
+            style={styles.filterFooterButton}
+          />
+          <Button
+            label="Show results"
+            onPress={() => setFiltersOpen(false)}
+            style={styles.filterFooterButton}
+          />
+        </View>
+      }>
+      <View style={styles.filterGroup}>
+        <Text style={[TypeScale.label, { color: palette.icon }]}>Show</Text>
+        <View style={styles.filterGroupRow}>
+          {MAP_FILTERS.map((filter) => (
+            <FilterChip
+              icon={MAP_FILTER_ICONS[filter.id]}
+              key={filter.id}
+              label={filter.label}
+              onPress={() => setSelectedFilter(filter.id)}
+              selected={selectedFilter === filter.id}
+            />
+          ))}
+        </View>
+      </View>
+    </Sheet>
+    </>
   );
 }
 
@@ -751,41 +788,46 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 8,
   },
-  header: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  transition: {
+    gap: Space.md,
   },
-  headerCopy: {
-    gap: 2,
-  },
-  headerActions: {
+  searchRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: Space.sm,
   },
-  searchBar: {
+  searchField: {
+    flex: 1,
+  },
+  filterButton: {
     alignItems: 'center',
-    borderRadius: Radius.pill,
+    borderRadius: Radius.lg,
     borderWidth: StyleSheet.hairlineWidth * 2,
     flexDirection: 'row',
-    gap: Space.sm,
-    minHeight: 50,
-    paddingHorizontal: Space.lg,
-  },
-  searchInput: {
-    flex: 1,
-    paddingVertical: Space.sm,
-  },
-  filterRail: {
-    gap: Space.sm,
-    paddingRight: Space.lg,
-  },
-  filterChip: {
-    borderRadius: Radius.pill,
+    gap: Space.xs,
+    height: 48,
     justifyContent: 'center',
-    minHeight: 36,
-    paddingHorizontal: Space.md + 2,
+    paddingHorizontal: Space.md,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  filterGroup: {
+    gap: Space.sm,
+  },
+  filterGroupRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  filterFooter: {
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  filterFooterButton: {
+    flex: 1,
   },
   mapAndSheet: {
     gap: Space.md,
@@ -798,18 +840,16 @@ const styles = StyleSheet.create({
     paddingTop: Space.lg,
   },
   locationList: {
-    borderRadius: Radius.xxl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    gap: Space.sm,
-    padding: Space.md,
+    borderTopWidth: 1,
   },
   locationListHeader: {
     gap: 2,
+    paddingBottom: Space.md,
+    paddingTop: Space.lg,
   },
   locationListItem: {
     alignItems: 'center',
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
@@ -826,11 +866,9 @@ const styles = StyleSheet.create({
   },
   locationListButton: {
     alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
     justifyContent: 'center',
-    minHeight: 34,
-    paddingHorizontal: Space.md,
+    minHeight: 44,
+    paddingHorizontal: Space.sm,
   },
   locationSheet: {
     borderRadius: Radius.xxl,
@@ -858,7 +896,7 @@ const styles = StyleSheet.create({
   },
   directionsButton: {
     alignItems: 'center',
-    borderRadius: Radius.pill,
+    borderRadius: Radius.md,
     flexDirection: 'row',
     gap: Space.xs,
     minHeight: 42,
@@ -877,17 +915,16 @@ const styles = StyleSheet.create({
     gap: Space.sm,
   },
   tag: {
-    borderRadius: Radius.pill,
+    borderRadius: Radius.sm,
     paddingHorizontal: Space.sm + 2,
     paddingVertical: Space.xs,
   },
   sessionList: {
-    gap: Space.sm,
+    borderTopWidth: 1,
   },
   sessionRow: {
     alignItems: 'center',
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.sm,
     minHeight: 72,
