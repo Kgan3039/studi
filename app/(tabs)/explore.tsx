@@ -18,7 +18,10 @@ import { CampusMap } from '@/components/campus-map';
 import type { MapSessionTiming } from '@/components/campus-map.types';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Button } from '@/components/ui/Button';
 import { FilterChip } from '@/components/ui/FilterChip';
+import { Sheet } from '@/components/ui/Sheet';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import type { IconSymbolName } from '@/components/ui/icon-symbol';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
@@ -138,6 +141,9 @@ export default function StudyLocationsScreen() {
     new Map()
   );
   const [selectedFilter, setSelectedFilter] = useState<MapFilter>('all');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFilterLabel =
+    MAP_FILTERS.find((filter) => filter.id === selectedFilter)?.label ?? 'All spots';
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -452,6 +458,7 @@ export default function StudyLocationsScreen() {
   }
 
   return (
+    <>
     <ScrollView
       ref={scrollViewRef}
       keyboardShouldPersistTaps="handled"
@@ -473,31 +480,49 @@ export default function StudyLocationsScreen() {
       />
 
       <ScreenTransition style={styles.transition}>
-      <SearchBar
-          accessibilityLabel="Search study spots and sessions"
-          onChangeText={setSearchQuery}
-          placeholder="Search sessions or study spots"
-          value={searchQuery}
-      />
+      {/* Same search band as Sessions: field plus its filter control on one
+          row, with the options themselves behind the button. */}
+      <View style={styles.searchRow}>
+        <View style={styles.searchField}>
+          <SearchBar
+            accessibilityLabel="Search study spots and sessions"
+            onChangeText={setSearchQuery}
+            placeholder="Search spots"
+            value={searchQuery}
+          />
+        </View>
+        <Pressable
+          accessibilityLabel={
+            selectedFilter === 'all' ? 'Filters' : `Filters, ${activeFilterLabel} applied`
+          }
+          accessibilityRole="button"
+          onPress={() => setFiltersOpen(true)}
+          style={({ pressed }) => [
+            styles.filterButton,
+            {
+              backgroundColor: selectedFilter === 'all' ? 'transparent' : palette.tint,
+              borderColor: selectedFilter === 'all' ? palette.outline : palette.tint,
+              opacity: pressed ? 0.7 : 1,
+              transform: [{ scale: pressed ? 0.96 : 1 }],
+            },
+          ]}>
+          <IconSymbol
+            color={selectedFilter === 'all' ? palette.icon : '#FFFFFF'}
+            name="slider.horizontal.3"
+            size={20}
+          />
+        </Pressable>
+      </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterRail}>
-        {MAP_FILTERS.map((filter) => {
-          const isSelected = selectedFilter === filter.id;
-
-          return (
-            <FilterChip
-              icon={MAP_FILTER_ICONS[filter.id]}
-              key={filter.id}
-              label={filter.label}
-              onPress={() => setSelectedFilter(filter.id)}
-              selected={isSelected}
-            />
-          );
-        })}
-      </ScrollView>
+      {selectedFilter !== 'all' ? (
+        <View style={styles.filterRow}>
+          <FilterChip
+            icon="xmark"
+            label={activeFilterLabel}
+            onPress={() => setSelectedFilter('all')}
+          />
+        </View>
+      ) : null}
 
       <View style={styles.mapAndSheet}>
         <CampusMap
@@ -708,6 +733,44 @@ export default function StudyLocationsScreen() {
       </View>
       </ScreenTransition>
     </ScrollView>
+
+    <Sheet
+      visible={filtersOpen}
+      onClose={() => setFiltersOpen(false)}
+      title="Filters"
+      subtitle={`${filteredLocations.length} of ${locations.length} spots shown`}
+      footer={
+        <View style={styles.filterFooter}>
+          <Button
+            label="Clear all"
+            variant="secondary"
+            onPress={() => setSelectedFilter('all')}
+            disabled={selectedFilter === 'all'}
+            style={styles.filterFooterButton}
+          />
+          <Button
+            label="Show results"
+            onPress={() => setFiltersOpen(false)}
+            style={styles.filterFooterButton}
+          />
+        </View>
+      }>
+      <View style={styles.filterGroup}>
+        <Text style={[TypeScale.label, { color: palette.icon }]}>Show</Text>
+        <View style={styles.filterGroupRow}>
+          {MAP_FILTERS.map((filter) => (
+            <FilterChip
+              icon={MAP_FILTER_ICONS[filter.id]}
+              key={filter.id}
+              label={filter.label}
+              onPress={() => setSelectedFilter(filter.id)}
+              selected={selectedFilter === filter.id}
+            />
+          ))}
+        </View>
+      </View>
+    </Sheet>
+    </>
   );
 }
 
@@ -728,9 +791,43 @@ const styles = StyleSheet.create({
   transition: {
     gap: Space.md,
   },
-  filterRail: {
+  searchRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
     gap: Space.sm,
-    paddingRight: Space.lg,
+  },
+  searchField: {
+    flex: 1,
+  },
+  filterButton: {
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flexDirection: 'row',
+    gap: Space.xs,
+    height: 48,
+    justifyContent: 'center',
+    paddingHorizontal: Space.md,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  filterGroup: {
+    gap: Space.sm,
+  },
+  filterGroupRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  filterFooter: {
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  filterFooterButton: {
+    flex: 1,
   },
   mapAndSheet: {
     gap: Space.md,
