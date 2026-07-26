@@ -18,7 +18,7 @@ export type CardProps = ViewProps & {
 
 export function Card({
   tone = 'surface',
-  bordered = true,
+  bordered = false,
   style,
   ...viewProps
 }: CardProps) {
@@ -87,7 +87,7 @@ export function GroupedListRow({ style, ...viewProps }: GroupedListRowProps) {
 const styles = StyleSheet.create({
   card: {
     borderRadius: Radius.card,
-    padding: Space.lg + 4,
+    padding: Space.lg,
   },
   groupedList: {
     overflow: 'hidden',

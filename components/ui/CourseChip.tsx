@@ -27,14 +27,19 @@ export function CourseChip({ code, size = 'md', selected = false, onPress, style
   // foreground with the dept dot carrying the color.
   const tint = dept ?? palette.text;
   const textColor = isDark ? palette.text : tint;
-  const backgroundColor = isDark ? `${tint}33` : `${tint}1A`;
-  const borderColor = isDark ? `${tint}4D` : `${tint}33`;
+  const backgroundColor = selected
+    ? isDark
+      ? palette.text
+      : palette.primaryText
+    : palette.mutedSurface;
+  const borderColor = selected ? palette.primaryText : palette.border;
+  const resolvedTextColor = selected ? palette.background : textColor;
 
   const content = (
     <>
       <View style={[styles.dot, dotSizes[size], { backgroundColor: tint }]} />
       <Text
-        style={[TypeScale.code, textSizes[size], { color: textColor }]}
+        style={[TypeScale.code, textSizes[size], { color: resolvedTextColor }]}
         numberOfLines={1}>
         {code}
       </Text>
@@ -45,7 +50,7 @@ export function CourseChip({ code, size = 'md', selected = false, onPress, style
     styles.chip,
     chipSizes[size],
     { backgroundColor, borderColor },
-    selected && { borderColor: palette.text, borderWidth: 1.5 },
+    selected && { borderColor: palette.primaryText },
     style,
   ];
 
@@ -88,8 +93,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: Space.sm - 2,
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: Radius.md,
+    borderWidth: 1,
   },
   dot: {},
   pressed: {

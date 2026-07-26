@@ -33,8 +33,8 @@ const ALIASES: Partial<Record<BadgeTone, BadgeTone>> = {
 };
 
 /**
- * Status pill (handoff §2): uppercase 11pt bold, tracked. `now` is the solid
- * crimson pill ("Happening now"); every other tone is a 10–15% tint fill.
+ * Compact status token. Full pills are reserved for short statuses and
+ * filters; labels remain sentence case.
  */
 export function BadgeChip({ label, tone = 'neutral', style }: BadgeChipProps) {
   const colorScheme = useColorScheme() ?? 'light';
@@ -62,7 +62,7 @@ export function BadgeChip({ label, tone = 'neutral', style }: BadgeChipProps) {
   return (
     <View style={[styles.chip, { backgroundColor: toneFill[resolved] }, style]}>
       {resolved === 'now' ? <View style={styles.nowDot} /> : null}
-      <Text style={[TypeScale.eyebrow, styles.label, { color: toneText[resolved] }]} numberOfLines={1}>
+      <Text style={[TypeScale.micro, styles.label, { color: toneText[resolved] }]} numberOfLines={1}>
         {label}
       </Text>
     </View>
@@ -75,12 +75,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: Space.xs + 2,
-    borderRadius: Radius.pill,
+    borderRadius: Radius.md,
     paddingHorizontal: Space.sm + 2,
     paddingVertical: Space.xs,
   },
   label: {
-    letterSpacing: 0.88,
+    letterSpacing: 0,
   },
   nowDot: {
     width: 6,

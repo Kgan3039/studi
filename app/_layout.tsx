@@ -1,9 +1,5 @@
-import {
-  CormorantGaramond_500Medium,
-  CormorantGaramond_500Medium_Italic,
-} from '@expo-google-fonts/cormorant-garamond';
+import { Arapey_400Regular, Arapey_400Regular_Italic } from '@expo-google-fonts/arapey';
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-google-fonts/inter';
-import { SpaceGrotesk_500Medium } from '@expo-google-fonts/space-grotesk';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sentry from '@sentry/react-native';
@@ -58,12 +54,11 @@ function RootLayout() {
   const [authState, setAuthState] = useState<AuthGateState>('pending');
   const [launchIntroState, setLaunchIntroState] = useState<LaunchIntroState>('checking');
   const [fontsLoaded, fontError] = useFonts({
-    CormorantGaramond_500Medium,
-    CormorantGaramond_500Medium_Italic,
+    Arapey_400Regular,
+    Arapey_400Regular_Italic,
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,
-    SpaceGrotesk_500Medium,
   });
 
   useEffect(() => {

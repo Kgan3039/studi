@@ -53,7 +53,7 @@ export function SearchBar({
         styles.container,
         {
           backgroundColor: palette.mutedSurface,
-          borderColor: palette.border,
+          borderColor: palette.outline,
           opacity: editable ? 1 : 0.6,
         },
         containerStyle,
@@ -91,8 +91,8 @@ export function SearchBar({
 const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
     flexDirection: 'row',
     gap: Space.sm,
     minHeight: 48,
@@ -102,8 +102,8 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontFamily: FontFamily.body,
-    fontSize: 15,
-    lineHeight: 20,
+    fontSize: 16,
+    lineHeight: 22,
     minWidth: 0,
     paddingVertical: Space.sm,
   },

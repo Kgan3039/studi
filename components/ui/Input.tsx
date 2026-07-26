@@ -45,7 +45,7 @@ export function Input({
   return (
     <View style={[styles.container, containerStyle]}>
       {label ? (
-        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{label}</Text>
+        <Text style={[TypeScale.label, { color: palette.text }]}>{label}</Text>
       ) : null}
       <View>
         <TextInput
@@ -100,9 +100,9 @@ const styles = StyleSheet.create({
   },
   input: {
     borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderWidth: 1,
     fontFamily: FontFamily.body,
-    fontSize: 15,
+    fontSize: 16,
     minHeight: 48,
     paddingHorizontal: Space.lg,
   },

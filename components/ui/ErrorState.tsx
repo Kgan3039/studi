@@ -14,7 +14,7 @@ export type ErrorStateProps = {
 };
 
 export function ErrorState({
-  title = 'Something went off-script.',
+  title = 'Something went wrong',
   body,
   onRetry,
   retryLabel = 'Try again',

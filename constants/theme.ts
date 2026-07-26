@@ -1,14 +1,4 @@
-/**
- * Studi design tokens — Soft Editorial Utility.
- *
- * Source of truth: the Lovable Expo handoff
- * (Kgan3039/studi-your-campus-study-hub → docs/studi-expo-handoff.md §1).
- * This supersedes the earlier Sora/dog-ear Direction D tokens.
- *
- * Serif (Cormorant Garamond) is reserved for major screen titles and selected
- * editorial headings. Body copy, controls, list content, metadata, tabs, form
- * labels, and chat content remain sans-serif.
- */
+/** Studi design tokens — Campus Editorial Utility. */
 
 import { Platform } from 'react-native';
 
@@ -23,20 +13,19 @@ const accentDark = '#C43A46'; // hand-converted from oklch(0.55 0.19 25)
  * migrate.
  */
 export const Brand = {
-  // Handoff-named tokens
   accent: accentLight,
   accentPressed: '#8A121C',
-  accentSoft: '#F5E1E3',
-  bg: '#FBF7F0',
+  accentSoft: '#F2DCDD',
+  bg: '#F8F4EC',
   surface: '#FFFFFF',
-  surfaceAlt: '#F3EEE4',
-  text: '#1F1B16',
-  textMuted: '#6B6359',
-  textSubtle: '#9A9387',
-  success: '#3F7D5C',
-  warning: '#B8791F',
-  info: '#2F4A6B',
-  overlay: 'rgba(31, 27, 22, 0.55)',
+  surfaceAlt: '#F0EBE2',
+  text: '#1C1915',
+  textMuted: '#686158',
+  textSubtle: '#91897E',
+  success: '#387052',
+  warning: '#9A661D',
+  info: '#345574',
+  overlay: 'rgba(28, 25, 21, 0.58)',
 
   // Legacy aliases (Direction D names) — same values as above
   red600: accentLight,
@@ -48,10 +37,10 @@ export const Brand = {
   charcoal900: '#1F1B16',
   charcoal600: '#6B6359',
   charcoal400: '#9A9387',
-  border: 'rgba(31, 27, 22, 0.08)',
-  sunflower400: '#B8791F',
-  lake500: '#2F4A6B',
-  moss500: '#3F7D5C',
+  border: '#DDD6CB',
+  sunflower400: '#9A661D',
+  lake500: '#345574',
+  moss500: '#387052',
 } as const;
 
 /**
@@ -83,8 +72,8 @@ export const Colors = {
     surfaceMuted: Brand.surfaceAlt,
     hero: Brand.accentSoft,
     badge: Brand.surfaceAlt,
-    border: 'rgba(31, 27, 22, 0.08)',
-    outline: 'rgba(31, 27, 22, 0.16)',
+    border: '#DDD6CB',
+    outline: '#BEB5A8',
     // Semantic aliases for shared UI. Existing keys remain supported while
     // product screens migrate incrementally.
     accent: accentLight,
@@ -98,17 +87,17 @@ export const Colors = {
   // Hand-converted from the handoff's .dark oklch values (src/styles.css).
   dark: {
     text: '#F7F2E9',
-    background: '#1C1612',
+    background: '#181512',
     tint: accentDark,
     icon: '#A89F92',
     tabIconDefault: '#8A8174',
     tabIconSelected: accentDark,
-    surface: '#251E18',
-    surfaceMuted: '#2E2620',
+    surface: '#24201C',
+    surfaceMuted: '#2C2722',
     hero: '#3A2024',
     badge: '#2E2620',
-    border: 'rgba(255, 255, 255, 0.10)',
-    outline: 'rgba(255, 255, 255, 0.14)',
+    border: '#3E3831',
+    outline: '#5B534A',
     accent: accentDark,
     primaryText: '#F7F2E9',
     secondaryText: '#A89F92',
@@ -124,12 +113,12 @@ export const Colors = {
  * Names must match the keys passed to useFonts there.
  */
 export const FontFamily = {
-  serif: 'CormorantGaramond_500Medium',
-  serifItalic: 'CormorantGaramond_500Medium_Italic',
+  serif: 'Arapey_400Regular',
+  serifItalic: 'Arapey_400Regular_Italic',
   body: 'Inter_400Regular',
   bodyMedium: 'Inter_500Medium',
   bodySemiBold: 'Inter_600SemiBold',
-  code: 'SpaceGrotesk_500Medium',
+  code: 'Inter_600SemiBold',
 } as const;
 
 /**
@@ -137,39 +126,42 @@ export const FontFamily = {
  * remain for existing screens; handoff-named roles added alongside.
  */
 const screenTitleType = {
-  fontFamily: FontFamily.serifItalic,
-  fontSize: 28,
-  lineHeight: 34,
+  fontFamily: FontFamily.serif,
+  fontSize: 32,
+  lineHeight: 36,
 } as const;
 
 export const TypeScale = {
   /** Onboarding hero, brand moments — serif italic. */
-  display: { fontFamily: FontFamily.serifItalic, fontSize: 34, lineHeight: 40 },
+  display: { fontFamily: FontFamily.serifItalic, fontSize: 36, lineHeight: 40 },
   /** Legacy top-level title alias; kept compatible during migration. */
   title: screenTitleType,
   /** Canonical top-level screen title. Every major route uses this role. */
   screenTitle: screenTitleType,
   /** Section titles / h2 — sans. */
-  h2: { fontFamily: FontFamily.bodySemiBold, fontSize: 22, lineHeight: 28 },
+  h2: { fontFamily: FontFamily.bodySemiBold, fontSize: 20, lineHeight: 25 },
   /** Card titles / h3 — sans. (Legacy name "heading".) */
-  heading: { fontFamily: FontFamily.bodySemiBold, fontSize: 17, lineHeight: 22 },
-  body: { fontFamily: FontFamily.body, fontSize: 15, lineHeight: 22 },
-  bodyStrong: { fontFamily: FontFamily.bodySemiBold, fontSize: 15, lineHeight: 22 },
+  heading: { fontFamily: FontFamily.bodySemiBold, fontSize: 16, lineHeight: 21 },
+  sectionTitle: { fontFamily: FontFamily.bodySemiBold, fontSize: 18, lineHeight: 23 },
+  itemTitle: { fontFamily: FontFamily.bodySemiBold, fontSize: 16, lineHeight: 21 },
+  body: { fontFamily: FontFamily.body, fontSize: 16, lineHeight: 23 },
+  bodyStrong: { fontFamily: FontFamily.bodySemiBold, fontSize: 16, lineHeight: 23 },
   /** Buttons, tabs, chip text. */
-  label: { fontFamily: FontFamily.bodySemiBold, fontSize: 13, lineHeight: 18 },
+  label: { fontFamily: FontFamily.bodySemiBold, fontSize: 14, lineHeight: 18 },
   /** Metadata, timestamps. */
-  meta: { fontFamily: FontFamily.bodyMedium, fontSize: 13, lineHeight: 18 },
+  meta: { fontFamily: FontFamily.body, fontSize: 13, lineHeight: 18 },
   caption: { fontFamily: FontFamily.body, fontSize: 12, lineHeight: 16 },
-  /** Uppercase eyebrows. */
+  micro: { fontFamily: FontFamily.bodyMedium, fontSize: 12, lineHeight: 16 },
+  /** Legacy alias. Rendered in sentence case to prevent eyebrow overuse. */
   eyebrow: {
     fontFamily: FontFamily.bodySemiBold,
-    fontSize: 11,
-    lineHeight: 14,
-    letterSpacing: 0.88,
-    textTransform: 'uppercase' as const,
+    fontSize: 13,
+    lineHeight: 18,
+    letterSpacing: 0,
+    textTransform: 'none' as const,
   },
   /** Course codes. */
-  code: { fontFamily: FontFamily.code, fontSize: 13, lineHeight: 16, letterSpacing: 0.5 },
+  code: { fontFamily: FontFamily.code, fontSize: 12, lineHeight: 16, letterSpacing: 0.2 },
 } as const;
 
 /**
@@ -179,17 +171,17 @@ export const TypeScale = {
  * corners until screens drop them.
  */
 export const Radius = {
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 20,
-  xxl: 28,
+  sm: 4,
+  md: 8,
+  lg: 12,
+  xl: 16,
+  xxl: 20,
   pill: 9999,
 
   // Legacy aliases
-  chip: 12,
-  card: 20,
-  accentCorner: 20,
+  chip: 8,
+  card: 12,
+  accentCorner: 12,
 } as const;
 
 /** 4pt spacing scale (handoff §1.4). */
@@ -204,26 +196,20 @@ export const Space = {
 
 /** Shadows / elevation (handoff §1.6). Spread into StyleSheet objects. */
 export const Elevation = {
-  e1: {
-    shadowColor: Brand.text,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
-  },
+  e1: {},
   e2: {
     shadowColor: Brand.text,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 4,
   },
   e3: {
     shadowColor: Brand.text,
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.1,
-    shadowRadius: 28,
-    elevation: 12,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    elevation: 8,
   },
 } as const;
 
