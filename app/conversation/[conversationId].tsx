@@ -16,6 +16,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { IconButton } from '@/components/ui/IconButton';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -93,6 +94,8 @@ export default function ConversationScreen() {
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [isBlockedByOther, setIsBlockedByOther] = useState(false);
+  const [confirmBlock, setConfirmBlock] = useState(false);
+  const [isBlocking, setIsBlocking] = useState(false);
   // Opening from a notification or push link carries no name/id params, so the
   // thread resolves its own partner rather than falling back to "Student".
   const [resolvedPartner, setResolvedPartner] = useState<{
@@ -204,17 +207,17 @@ export default function ConversationScreen() {
     }
 
     try {
+      setIsBlocking(true);
       await blockUser(currentUser.uid, partnerId);
       track('user_blocked', { context: 'conversation' });
       setBlockedUserIds((currentIds) => [...new Set([...currentIds, partnerId])]);
-      Alert.alert(
-        'User Blocked',
-        "They can no longer message you or join a conversation with you. You won't see them in attendee lists."
-      );
+      setConfirmBlock(false);
       router.replace('/messages');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to block this user.';
       Alert.alert('Block Error', message);
+    } finally {
+      setIsBlocking(false);
     }
   }
 
@@ -289,7 +292,7 @@ export default function ConversationScreen() {
                   : `Block ${partnerName || 'student'}`
               }
               icon="nosign"
-              onPress={hasBlockedOther ? handleUnblockUser : handleBlockUser}
+              onPress={hasBlockedOther ? handleUnblockUser : () => setConfirmBlock(true)}
               tone={hasBlockedOther ? 'accent' : 'default'}
             />
           ) : null}
@@ -411,6 +414,15 @@ export default function ConversationScreen() {
           </Pressable>
         </View>
       </View>
+      <ConfirmDialog
+        visible={confirmBlock}
+        title={`Block ${partnerName || 'this student'}?`}
+        body="They won't be able to message you, and you won't see them in attendee lists."
+        confirmLabel="Block"
+        loading={isBlocking}
+        onConfirm={handleBlockUser}
+        onCancel={() => setConfirmBlock(false)}
+      />
     </KeyboardAvoidingView>
   );
 }

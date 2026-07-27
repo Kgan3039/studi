@@ -13,6 +13,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/Button';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { FilterChip } from '@/components/ui/FilterChip';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
@@ -38,6 +39,7 @@ export default function ReportUserScreen() {
   const [selectedReason, setSelectedReason] = useState(REPORT_REASONS[0]);
   const [details, setDetails] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [confirmSubmit, setConfirmSubmit] = useState(false);
 
   const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
 
@@ -59,7 +61,8 @@ export default function ReportUserScreen() {
       setIsSubmitting(true);
       await reportUser(currentUser.uid, reportedUserId, selectedReason, details, context || 'general');
       track('report_submitted', { reason: selectedReason, context: context || 'general' });
-      Alert.alert('Report Submitted', 'Thanks for flagging this. The report was saved.');
+      setConfirmSubmit(false);
+      Alert.alert('Report submitted', 'Thanks for flagging this. Our team will review it.');
       router.back();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to submit report right now.';
@@ -140,12 +143,24 @@ export default function ReportUserScreen() {
             fullWidth
             label="Submit report"
             loading={isSubmitting}
-            onPress={handleSubmitReport}
+            onPress={() => setConfirmSubmit(true)}
             size="lg"
           />
         </View>
         </ScreenTransition>
       </ScrollView>
+
+      <ConfirmDialog
+        visible={confirmSubmit}
+        title="Send this report?"
+        body={`We'll review your ${selectedReason.toLowerCase()} report about ${
+          reportedUserName || 'this student'
+        }. They won't be told who reported them.`}
+        confirmLabel="Send report"
+        loading={isSubmitting}
+        onConfirm={handleSubmitReport}
+        onCancel={() => setConfirmSubmit(false)}
+      />
     </KeyboardAvoidingView>
   );
 }
