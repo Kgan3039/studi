@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { User } from 'firebase/auth';
 
@@ -13,6 +13,7 @@ import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
+  ConversationQuotaError,
   getOrCreateDirectConversation,
   getUserProfile,
   type UserProfile,
@@ -144,8 +145,15 @@ export default function PublicProfileScreen() {
           otherUserName: profile.displayName || '',
         },
       });
-    } catch {
-      // no-op; the button re-enables
+    } catch (error) {
+      // Quota exhaustion carries approved user-facing copy; anything else stays
+      // generic so a denial never hints at whether the other user blocked you.
+      Alert.alert(
+        'Chat Error',
+        error instanceof ConversationQuotaError
+          ? error.message
+          : 'Unable to open chat right now.'
+      );
     } finally {
       setOpeningChat(false);
     }
