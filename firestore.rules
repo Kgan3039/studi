@@ -738,13 +738,19 @@ service cloud.firestore {
     // ------------------------------------------------------------------
 
     match /rateLimits/{userId}/actions/{action} {
-      // Owner-only read. The interval actions never needed it, but the
-      // createConversation counter does: the client reads its own quota inside
-      // the creation transaction to decide reset-vs-increment, and reads it
-      // again after a denial to tell "quota spent" from "blocked"/"no such
-      // user" so it can show the right message instead of a generic failure.
-      // Reading your own counter reveals nothing you did not already do.
-      allow read: if isOwner(userId);
+      // Read is owner-only AND scoped to the single action that needs it. The
+      // createConversation counter must be readable because the client reads
+      // its own quota inside the creation transaction to decide
+      // reset-vs-increment, and reads it again after a denial to tell "quota
+      // spent" from "blocked"/"no such user" so it can show the right message
+      // instead of a generic failure. Reading your own conversation counter
+      // reveals nothing you did not already do.
+      //
+      // The five interval actions have never been read by any client and stay
+      // fully denied, including to their owner: their `updatedAt` would let a
+      // caller predict exactly when a throttle lifts, and there is no reason
+      // to hand that out for a read nothing needs.
+      allow read: if isOwner(userId) && isCounterRateLimitedAction(action);
       allow create, update: if isValidRateLimitWrite(userId, action);
       allow delete: if false;
     }

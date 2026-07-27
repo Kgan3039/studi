@@ -2248,6 +2248,9 @@ describe('PR B conversation quota (phase 1)', () => {
     windowStart: Timestamp.now(), count, updatedAt: Timestamp.now(), expiresAt: ttl(),
   });
   const seedUser = (uid) => seed(`users/${uid}`, { displayName: uid, classes: [] });
+  // The five pre-existing minimum-interval actions. No client reads these.
+  const INTERVAL_ACTIONS = ['sendMessage', 'createSession', 'reportUser',
+                            'locationRating', 'friendRequest'];
 
   // A fresh-window counter write, as the client transaction emits it.
   const openWindow = () => ({
@@ -2340,11 +2343,31 @@ describe('PR B conversation quota (phase 1)', () => {
   });
 
   describe('read access', () => {
-    it('owner reads own counter; nobody else can', async () => {
+    it('owner reads own createConversation counter', async () => {
       await seed(quotaPath(ALICE), liveWindow(4));
       await assertSucceeds(getDoc(quotaRef(ctx(ALICE), ALICE)));
+    });
+
+    it('denies another user reading the createConversation counter', async () => {
+      await seed(quotaPath(ALICE), liveWindow(4));
       await assertFails(getDoc(quotaRef(ctx(MALLORY), ALICE)));
-      await assertFails(getDoc(doc(ctx(MALLORY), 'rateLimits', ALICE, 'actions', 'sendMessage')));
+    });
+
+    it('denies the OWNER reading any interval-action doc', async () => {
+      // Read is scoped to createConversation, the only action a client reads.
+      // An interval doc's updatedAt would tell its owner exactly when the
+      // throttle lifts; nothing needs that, so it stays denied.
+      for (const action of INTERVAL_ACTIONS) {
+        await seed(`rateLimits/${ALICE}/actions/${action}`, { updatedAt: Timestamp.now() });
+        await assertFails(getDoc(doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', action)));
+      }
+    });
+
+    it('denies another user reading interval-action docs', async () => {
+      for (const action of INTERVAL_ACTIONS) {
+        await seed(`rateLimits/${ALICE}/actions/${action}`, { updatedAt: Timestamp.now() });
+        await assertFails(getDoc(doc(ctx(MALLORY), 'rateLimits', ALICE, 'actions', action)));
+      }
     });
   });
 
@@ -2354,8 +2377,7 @@ describe('PR B conversation quota (phase 1)', () => {
     });
 
     it('interval actions reject the counter shape', async () => {
-      for (const action of ['sendMessage', 'createSession', 'reportUser',
-                            'locationRating', 'friendRequest']) {
+      for (const action of INTERVAL_ACTIONS) {
         await assertFails(setDoc(
           doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', action), openWindow()));
       }
@@ -2363,8 +2385,7 @@ describe('PR B conversation quota (phase 1)', () => {
 
     it('interval actions keep their original behavior', async () => {
       // Regression guard on the shared isValidRateLimitWrite branch.
-      for (const action of ['sendMessage', 'createSession', 'reportUser',
-                            'locationRating', 'friendRequest']) {
+      for (const action of INTERVAL_ACTIONS) {
         await assertSucceeds(setDoc(
           doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', action),
           { updatedAt: serverTimestamp() }));
@@ -2475,12 +2496,29 @@ describe('PR B conversation quota (phase 1)', () => {
       assert.equal(stored.count, 1, 'still 1 — reopening is free');
     });
 
-    it('is rejected by rules if the client miscounts past the cap', async () => {
+    it('is rejected by rules if the client miscounts past the cap, and leaves nothing behind', async () => {
       // Safety net: even a buggy or patched client cannot exceed the cap,
       // because the transition is re-validated server-side.
       await seedUser(BOB);
       await seed(quotaPath(ALICE), liveWindow(QUOTA_MAX));
+      const before = await getDocAsOwner(ALICE);
+
       await assertFails(clientOpenChat(ctx(ALICE), ALICE, BOB));
+
+      // Atomicity: the rejected counter write must take the conversation down
+      // with it. A half-applied commit here would be the worst outcome — a
+      // free conversation whose quota was never charged.
+      let convo, after;
+      await env.withSecurityRulesDisabled(async (c) => {
+        convo = await getDoc(doc(c.firestore(), 'conversations', convoId(ALICE, BOB)));
+        after = (await getDoc(doc(c.firestore(), quotaPath(ALICE)))).data();
+      });
+      assert.equal(convo.exists(), false, 'no conversation document was created');
+      assert.equal(after.count, QUOTA_MAX, 'counter unchanged');
+      assert.equal(after.windowStart.toMillis(), before.windowStart.toMillis(),
+        'window not restarted');
+      assert.equal(after.updatedAt.toMillis(), before.updatedAt.toMillis(),
+        'counter document not touched at all');
     });
   });
 

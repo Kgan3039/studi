@@ -32,6 +32,7 @@ import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
     cancelSession,
+    ConversationQuotaError,
     getBlockedUserIds,
     getOrCreateDirectConversation,
     getSessionById,
@@ -308,8 +309,17 @@ export default function SessionDetailScreen() {
         },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to open chat right now.';
-      Alert.alert('Chat Error', message);
+      // Only the quota error carries approved user-facing copy. Everything else
+      // — permission-denied, network, internal Firebase errors — collapses to
+      // one fixed string, matching app/user/[userId].tsx: a raw error.message
+      // could leak internals, and a distinguishable failure would hint at
+      // whether the host has blocked you.
+      Alert.alert(
+        'Chat Error',
+        error instanceof ConversationQuotaError
+          ? error.message
+          : 'Unable to open chat right now.'
+      );
     } finally {
       setIsOpeningHostChat(false);
     }

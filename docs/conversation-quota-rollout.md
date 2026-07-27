@@ -69,12 +69,31 @@ before it reads the counter, so it neither reads nor consumes quota.
 ## Phase 1 (shipped in this PR) — validation, no enforcement
 
 - Counter schema validated wherever it is written.
-- `rateLimits` read relaxed from `false` to owner-only, so the client can read
-  its own quota inside the transaction and after a denial.
+- `rateLimits` read relaxed from `false` to **owner-only *and* scoped to
+  `createConversation`**, so the client can read its own quota inside the
+  transaction and after a denial. The five interval actions stay fully denied,
+  including to their owner — no client reads them, and their `updatedAt` would
+  disclose exactly when a throttle lifts.
 - Client `getOrCreateDirectConversation` rewritten as a transaction that writes
   the counter alongside the conversation.
 - **Conversation create does NOT yet require the counter** — already-installed
   clients write none and must keep working.
+
+Both screens that can start a DM (`app/user/[userId].tsx`,
+`app/session/[sessionId].tsx`) show the approved copy for
+`ConversationQuotaError` and one fixed generic string for **every** other error.
+Raw `error.message` is never shown: it could leak Firebase internals, and a
+distinguishable failure would hint at whether the other user blocked you.
+
+> **No UI unit test.** The repo has no React-Native test harness — no `jest`,
+> `react-test-renderer`, or `@testing-library/react-native`; every suite is
+> Node/mocha over pure modules plus the emulator rules suite. Standing one up to
+> cover a two-line ternary is out of scope for a review-fix commit. The branch
+> was instead verified manually against real `ConversationQuotaError`,
+> `FirebaseError('permission-denied')`, `FirebaseError('unavailable')`, a plain
+> `Error`, and a non-`Error` throw: only the first yields the quota copy. The
+> same `instanceof` pattern is already load-bearing in production one handler
+> up, via `SessionFullError`.
 
 Net effect: updated clients **self-enforce** the cap (the client refuses to
 write past 10), and every counter write is server-validated — but a legacy or
