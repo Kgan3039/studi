@@ -171,6 +171,33 @@ list row for messages, settings, notifications, classes, friends, and saved
 locations. Rows use dividers and chevrons rather than separate floating
 bubbles.
 
+### Overlays
+
+Every pop-up in Studi arrives the same way: it **fades in over the screen and
+darkens what is behind it**. Nothing slides up from the bottom edge, because a
+bottom sheet reads as navigating somewhere new while these surfaces are meant
+to sit on top of the screen you are already on.
+
+There are two, and product code should use them rather than a bare `Modal` or
+a platform `Alert`:
+
+| Component | Use |
+|---|---|
+| `Sheet` | Editing and option surfaces — profile and class editors, filters, the notification panel. Top-anchored panel, a close ✕, optional pinned footer for the save action. |
+| `ConfirmDialog` | A single hard-to-undo decision — remove a buddy, block someone, send a report. Centred, title + one sentence + two buttons. |
+
+Rules:
+
+- Dismissal is available three ways: the ✕ or cancel button, the scrim, and the
+  system back gesture.
+- The confirm button names the action (“Remove”, “Block”, “Send report”), never
+  “OK” or “Yes”.
+- The body states the consequence, not the mechanics.
+- A destructive action never fires straight from the row that triggers it; it
+  opens a `ConfirmDialog` first.
+- Native `Alert` is for outcomes the user cannot act on (a failed write), not
+  for asking a question.
+
 ### Headers
 
 Main tabs share one header:
