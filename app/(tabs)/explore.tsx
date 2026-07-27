@@ -26,7 +26,7 @@ import type { IconSymbolName } from '@/components/ui/icon-symbol';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
-import { Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
+import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import {
   getAtmosphereFiltersForLocationTags,
   type LocationAtmosphereFilter,
@@ -347,12 +347,15 @@ export default function StudyLocationsScreen() {
     sessionsByLocationId,
   ]);
 
+  // Close an expanded spot that the current filters no longer include. It must
+  // not auto-select a replacement: details are inline now, so that would leave
+  // a random row permanently open and re-open the one you just closed.
   useEffect(() => {
     if (
-      filteredLocations.length > 0 &&
+      selectedLocationId &&
       !filteredLocations.some((location) => location.locationId === selectedLocationId)
     ) {
-      setSelectedLocationId(filteredLocations[0].locationId);
+      setSelectedLocationId(null);
     }
   }, [filteredLocations, selectedLocationId]);
 
@@ -448,12 +451,10 @@ export default function StudyLocationsScreen() {
     }
   }
 
+  // Details now open in place, so there's nothing to scroll to — and tapping
+  // the open row again closes it.
   function selectLocation(locationId: string) {
-    setSelectedLocationId(locationId);
-
-    requestAnimationFrame(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    });
+    setSelectedLocationId((current) => (current === locationId ? null : locationId));
   }
 
   // Arriving from a link (e.g. a spot on Profile) opens that spot's details
@@ -479,6 +480,124 @@ export default function StudyLocationsScreen() {
     setSearchQuery('');
     selectLocation(canonicalId);
   }, [locations, requestedLocationId]);
+
+  /**
+   * The expanded panel for the selected spot. Rendered inline under its own
+   * row, so it reads as that row opening rather than a sheet at the bottom of
+   * an unrelated list.
+   */
+  function renderLocationDetails() {
+    if (!selectedLocation) {
+      return null;
+    }
+
+    const tags = getLocationTags(selectedLocation).slice(0, 3);
+
+    return (
+      <View
+        style={[
+          styles.locationDetails,
+          { backgroundColor: palette.surfaceMuted, borderColor: palette.border },
+        ]}>
+        <View style={styles.detailsHeader}>
+          <View style={styles.detailsHeading}>
+            <Text style={[TypeScale.meta, { color: palette.icon }]}>
+              {selectedLocation.campusArea}
+              {selectedRating ? ` · ★ ${selectedRating.averageStars}` : ''}
+            </Text>
+            {selectedLocation.notes ? (
+              <Text style={[TypeScale.body, { color: palette.text }]}>
+                {selectedLocation.notes}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+
+        {tags.length > 0 ? (
+          <View style={styles.tagRow}>
+            {tags.map((tag) => (
+              <View
+                key={tag}
+                style={[styles.tag, { backgroundColor: palette.background }]}>
+                <Text style={[TypeScale.caption, { color: palette.icon }]}>{tag}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        <View style={styles.detailsActions}>
+          <Button
+            icon="mappin.and.ellipse"
+            label="Directions"
+            size="sm"
+            onPress={() => openDirections(selectedLocation)}
+          />
+          <Button
+            icon="star.fill"
+            label="Rate"
+            size="sm"
+            variant="secondary"
+            onPress={() => rateLocation(selectedLocation)}
+          />
+        </View>
+
+        {selectedSessions.length > 0 ? (
+          <View style={[styles.sessionList, { borderTopColor: palette.border }]}>
+            {selectedSessions.slice(0, 3).map((session) => {
+              const live = isLive(session, Date.now());
+              const participantCount = Array.isArray(session.participantIds)
+                ? session.participantIds.length
+                : 0;
+
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  key={session.sessionId}
+                  onPress={() => router.push(`/session/${session.sessionId}`)}
+                  style={({ pressed }) => [
+                    styles.sessionRow,
+                    { borderBottomColor: palette.border },
+                    pressed && styles.pressed,
+                  ]}>
+                  <CourseChip code={session.classId} size="sm" />
+                  <View style={styles.sessionCopy}>
+                    <Text numberOfLines={1} style={[TypeScale.bodyStrong, { color: palette.text }]}>
+                      {session.title}
+                    </Text>
+                    <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                      {formatSessionTime(session)}, {participantCount} going
+                    </Text>
+                  </View>
+                  {live ? (
+                    <Text style={[TypeScale.meta, { color: palette.tint }]}>● Live</Text>
+                  ) : (
+                    <MaterialIcons color={palette.icon} name="chevron-right" size={20} />
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={[styles.noSessions, { borderTopColor: palette.border }]}>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
+              No sessions here yet.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() =>
+                router.push({
+                  pathname: '/create-session',
+                  params: { locationId: selectedLocation.locationId },
+                })
+              }
+              style={({ pressed }) => [styles.hostLink, pressed && styles.pressed]}>
+              <Text style={[TypeScale.label, { color: palette.tint }]}>Host one here</Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
+    );
+  }
 
   function openDirections(location: StudyLocation) {
     const destination = encodeURIComponent(
@@ -630,13 +749,13 @@ export default function StudyLocationsScreen() {
               const aggregate = ratingAggregates.get(location.locationId);
 
               return (
+                <View key={location.locationId}>
                 <View
-                  key={location.locationId}
                   style={[
                     styles.locationListItem,
                     {
                       backgroundColor: isSelected ? palette.surfaceMuted : palette.background,
-                      borderBottomColor: palette.border,
+                      borderBottomColor: isSelected ? 'transparent' : palette.border,
                     },
                   ]}>
                   <View style={styles.locationListCopy}>
@@ -671,129 +790,14 @@ export default function StudyLocationsScreen() {
                     </Pressable>
                   </View>
                 </View>
+                {/* Details expand under the spot they belong to, so the row you
+                    tapped stays on screen next to its own information. */}
+                {isSelected ? renderLocationDetails() : null}
+                </View>
               );
             })}
           </View>
 
-          {selectedLocation ? (
-            <View
-              style={[
-                styles.locationSheet,
-                Elevation.e2,
-                { backgroundColor: palette.background, borderColor: palette.border },
-              ]}>
-              <View style={[styles.sheetHandle, { backgroundColor: palette.outline }]} />
-              <View style={styles.sheetHeadingRow}>
-                <View style={styles.locationHeading}>
-                  <Text style={[TypeScale.meta, { color: palette.icon }]}>
-                    {selectedLocation.campusArea}
-                  </Text>
-                  <Text style={[TypeScale.h2, { color: palette.text }]}>
-                    {selectedLocation.name}
-                  </Text>
-                  <Text style={[TypeScale.meta, { color: palette.icon }]}>
-                    {selectedSessions.length} upcoming{' '}
-                    {selectedSessions.length === 1 ? 'session' : 'sessions'}
-                    {selectedRating ? `, ${selectedRating.averageStars} stars` : ''}
-                  </Text>
-                </View>
-                <Pressable
-                  accessibilityLabel={`Get directions to ${selectedLocation.name}`}
-                  accessibilityRole="link"
-                  onPress={() => openDirections(selectedLocation)}
-                  style={({ pressed }) => [
-                    styles.directionsButton,
-                    { backgroundColor: palette.tint },
-                    pressed && styles.pressed,
-                  ]}>
-                  <MaterialIcons color="#FFFFFF" name="directions" size={18} />
-                  <Text style={[TypeScale.label, { color: '#FFFFFF' }]}>Directions</Text>
-                </Pressable>
-              </View>
-
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => rateLocation(selectedLocation)}
-                style={({ pressed }) => [styles.rateLink, pressed && styles.pressed]}>
-                <MaterialIcons color={palette.tint} name="star-rate" size={18} />
-                <Text style={[TypeScale.label, { color: palette.tint }]}>Rate this spot</Text>
-              </Pressable>
-
-              <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={2}>
-                {selectedLocation.notes}
-              </Text>
-
-              <View style={styles.tagRow}>
-                {getLocationTags(selectedLocation).slice(0, 3).map((tag) => (
-                  <View
-                    key={tag}
-                    style={[styles.tag, { backgroundColor: palette.surfaceMuted }]}>
-                    <Text style={[TypeScale.caption, { color: palette.icon }]}>#{tag}</Text>
-                  </View>
-                ))}
-              </View>
-
-              {selectedSessions.length > 0 ? (
-                <View style={[styles.sessionList, { borderTopColor: palette.border }]}>
-                  {selectedSessions.slice(0, 3).map((session) => {
-                    const live = isLive(session, Date.now());
-                    const participantCount = Array.isArray(session.participantIds)
-                      ? session.participantIds.length
-                      : 0;
-
-                    return (
-                      <Pressable
-                        accessibilityRole="button"
-                        key={session.sessionId}
-                        onPress={() => router.push(`/session/${session.sessionId}`)}
-                      style={({ pressed }) => [
-                          styles.sessionRow,
-                          { borderBottomColor: palette.border },
-                          pressed && styles.pressed,
-                        ]}>
-                        <CourseChip code={session.classId} size="sm" />
-                        <View style={styles.sessionCopy}>
-                          <Text
-                            numberOfLines={1}
-                            style={[TypeScale.bodyStrong, { color: palette.text }]}>
-                            {session.title}
-                          </Text>
-                          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                            {formatSessionTime(session)}, {participantCount} going
-                          </Text>
-                        </View>
-                        {live ? (
-                          <Text style={[TypeScale.meta, { color: palette.tint }]}>● Live</Text>
-                        ) : (
-                          <MaterialIcons color={palette.icon} name="chevron-right" size={20} />
-                        )}
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              ) : (
-                <View style={[styles.noSessions, { borderColor: palette.border }]}>
-                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
-                    No sessions here yet
-                  </Text>
-                  <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                    Create one for classmates to join.
-                  </Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() =>
-                      router.push({
-                        pathname: '/create-session',
-                        params: { locationId: selectedLocation.locationId },
-                      })
-                    }
-                    style={({ pressed }) => [styles.hostLink, pressed && styles.pressed]}>
-                    <Text style={[TypeScale.label, { color: palette.tint }]}>Host one here →</Text>
-                  </Pressable>
-                </View>
-              )}
-            </View>
-          ) : null}
           </View>
         ) : !isLoading ? (
           <EmptyState
@@ -962,44 +966,27 @@ const styles = StyleSheet.create({
     minHeight: 44,
     paddingHorizontal: Space.sm,
   },
-  locationSheet: {
-    borderRadius: Radius.xxl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+  // Inline expansion under the selected row — a recessed surface rather than a
+  // floating sheet, so it reads as part of the list.
+  locationDetails: {
+    borderRadius: Radius.lg,
+    borderWidth: 1,
     gap: Space.md,
+    marginBottom: Space.md,
     padding: Space.lg,
-    zIndex: 5,
   },
-  sheetHandle: {
-    alignSelf: 'center',
-    borderRadius: Radius.pill,
-    height: 5,
-    marginBottom: Space.xs,
-    width: 48,
-  },
-  sheetHeadingRow: {
-    alignItems: 'center',
+  detailsHeader: {
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
   },
-  locationHeading: {
+  detailsHeading: {
     flex: 1,
-    gap: 2,
-  },
-  directionsButton: {
-    alignItems: 'center',
-    borderRadius: Radius.md,
-    flexDirection: 'row',
     gap: Space.xs,
-    minHeight: 42,
-    paddingHorizontal: Space.md,
   },
-  rateLink: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
+  detailsActions: {
     flexDirection: 'row',
-    gap: Space.xs,
-    paddingVertical: Space.xs,
+    gap: Space.sm,
   },
   tagRow: {
     flexDirection: 'row',
@@ -1027,13 +1014,14 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   noSessions: {
-    borderTopWidth: StyleSheet.hairlineWidth * 2,
-    gap: 2,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: Space.sm,
+    justifyContent: 'space-between',
     paddingTop: Space.md,
   },
   hostLink: {
-    alignSelf: 'flex-start',
-    marginTop: Space.sm,
     paddingVertical: Space.xs,
   },
   pressed: {
