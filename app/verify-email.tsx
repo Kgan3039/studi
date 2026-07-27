@@ -1,19 +1,19 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Pressable,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    View,
+  Alert,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
+import { Button } from '@/components/ui/Button';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
+import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
     logOut,
@@ -129,72 +129,58 @@ export default function VerifyEmailScreen() {
       refreshControl={
         <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
       }
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
-      <ThemedView style={[styles.hero, { backgroundColor: palette.hero }]}>
-        <ThemedText style={[styles.eyebrow, { color: palette.tint }]}>Account security</ThemedText>
-        <ThemedText type="title" style={styles.heroTitle}>
-          Verify your UW email
-        </ThemedText>
-        <ThemedText style={styles.heroText}>
-          Studi is for verified UW–Madison students only. Verifying
-          {currentUser?.email ? ` ${currentUser.email}` : ' your @wisc.edu email'} keeps sessions
-          limited to real classmates.
-        </ThemedText>
-      </ThemedView>
+      contentContainerStyle={[
+        styles.content,
+        { paddingBottom: insets.bottom + Space.xxl, paddingTop: insets.top + Space.xl },
+      ]}>
+      <ScreenTransition style={styles.transition}>
+        <View style={styles.hero}>
+          <IconSymbol color={palette.tint} name="envelope.fill" size={32} />
+          <Text style={[styles.heroTitle, { color: palette.text }]}>Check your UW email</Text>
+          <Text style={[TypeScale.body, styles.heroText, { color: palette.icon }]}>
+            We sent a verification link to
+            {currentUser?.email ? ` ${currentUser.email}` : ' your @wisc.edu email'}.
+          </Text>
+        </View>
 
-      <ThemedView
-        style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.sectionLabel}>One step left</ThemedText>
-        <ThemedText type="subtitle">Open the link we emailed you</ThemedText>
-        <ThemedText style={styles.statusText}>{status}</ThemedText>
+        <View style={[styles.statusBlock, { borderColor: palette.border }]}>
+          <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>Open the link, then return</Text>
+          <Text accessibilityLiveRegion="polite" style={[TypeScale.body, { color: palette.icon }]}>
+            {status}
+          </Text>
+        </View>
 
-        <Pressable
-          disabled={isChecking}
-          onPress={handleCheckVerified}
-          style={[
-            styles.primaryButton,
-            { backgroundColor: palette.tint, opacity: isChecking ? 0.7 : 1 },
-          ]}>
-          {isChecking ? (
-            <ActivityIndicator color="#ffffff" />
-          ) : (
-            <ThemedText lightColor="#ffffff" darkColor="#ffffff" type="defaultSemiBold">
-              I verified my email
-            </ThemedText>
-          )}
-        </Pressable>
+        <View style={styles.actions}>
+          <Button
+            fullWidth
+            icon="checkmark.circle.fill"
+            label="I verified my email"
+            loading={isChecking}
+            onPress={handleCheckVerified}
+            size="lg"
+          />
+          <Button
+            disabled={isResending || cooldown > 0}
+            fullWidth
+            icon="arrow.clockwise"
+            label={cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend email'}
+            loading={isResending}
+            onPress={handleResend}
+            size="lg"
+            variant="secondary"
+          />
+        </View>
 
-        <Pressable
-          disabled={isResending || cooldown > 0}
-          onPress={handleResend}
-          style={[
-            styles.secondaryButton,
-            { borderColor: palette.outline, opacity: isResending || cooldown > 0 ? 0.6 : 1 },
-          ]}>
-          {isResending ? (
-            <ActivityIndicator color={palette.tint} />
-          ) : (
-            <ThemedText type="defaultSemiBold">
-              {cooldown > 0 ? `Resend email (${cooldown}s)` : 'Resend email'}
-            </ThemedText>
-          )}
-        </Pressable>
-      </ThemedView>
-
-      <ThemedView
-        style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-        <ThemedText style={styles.sectionLabel}>Wrong email?</ThemedText>
-        <ThemedText style={styles.statusText}>
-          Sign out and create the account again with the correct @wisc.edu address.
-        </ThemedText>
-        <Pressable
-          onPress={handleSignOut}
-          style={[styles.secondaryButton, { borderColor: palette.outline }]}>
-          <ThemedText type="defaultSemiBold">Sign Out</ThemedText>
-        </Pressable>
-      </ThemedView>
-
-      <View style={{ height: insets.bottom + 12 }} />
+        <View style={[styles.wrongEmail, { borderTopColor: palette.border }]}>
+          <View style={styles.wrongEmailCopy}>
+            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Wrong email?</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
+              Sign out and create the account again with the correct address.
+            </Text>
+          </View>
+          <Button label="Sign out" onPress={handleSignOut} size="sm" variant="ghost" />
+        </View>
+      </ScreenTransition>
     </ScrollView>
   );
 }
@@ -202,57 +188,45 @@ export default function VerifyEmailScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   content: {
-    gap: 18,
-    padding: 20,
-    paddingBottom: 36,
+    paddingHorizontal: Space.xl,
+  },
+  transition: {
+    gap: Space.xl,
   },
   hero: {
-    borderRadius: 24,
-    gap: 10,
-    padding: 24,
+    alignItems: 'center',
+    gap: Space.md,
+    paddingVertical: Space.xl,
   },
-  eyebrow: {
-    fontSize: 12,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
+  heroTitle: {
+    fontFamily: FontFamily.serifItalic,
+    fontSize: 34,
+    lineHeight: 39,
+    textAlign: 'center',
   },
-  heroTitle: { marginBottom: 4 },
   heroText: {
-    lineHeight: 30,
-    maxWidth: 420,
+    maxWidth: 320,
+    textAlign: 'center',
   },
-  card: {
-    borderRadius: 20,
-    borderWidth: 1,
-    gap: 12,
-    padding: 20,
-    shadowColor: '#082431',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
+  statusBlock: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: Space.sm,
+    paddingVertical: Space.lg,
   },
-  sectionLabel: {
-    fontSize: 12,
-    letterSpacing: 1,
-    opacity: 0.72,
-    textTransform: 'uppercase',
+  actions: {
+    gap: Space.sm,
   },
-  statusText: {
-    opacity: 0.82,
-  },
-  primaryButton: {
+  wrongEmail: {
     alignItems: 'center',
-    borderRadius: 14,
-    justifyContent: 'center',
-    minHeight: 54,
-    paddingHorizontal: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+    paddingTop: Space.lg,
   },
-  secondaryButton: {
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 48,
-    paddingHorizontal: 16,
+  wrongEmailCopy: {
+    flex: 1,
+    gap: 2,
   },
 });

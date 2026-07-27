@@ -1185,6 +1185,38 @@ export function nextConversationQuotaCount(
   return count >= CONVERSATION_QUOTA_MAX ? null : count + 1;
 }
 
+/**
+ * The other person in a direct conversation. Entry points that arrive without
+ * a name in the route (notifications, push deep links) use this so the thread
+ * is never headed by a generic placeholder.
+ */
+export async function getConversationPartner(
+  conversationId: string,
+  currentUserId: string
+): Promise<{ userId: string; profile: UserProfile | null } | null> {
+  const conversationSnapshot = await getDoc(
+    doc(db, COLLECTIONS.conversations, conversationId)
+  );
+
+  if (!conversationSnapshot.exists()) {
+    return null;
+  }
+
+  const participantIds =
+    (conversationSnapshot.data() as DirectConversation).participantIds ?? [];
+  const otherUserId = participantIds.find(
+    (participantId) => participantId !== currentUserId
+  );
+
+  if (!otherUserId) {
+    return null;
+  }
+
+  const profiles = await getProfilesByIds([otherUserId]);
+
+  return { userId: otherUserId, profile: profiles.get(otherUserId) ?? null };
+}
+
 export async function getOrCreateDirectConversation(
   currentUserId: string,
   otherUserId: string

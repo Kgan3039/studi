@@ -13,7 +13,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
-import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { FilterChip } from '@/components/ui/FilterChip';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
+import { Brand, Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { LOCATION_RATING_TAG_GROUPS } from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -134,10 +137,13 @@ export default function RateLocationScreen() {
         styles.content,
         { paddingTop: Space.lg, paddingBottom: insets.bottom + Space.xxl },
       ]}>
+      <ScreenTransition style={styles.transition}>
       <View style={styles.header}>
-        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Reviewing</Text>
         <Text style={[TypeScale.title, { color: palette.text }]}>
           {getStudyLocationDisplayName(locationId ?? '', locationName)}
+        </Text>
+        <Text style={[TypeScale.body, { color: palette.icon }]}>
+          Share what this study spot is actually like.
         </Text>
         {hasExistingRating ? (
           <View style={styles.noticeRow}>
@@ -163,13 +169,11 @@ export default function RateLocationScreen() {
                 styles.starButton,
                 pressed && { opacity: 0.6, transform: [{ scale: 0.88 }] },
               ]}>
-              <Text
-                style={[
-                  styles.starChar,
-                  { color: star <= selectedStars ? starActiveColor : palette.outline },
-                ]}>
-                ★
-              </Text>
+              <IconSymbol
+                color={star <= selectedStars ? starActiveColor : palette.outline}
+                name="star.fill"
+                size={34}
+              />
             </Pressable>
           ))}
         </View>
@@ -185,37 +189,17 @@ export default function RateLocationScreen() {
         </Text>
         {LOCATION_RATING_TAG_GROUPS.map((group) => (
           <View key={group.label} style={styles.tagGroup}>
-            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{group.label}</Text>
+            <Text style={[TypeScale.label, { color: palette.text }]}>{group.label}</Text>
             <View style={styles.tagGrid}>
               {group.tags.map((tag) => {
                 const isSelected = selectedTags.includes(tag);
                 return (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: isSelected }}
+                  <FilterChip
                     key={tag}
+                    label={tag}
                     onPress={() => toggleTag(tag)}
-                    style={({ pressed }) => [
-                      styles.tagChip,
-                      isSelected
-                        ? {
-                            backgroundColor: isDark ? `${palette.tint}26` : Brand.accentSoft,
-                            borderColor: palette.tint,
-                          }
-                        : {
-                            backgroundColor: palette.surface,
-                            borderColor: palette.border,
-                          },
-                      pressed && { transform: [{ scale: 0.97 }] },
-                    ]}>
-                    <Text
-                      style={[
-                        TypeScale.label,
-                        { color: isSelected ? palette.tint : palette.icon },
-                      ]}>
-                      {tag}
-                    </Text>
-                  </Pressable>
+                    selected={isSelected}
+                  />
                 );
               })}
             </View>
@@ -237,6 +221,7 @@ export default function RateLocationScreen() {
         disabled={selectedStars === 0}
         onPress={handleSubmit}
       />
+      </ScreenTransition>
     </ScrollView>
   );
 }
@@ -251,8 +236,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: Space.xl,
     padding: Space.lg + 4,
+  },
+  transition: {
+    gap: Space.xl,
   },
   header: {
     gap: Space.xs,
@@ -281,10 +268,6 @@ const styles = StyleSheet.create({
   starButton: {
     padding: Space.xs,
   },
-  starChar: {
-    fontSize: 34,
-    lineHeight: 40,
-  },
   tagGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -293,15 +276,6 @@ const styles = StyleSheet.create({
   tagGroup: {
     gap: Space.sm,
     marginTop: Space.xs,
-  },
-  tagChip: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    justifyContent: 'center',
-    minHeight: 38,
-    paddingHorizontal: Space.lg,
-    paddingVertical: Space.sm,
   },
   statusText: {
     textAlign: 'center',

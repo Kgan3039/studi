@@ -1,5 +1,14 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
+import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
 import { Brand, Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
@@ -7,6 +16,7 @@ export type ButtonVariant = 'primary' | 'secondary' | 'success' | 'ghost';
 
 export type ButtonProps = {
   label: string;
+  icon?: IconSymbolName;
   onPress?: () => void;
   variant?: ButtonVariant;
   size?: 'lg' | 'md' | 'sm';
@@ -25,6 +35,7 @@ export type ButtonProps = {
  */
 export function Button({
   label,
+  icon,
   onPress,
   variant = 'primary',
   size = 'md',
@@ -40,8 +51,8 @@ export function Button({
 
   const colors: Record<ButtonVariant, { bg: string; text: string; border?: string }> = {
     primary: { bg: palette.tint, text: '#FFFFFF' },
-    secondary: { bg: palette.surfaceMuted, text: palette.text, border: palette.border },
-    success: { bg: `${Brand.success}1A`, text: successText },
+    secondary: { bg: 'transparent', text: palette.text, border: palette.outline },
+    success: { bg: `${Brand.success}14`, text: successText, border: `${Brand.success}55` },
     ghost: { bg: 'transparent', text: palette.icon },
   };
   const { bg, text, border } = colors[variant];
@@ -71,11 +82,14 @@ export function Button({
       {loading ? (
         <ActivityIndicator size="small" color={text} />
       ) : (
-        <Text
-          style={[size === 'lg' ? styles.lgText : TypeScale.label, { color: text }]}
-          numberOfLines={1}>
-          {label}
-        </Text>
+        <View style={styles.content}>
+          {icon ? <IconSymbol color={text} name={icon} size={size === 'sm' ? 16 : 18} /> : null}
+          <Text
+            style={[size === 'lg' ? styles.lgText : TypeScale.label, { color: text }]}
+            numberOfLines={1}>
+            {label}
+          </Text>
+        </View>
       )}
     </Pressable>
   );
@@ -83,8 +97,8 @@ export function Button({
 
 const sizes = StyleSheet.create({
   lg: {
-    minHeight: 52,
-    paddingHorizontal: Space.xl + 4,
+    minHeight: 50,
+    paddingHorizontal: Space.xl,
   },
   md: {
     minHeight: 44,
@@ -102,7 +116,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexDirection: 'row',
     alignSelf: 'flex-start',
-    borderRadius: Radius.pill,
+    borderRadius: Radius.lg,
+  },
+  content: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
   },
   lgText: {
     fontFamily: TypeScale.label.fontFamily,

@@ -1,19 +1,18 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { type ComponentProps, useCallback, useEffect, useState } from 'react';
+import { type ComponentProps, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Timestamp } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 
-import { Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
+import { Sheet } from '@/components/ui/Sheet';
+import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -62,16 +61,22 @@ export function NotificationCenterButton() {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
-  const insets = useSafeAreaInsets();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewItems, setPreviewItems] = useState<AppNotification[]>([]);
+  const pendingRouteRef = useRef<string | null>(null);
+  const navigationFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState(setCurrentUser);
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      if (navigationFallbackRef.current) {
+        clearTimeout(navigationFallbackRef.current);
+      }
+    };
   }, []);
 
   const loadUnreadCount = useCallback(async () => {
@@ -134,9 +139,10 @@ export function NotificationCenterButton() {
       });
     }
 
-    setIsOpen(false);
     if (isAllowedNotificationUrl(notification.url) && notification.url !== '/notifications') {
-      router.push(notification.url as never);
+      closeAndNavigate(notification.url);
+    } else {
+      setIsOpen(false);
     }
   }
 
@@ -160,9 +166,30 @@ export function NotificationCenterButton() {
     }
   }
 
-  function handleViewAll() {
+  function finishPendingNavigation() {
+    if (navigationFallbackRef.current) {
+      clearTimeout(navigationFallbackRef.current);
+      navigationFallbackRef.current = null;
+    }
+
+    const route = pendingRouteRef.current;
+    pendingRouteRef.current = null;
+    if (route) {
+      router.push(route as never);
+    }
+  }
+
+  function closeAndNavigate(route: string) {
+    pendingRouteRef.current = route;
     setIsOpen(false);
-    router.push('/notifications');
+
+    // Native Modal dismissal is asynchronous. onDismiss handles iOS; this
+    // fallback keeps the same interaction reliable on Android.
+    navigationFallbackRef.current = setTimeout(finishPendingNavigation, 350);
+  }
+
+  function handleViewAll() {
+    closeAndNavigate('/notifications');
   }
 
   const badgeLabel = unreadCount > 99 ? '99+' : String(unreadCount);
@@ -180,10 +207,9 @@ export function NotificationCenterButton() {
         style={({ pressed }) => [
           styles.bellButton,
           {
-            backgroundColor: palette.surface,
-            borderColor: palette.border,
             opacity: pressed ? 0.7 : 1,
           },
+          pressed ? { backgroundColor: palette.surfaceMuted, transform: [{ scale: 0.94 }] } : null,
         ]}>
         <MaterialIcons color={palette.text} name="notifications-none" size={22} />
         {unreadCount > 0 ? (
@@ -197,52 +223,31 @@ export function NotificationCenterButton() {
         ) : null}
       </Pressable>
 
-      <Modal
-        animationType="fade"
-        onRequestClose={() => setIsOpen(false)}
-        statusBarTranslucent
-        transparent
-        visible={isOpen}>
-        <View style={styles.overlay}>
-          <Pressable
-            accessibilityLabel="Close notifications"
-            accessibilityRole="button"
-            onPress={() => setIsOpen(false)}
-            style={StyleSheet.absoluteFill}
-          />
-          <View
-            accessibilityViewIsModal
-            style={[
-              styles.previewCard,
-              Elevation.e3,
-              {
-                backgroundColor: palette.background,
-                borderColor: palette.border,
-                top: insets.top + Space.md,
-              },
-            ]}>
-            <View style={styles.previewHeader}>
-              <View>
-                <Text style={[TypeScale.h2, { color: palette.text }]}>Notifications</Text>
-                <Text style={[TypeScale.caption, { color: palette.icon }]}>Recent activity</Text>
-              </View>
-              {unreadCount > 0 ? (
-                <Pressable
-                  accessibilityLabel="Mark all notifications read"
-                  accessibilityRole="button"
-                  onPress={handleMarkAllRead}
-                  style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
-                  <Text style={[TypeScale.label, { color: palette.tint }]}>Mark all read</Text>
-                </Pressable>
-              ) : null}
-            </View>
-
+      <Sheet
+        visible={isOpen}
+        onClose={() => setIsOpen(false)}
+        onDismissed={finishPendingNavigation}
+        title="Notifications"
+        subtitle="Recent activity"
+        headerAction={
+          unreadCount > 0 ? (
+            <Pressable
+              accessibilityLabel="Mark all notifications read"
+              accessibilityRole="button"
+              onPress={handleMarkAllRead}
+              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+              <Text style={[TypeScale.label, { color: palette.tint }]}>Mark all read</Text>
+            </Pressable>
+          ) : null
+        }
+        scroll={false}>
+        <View style={styles.previewBodyWrap}>
             {isLoadingPreview ? (
               <View style={styles.previewLoading}>
                 <ActivityIndicator color={palette.tint} />
               </View>
             ) : previewItems.length > 0 ? (
-              <View style={styles.previewList}>
+              <View style={[styles.previewList, { borderTopColor: palette.border }]}>
                 {previewItems.map((item) => {
                   const unread = !item.readAt;
                   return (
@@ -254,22 +259,15 @@ export function NotificationCenterButton() {
                       style={({ pressed }) => [
                         styles.previewRow,
                         {
-                          backgroundColor: unread ? palette.surface : palette.surfaceMuted,
-                          borderColor: unread ? `${palette.tint}40` : palette.border,
+                          borderBottomColor: palette.border,
                           opacity: pressed ? 0.7 : 1,
                         },
                       ]}>
-                      <View
-                        style={[
-                          styles.previewIcon,
-                          { backgroundColor: unread ? `${palette.tint}16` : palette.surface },
-                        ]}>
-                        <MaterialIcons
-                          color={unread ? palette.tint : palette.icon}
-                          name={ICON_BY_TYPE[item.type] ?? 'notifications-none'}
-                          size={18}
-                        />
-                      </View>
+                      <MaterialIcons
+                        color={unread ? palette.tint : palette.icon}
+                        name={ICON_BY_TYPE[item.type] ?? 'notifications-none'}
+                        size={21}
+                      />
                       <View style={styles.previewCopy}>
                         <View style={styles.previewTitleRow}>
                           <Text
@@ -305,14 +303,13 @@ export function NotificationCenterButton() {
               onPress={handleViewAll}
               style={({ pressed }) => [
                 styles.viewAllButton,
-                { backgroundColor: palette.surface, borderColor: palette.border, opacity: pressed ? 0.7 : 1 },
+                { opacity: pressed ? 0.7 : 1 },
               ]}>
               <Text style={[TypeScale.label, { color: palette.text }]}>View all notifications</Text>
               <MaterialIcons color={palette.tint} name="arrow-forward" size={18} />
             </Pressable>
-          </View>
         </View>
-      </Modal>
+      </Sheet>
     </>
   );
 }
@@ -320,24 +317,26 @@ export function NotificationCenterButton() {
 const styles = StyleSheet.create({
   bellButton: {
     alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    height: 42,
+    borderRadius: Radius.md,
+    height: 44,
     justifyContent: 'center',
-    width: 42,
+    width: 44,
   },
   countBadge: {
     alignItems: 'center',
     borderColor: '#FFFFFF',
     borderRadius: Radius.pill,
-    borderWidth: 2,
+    borderWidth: 1.5,
     justifyContent: 'center',
-    minHeight: 18,
-    minWidth: 18,
-    paddingHorizontal: 4,
+    minHeight: 16,
+    minWidth: 16,
+    paddingHorizontal: 3,
     position: 'absolute',
-    right: -5,
-    top: -5,
+    // The button is a 44pt target around a 22pt bell, so anchoring to the
+    // button's corner leaves the count floating in empty space. These offsets
+    // sit it on the bell itself.
+    right: 5,
+    top: 4,
   },
   countText: {
     color: '#FFFFFF',
@@ -345,22 +344,8 @@ const styles = StyleSheet.create({
     fontSize: 9,
     lineHeight: 11,
   },
-  overlay: {
-    flex: 1,
-  },
-  previewCard: {
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    left: Space.md,
-    padding: Space.lg,
-    position: 'absolute',
-    right: Space.md,
-  },
-  previewHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: Space.md,
+  previewBodyWrap: {
+    paddingHorizontal: Space.lg,
   },
   previewLoading: {
     alignItems: 'center',
@@ -368,23 +353,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   previewList: {
-    gap: Space.sm,
+    // The sheet header already draws a rule here; a second one reads as a seam.
+    borderTopWidth: 0,
   },
   previewRow: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
-    gap: Space.sm + 2,
-    minHeight: 62,
-    padding: Space.sm + 2,
-  },
-  previewIcon: {
-    alignItems: 'center',
-    borderRadius: Radius.md,
-    height: 36,
-    justifyContent: 'center',
-    width: 36,
+    gap: Space.md,
+    minHeight: 64,
+    paddingHorizontal: Space.xs,
+    paddingVertical: Space.md,
   },
   previewCopy: {
     flex: 1,
@@ -410,12 +389,9 @@ const styles = StyleSheet.create({
   },
   viewAllButton: {
     alignItems: 'center',
-    borderRadius: Radius.md,
-    borderWidth: StyleSheet.hairlineWidth * 2,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: Space.md,
-    minHeight: 46,
-    paddingHorizontal: Space.md,
+    minHeight: 52,
+    paddingHorizontal: Space.xs,
   },
 });

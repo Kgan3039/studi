@@ -1,25 +1,28 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
     Alert,
     Pressable,
     RefreshControl,
     ScrollView,
     StyleSheet,
     Text,
-    TextInput,
     View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SessionCard } from '@/components/session-card';
-import { CourseChip } from '@/components/ui/CourseChip';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
+import { Sheet } from '@/components/ui/Sheet';
+import { FilterChip } from '@/components/ui/FilterChip';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
+import { SearchBar } from '@/components/ui/SearchBar';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
-import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -53,12 +56,14 @@ export default function SessionsScreen() {
   const [showAllClasses, setShowAllClasses] = useState(false);
   const [sessions, setSessions] = useState<SessionListEntry[]>([]);
   const [status, setStatus] = useState('Loading sessions...');
-  const [isLoading, setIsLoading] = useState(true);
+  const [, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [joiningSessionId, setJoiningSessionId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
   const [todayOnly, setTodayOnly] = useState(false);
+  const [openSeatsOnly, setOpenSeatsOnly] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const createSessionNavigationRef = useRef(false);
   const [isNavigatingToCreateSession, setIsNavigatingToCreateSession] = useState(false);
   const { toast, show: showToast } = useSuccessToast();
@@ -99,11 +104,30 @@ export default function SessionsScreen() {
       if (todayOnly && session.startTime.toDate().toDateString() !== todayString) {
         return false;
       }
+      // Hiding full sessions is the difference between a list you can act on
+      // and one where the Join button is missing half the time.
+      if (
+        openSeatsOnly &&
+        (session.status === 'full' || isSessionAtCapacity(session))
+      ) {
+        return false;
+      }
       return true;
     });
-  }, [searchQuery, selectedDept, sessions, todayOnly]);
+  }, [openSeatsOnly, searchQuery, selectedDept, sessions, todayOnly]);
 
-  const hasNarrowingFilters = !!searchQuery.trim() || selectedDept !== null || todayOnly;
+  const hasNarrowingFilters =
+    !!searchQuery.trim() || selectedDept !== null || todayOnly || openSeatsOnly;
+  // Search is its own visible control, so it isn't counted on the button.
+  const activeFilterCount =
+    (todayOnly ? 1 : 0) + (openSeatsOnly ? 1 : 0) + (selectedDept ? 1 : 0);
+
+  function clearFilters() {
+    setSearchQuery('');
+    setSelectedDept(null);
+    setTodayOnly(false);
+    setOpenSeatsOnly(false);
+  }
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -257,34 +281,46 @@ export default function SessionsScreen() {
     }
   }
 
-  const filterOptions: { label: string; selected: boolean; onPress: () => void }[] =
+  const scopeOptions: { label: string; value: 'mine' | 'all' | 'requested' }[] =
     normalizedRequestedClass
       ? [
           {
             label: normalizedRequestedClass,
-            selected: true,
-            onPress: () => {},
+            value: 'requested',
           },
           {
-            label: 'All classes',
-            selected: false,
-            onPress: () => router.replace('/sessions'),
+            label: 'All sessions',
+            value: 'all',
           },
         ]
       : profileClasses.length > 0
         ? [
             {
               label: 'My classes',
-              selected: !showAllClasses,
-              onPress: () => setShowAllClasses(false),
+              value: 'mine',
             },
             {
-              label: 'All classes',
-              selected: showAllClasses,
-              onPress: () => setShowAllClasses(true),
+              label: 'All sessions',
+              value: 'all',
             },
           ]
         : [];
+  const selectedScope: 'mine' | 'all' | 'requested' = normalizedRequestedClass
+    ? 'requested'
+    : showAllClasses
+      ? 'all'
+      : 'mine';
+
+  function handleScopeChange(scope: 'mine' | 'all' | 'requested') {
+    if (scope === 'all' && normalizedRequestedClass) {
+      router.replace('/sessions');
+      return;
+    }
+
+    if (scope !== 'requested') {
+      setShowAllClasses(scope === 'all');
+    }
+  }
 
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
@@ -294,101 +330,80 @@ export default function SessionsScreen() {
           <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
         }
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={[TypeScale.title, { color: palette.text }]}>Sessions</Text>
-          <Text style={[TypeScale.meta, { color: palette.icon }]}>{status}</Text>
-        </View>
-        <View style={styles.headerActions}>
-          <Pressable
-            accessibilityRole="button"
-            disabled={isLoading || isRefreshing}
-            onPress={handleRefresh}
-            style={({ pressed }) => ({ opacity: pressed || isLoading || isRefreshing ? 0.5 : 1 })}>
-            <View style={styles.refreshButtonContent}>
-              {isLoading || isRefreshing ? <ActivityIndicator size="small" color={palette.tint} /> : null}
-              <Text style={[TypeScale.label, { color: palette.tint }]}>Refresh</Text>
-            </View>
-          </Pressable>
-          <NotificationCenterButton />
-        </View>
-      </View>
-
-      <TextInput
-        autoCapitalize="none"
-        onChangeText={setSearchQuery}
-        placeholder="Search course, title, place, or person"
-        placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
-        style={[
-          styles.searchInput,
-          {
-            backgroundColor: palette.surfaceMuted,
-            borderColor: palette.border,
-            color: palette.text,
-          },
-        ]}
-        value={searchQuery}
+      <ScreenHeader
+        action={
+          <Button
+            label="Host"
+            size="sm"
+            loading={isNavigatingToCreateSession}
+            onPress={() => handleCreateSession()}
+          />
+        }
+        showNotifications
+        title="Sessions"
+        status={status}
       />
 
-      <View style={styles.filterRow}>
-        {[
-          ...filterOptions,
-          {
-            label: 'Today',
-            selected: todayOnly,
-            onPress: () => setTodayOnly((current) => !current),
-          },
-        ].map((option) => (
-          <Pressable
-            key={option.label}
-            accessibilityRole="button"
-            accessibilityState={{ selected: option.selected }}
-            onPress={option.onPress}
-            style={[
-              styles.filterPill,
-              option.selected
-                ? { backgroundColor: palette.tint }
-                : {
-                    backgroundColor: palette.surface,
-                    borderColor: palette.border,
-                    borderWidth: StyleSheet.hairlineWidth * 2,
-                  },
-            ]}>
-            <Text
-              style={[
-                TypeScale.label,
-                { color: option.selected ? '#FFFFFF' : palette.icon },
-              ]}>
-              {option.label}
-            </Text>
-          </Pressable>
-        ))}
+      <ScreenTransition style={styles.transition}>
+      {/* Search and its filter control share a row: one balanced band instead
+          of a full-width field with a small button stranded beneath it. */}
+      <View style={styles.searchRow}>
+        <View style={styles.searchField}>
+          <SearchBar
+            onChangeText={setSearchQuery}
+            placeholder="Search sessions"
+            value={searchQuery}
+          />
+        </View>
+        <Pressable
+          accessibilityLabel={
+            activeFilterCount > 0 ? `Filters, ${activeFilterCount} applied` : 'Filters'
+          }
+          accessibilityRole="button"
+          onPress={() => setFiltersOpen(true)}
+          style={({ pressed }) => [
+            styles.filterButton,
+            {
+              backgroundColor: activeFilterCount > 0 ? palette.tint : 'transparent',
+              borderColor: activeFilterCount > 0 ? palette.tint : palette.outline,
+              opacity: pressed ? 0.7 : 1,
+              transform: [{ scale: pressed ? 0.96 : 1 }],
+            },
+          ]}>
+          <IconSymbol
+            color={activeFilterCount > 0 ? '#FFFFFF' : palette.icon}
+            name="slider.horizontal.3"
+            size={20}
+          />
+          {activeFilterCount > 0 ? (
+            <Text style={[TypeScale.label, styles.filterCount]}>{activeFilterCount}</Text>
+          ) : null}
+        </Pressable>
       </View>
 
-      {deptOptions.length > 1 ? (
-        <View style={styles.deptRow}>
-          {deptOptions.map((deptCode) => (
-            <CourseChip
-              key={deptCode}
-              code={deptCode}
-              size="sm"
-              selected={selectedDept === deptCode}
-              onPress={() =>
-                setSelectedDept((current) => (current === deptCode ? null : deptCode))
-              }
-            />
-          ))}
-        </View>
-      ) : null}
-
-      {sessions.length > 0 ? (
-        <Button
-          fullWidth
-          label="Host a session"
-          loading={isNavigatingToCreateSession}
-          onPress={handleCreateSession}
+      {scopeOptions.length > 0 ? (
+        <SegmentedControl
+          accessibilityLabel="Session scope"
+          onChange={handleScopeChange}
+          options={scopeOptions}
+          value={selectedScope}
         />
       ) : null}
+
+      {/* A department chip per class stops scaling the moment the campus is
+          using this, so filters live behind one button and the row only shows
+          what is currently applied. */}
+      <View style={styles.filterRow}>
+        {todayOnly ? (
+          <FilterChip icon="xmark" label="Today" onPress={() => setTodayOnly(false)} />
+        ) : null}
+        {openSeatsOnly ? (
+          <FilterChip icon="xmark" label="Open seats" onPress={() => setOpenSeatsOnly(false)} />
+        ) : null}
+        {selectedDept ? (
+          <FilterChip icon="xmark" label={selectedDept} onPress={() => setSelectedDept(null)} />
+        ) : null}
+      </View>
 
       {visibleSessions.length > 0 ? (
         <View style={styles.list}>
@@ -422,11 +437,7 @@ export default function SessionsScreen() {
           headline="No sessions match those filters"
           body="Try widening the time, class, or search."
           actionLabel="Clear filters"
-          onAction={() => {
-            setSearchQuery('');
-            setSelectedDept(null);
-            setTodayOnly(false);
-          }}
+          onAction={clearFilters}
         />
       ) : (
         <EmptyState
@@ -434,18 +445,84 @@ export default function SessionsScreen() {
           headline={
             normalizedRequestedClass
               ? `No ${normalizedRequestedClass} sessions yet`
-              : 'Quiet on State St.'
+              : 'No sessions yet'
           }
           body={
             normalizedRequestedClass
-              ? `Host the first ${normalizedRequestedClass} session, or come back later to join one.`
-              : 'No sessions for your classes right now. Someone has to set the first table.'
+              ? `Create a ${normalizedRequestedClass} session for classmates to join.`
+              : 'Create a session and invite classmates to join.'
           }
           actionLabel={normalizedRequestedClass ? 'Host one' : 'Host a session'}
           onAction={() => handleCreateSession(normalizedRequestedClass || undefined)}
         />
       )}
+      </ScreenTransition>
       </ScrollView>
+
+      <Sheet
+        visible={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        title="Filters"
+        subtitle={`${visibleSessions.length} of ${sessions.length} sessions shown`}
+        footer={
+          <View style={styles.filterFooter}>
+            <Button
+              label="Clear all"
+              variant="secondary"
+              onPress={clearFilters}
+              disabled={!hasNarrowingFilters}
+              style={styles.filterFooterButton}
+            />
+            <Button
+              label="Show results"
+              onPress={() => setFiltersOpen(false)}
+              style={styles.filterFooterButton}
+            />
+          </View>
+        }>
+        <View style={styles.filterGroup}>
+          <Text style={[TypeScale.label, { color: palette.icon }]}>When</Text>
+          <View style={styles.filterGroupRow}>
+            <FilterChip
+              icon="calendar"
+              label="Today only"
+              onPress={() => setTodayOnly((current) => !current)}
+              selected={todayOnly}
+            />
+          </View>
+        </View>
+
+        <View style={styles.filterGroup}>
+          <Text style={[TypeScale.label, { color: palette.icon }]}>Availability</Text>
+          <View style={styles.filterGroupRow}>
+            <FilterChip
+              icon="person.2.fill"
+              label="Open seats"
+              onPress={() => setOpenSeatsOnly((current) => !current)}
+              selected={openSeatsOnly}
+            />
+          </View>
+        </View>
+
+        {deptOptions.length > 1 ? (
+          <View style={styles.filterGroup}>
+            <Text style={[TypeScale.label, { color: palette.icon }]}>Department</Text>
+            <View style={styles.filterGroupRow}>
+              {deptOptions.map((deptCode) => (
+                <FilterChip
+                  key={deptCode}
+                  label={deptCode}
+                  onPress={() =>
+                    setSelectedDept((current) => (current === deptCode ? null : deptCode))
+                  }
+                  selected={selectedDept === deptCode}
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
+      </Sheet>
+
       <SuccessToast toast={toast} />
     </View>
   );
@@ -460,51 +537,49 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
   },
-  header: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: Space.md,
+  transition: {
+    gap: Space.lg,
   },
-  headerText: {
-    flexShrink: 1,
-    gap: Space.xs,
-  },
-  headerActions: {
+  searchRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: Space.sm,
   },
-  refreshButtonContent: {
+  searchField: {
+    flex: 1,
+  },
+  filterButton: {
     alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
     flexDirection: 'row',
     gap: Space.xs,
+    height: 48,
+    justifyContent: 'center',
+    paddingHorizontal: Space.md,
   },
-  searchInput: {
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    fontFamily: FontFamily.body,
-    fontSize: 14,
-    minHeight: 44,
-    paddingHorizontal: Space.lg,
+  filterCount: {
+    color: '#FFFFFF',
   },
   filterRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Space.sm,
   },
-  deptRow: {
+  filterGroup: {
+    gap: Space.sm,
+  },
+  filterGroupRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Space.sm,
   },
-  filterPill: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: Radius.pill,
-    minHeight: 34,
-    paddingHorizontal: Space.md + 2,
-    paddingVertical: Space.xs + 2,
+  filterFooter: {
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  filterFooterButton: {
+    flex: 1,
   },
   list: {
     gap: Space.md,

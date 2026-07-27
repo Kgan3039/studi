@@ -15,13 +15,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
-import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { IconButton } from '@/components/ui/IconButton';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
+import { Sheet } from '@/components/ui/Sheet';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { identifyUser, track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
-import { UW_COURSE_CATALOG, UW_COURSE_COUNT, searchCourses } from '@/lib/catalog';
+import {
+  UW_COURSE_CATALOG,
+  UW_COURSE_COUNT,
+  formatCourseTitle,
+  searchCourses,
+} from '@/lib/catalog';
 import {
     getLocationRatingAggregates,
     getLocations,
@@ -48,7 +57,7 @@ const SAVED_LOCATIONS_SHOWN = 3;
 
 type ProfileStat = { value: string; label: string };
 
-type SavedLocation = { name: string; rating: number | null };
+type SavedLocation = { locationId: string; name: string; rating: number | null };
 
 // Last-saved values, kept to compute the profile_updated fieldsChanged count
 // (a number, never the values — docs/metrics.md).
@@ -119,7 +128,10 @@ export default function ProfileScreen() {
   // Course titles for the saved-classes rows (board ProfileScreen) come from
   // the bundled catalog — no extra reads.
   const courseTitlesByCode = useMemo(
-    () => new Map(UW_COURSE_CATALOG.map((course) => [course.code, course.title] as const)),
+    () =>
+      new Map(
+        UW_COURSE_CATALOG.map((course) => [course.code, formatCourseTitle(course.title)] as const)
+      ),
     []
   );
 
@@ -299,6 +311,7 @@ export default function ProfileScreen() {
           ? `You'll see sessions for ${classes.length} class${classes.length === 1 ? '' : 'es'}.`
           : 'No classes saved yet.'
       );
+      setIsEditing(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to save classes right now.';
       setClassesStatus(message);
@@ -312,7 +325,7 @@ export default function ProfileScreen() {
   // "Junior · Computer Science · she/her" — only the fields the user filled in.
   const academicLine = [year, major.trim(), pronouns.trim()]
     .filter(Boolean)
-    .join(' · ');
+    .join(', ');
   const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
   const inputColors = {
     backgroundColor: palette.surfaceMuted,
@@ -358,12 +371,12 @@ export default function ProfileScreen() {
     ];
   }, [classes.length, classesUpper, currentUser, sessions]);
 
-  // "Saved locations" is not modeled, so the section shows the top-rated UW
-  // study spots from the locations + rating-aggregate sources, matching the
-  // board's name + ★ rating rows.
+  // Saved locations are not modeled, so this section accurately presents the
+  // top-rated UW study spots from the locations + rating-aggregate sources.
   const savedLocations: SavedLocation[] = useMemo(() => {
     return locations
       .map((location) => ({
+        locationId: location.locationId,
         name: location.name,
         rating: ratingAggregates.get(location.locationId)?.averageStars ?? null,
       }))
@@ -382,82 +395,128 @@ export default function ProfileScreen() {
   }
 
   return (
+    <View style={[styles.screen, { backgroundColor: palette.background }]}>
     <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
+      style={styles.screen}
       refreshControl={
         <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
       }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      <View style={styles.profileTopAction}>
-        <NotificationCenterButton />
-      </View>
-      {/* Avatar header + name / class-year block (board ProfileScreen ~1761). */}
+      <ScreenHeader
+        showNotifications
+        title="Profile"
+      />
+
+      <ScreenTransition style={styles.transition}>
       <View style={styles.identity}>
-        <Avatar name={displayName || currentUser?.email || 'Student'} size="xl" verified />
-        <View style={styles.nameRow}>
+        <Avatar name={displayName || currentUser?.email || 'Student'} size="lg" verified />
+        <View style={styles.identityCopy}>
           <Text style={[styles.identityName, { color: palette.text }]} numberOfLines={1}>
             {displayName || currentUser?.email || 'Student'}
           </Text>
-          <View
-            accessibilityLabel="Verified UW student"
-            style={[styles.verifiedCheck, { backgroundColor: palette.tint }]}>
-            <Text style={styles.verifiedCheckMark}>✓</Text>
-          </View>
+          {academicLine ? (
+            <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
+              {academicLine}
+            </Text>
+          ) : null}
+          <Text style={[TypeScale.meta, { color: palette.icon }]}>
+            Verified @wisc.edu
+          </Text>
+          {bio.trim() ? (
+            <Text style={[TypeScale.body, styles.bioText, { color: palette.text }]}>
+              {bio.trim()}
+            </Text>
+          ) : null}
         </View>
-        {/* Board's "Junior · Computer Science" academic line (design spec §3.12). */}
-        {academicLine ? (
-          <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
-            {academicLine}
-          </Text>
-        ) : null}
-        {bio.trim() ? (
-          <Text style={[TypeScale.body, styles.bioText, { color: palette.text }]}>
-            {bio.trim()}
-          </Text>
-        ) : null}
-        <Text style={[TypeScale.eyebrow, styles.classYear, { color: palette.icon }]}>
-          Verified @wisc.edu
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => setIsEditingName((editing) => !editing)}
-        >
-          <Text style={[TypeScale.label, { color: palette.tint }]}>
-            {isEditingName ? 'Done' : 'Edit'}
-          </Text>
-        </Pressable>
+        <IconButton
+          accessibilityLabel="Edit profile"
+          icon="square.and.pencil"
+          onPress={() => setIsEditingName(true)}
+        />
       </View>
 
-      {/* Stats grid (board ProfileScreen ~1771). */}
-      <View style={styles.statsGrid}>
-        {stats.map((stat) => (
+      <View
+        accessibilityLabel="Profile activity"
+        style={[
+          styles.statsGrid,
+          { borderBottomColor: palette.border, borderTopColor: palette.border },
+        ]}>
+        {stats.map((stat, index) => (
           <View
             key={stat.label}
-            style={[styles.statCell, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <Text style={[styles.statValue, { color: palette.tint }]}>{stat.value}</Text>
+            style={[
+              styles.statCell,
+              index > 0 ? { borderLeftColor: palette.border, borderLeftWidth: 1 } : null,
+            ]}>
+            <Text style={[styles.statValue, { color: palette.text }]}>{stat.value}</Text>
             <Text style={[styles.statLabel, { color: palette.icon }]}>{stat.label}</Text>
           </View>
         ))}
       </View>
 
-      {isEditingName ? (
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: palette.surface,
-              borderColor: palette.border,
-            },
-          ]}
-        >
-          <Text style={[TypeScale.heading, { color: palette.text }]}>
-            Your profile
-          </Text>
+      <View
+        accessibilityLabel="Profile shortcuts"
+        style={[
+          styles.settingsList,
+          { borderBottomColor: palette.border, borderTopColor: palette.border },
+        ]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Study buddies"
+          onPress={() => router.push('/friends' as Href)}
+          style={({ pressed }) => [
+            styles.settingsRow,
+            { borderBottomColor: palette.border, opacity: pressed ? 0.55 : 1 },
+            pressed ? styles.pressedRow : null,
+          ]}>
+          <View style={styles.settingsIcon}>
+            <IconSymbol name="person.2.fill" size={22} color={palette.tint} />
+          </View>
+          <View style={styles.settingsRowBody}>
+            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Study buddies</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
+              Friends, requests, and classmates
+            </Text>
+          </View>
+          <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+        </Pressable>
 
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            {nameStatus}
-          </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
+          onPress={() => router.push('/settings' as Href)}
+          style={({ pressed }) => [
+            styles.settingsRow,
+            styles.settingsRowLast,
+            { opacity: pressed ? 0.55 : 1 },
+            pressed ? styles.pressedRow : null,
+          ]}>
+          <View style={styles.settingsIcon}>
+            <IconSymbol name="gearshape.fill" size={22} color={palette.tint} />
+          </View>
+          <View style={styles.settingsRowBody}>
+            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Settings</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
+              Notifications, privacy, and account
+            </Text>
+          </View>
+          <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+        </Pressable>
+      </View>
 
+      <Sheet
+        visible={isEditingName}
+        onClose={() => setIsEditingName(false)}
+        title="Edit profile"
+        subtitle={nameStatus}
+        footer={
+          <Button
+            label="Save profile"
+            fullWidth
+            loading={isSaving}
+            onPress={handleSaveProfile}
+          />
+        }>
           <View style={styles.inlineRow}>
             <TextInput
               autoCapitalize="words"
@@ -539,7 +598,7 @@ export default function ProfileScreen() {
               maxLength={PROFILE_BIO_MAX_LENGTH}
               multiline
               onChangeText={setBio}
-              placeholder="Short bio — what are you studying toward?"
+              placeholder="What are you studying toward?"
               placeholderTextColor={placeholderColor}
               style={[styles.input, styles.bioInput, inputColors]}
               value={bio}
@@ -548,40 +607,31 @@ export default function ProfileScreen() {
               {bio.length}/{PROFILE_BIO_MAX_LENGTH}
             </Text>
           </View>
-
-          <Button
-            label="Save profile"
-            variant="secondary"
-            fullWidth
-            loading={isSaving}
-            onPress={handleSaveProfile}
-          />
-        </View>
-      ) : null}
+      </Sheet>
 
       {/* Current classes (board ProfileScreen ~1789). */}
       <View style={styles.section}>
         <SectionHeader
           eyebrow="Current classes"
           action={
-            <Pressable accessibilityRole="button" onPress={() => setIsEditing((editing) => !editing)}>
-              <Text style={[TypeScale.label, { color: palette.tint }]}>
-                {isEditing ? 'Done' : 'Edit'}
-              </Text>
-            </Pressable>
+            <IconButton
+              accessibilityLabel="Edit your classes"
+              icon="square.and.pencil"
+              onPress={() => setIsEditing(true)}
+            />
           }
         />
         {classes.length > 0 ? (
-          <View style={styles.rowList}>
+          <View style={[styles.rowList, { borderTopColor: palette.border }]}>
             {classes.map((classCode) => (
               <View
                 key={classCode}
-                style={[styles.classRow, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+                style={[styles.classRow, { borderBottomColor: palette.border }]}>
                 <View style={styles.classRowBody}>
                   <CourseChip code={classCode} size="sm" />
                   <Text
                     style={[TypeScale.bodyStrong, styles.classTitle, { color: palette.text }]}
-                    numberOfLines={1}>
+                    numberOfLines={2}>
                     {courseTitlesByCode.get(classCode) ?? 'UW–Madison course'}
                   </Text>
                 </View>
@@ -600,10 +650,14 @@ export default function ProfileScreen() {
 
       {/* Editor panel — kept from the prior screen so classes/name stay
           editable without a separate settings surface; revealed via Edit. */}
-      {isEditing ? (
-        <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <Text style={[TypeScale.heading, { color: palette.text }]}>Your classes</Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>{classesStatus}</Text>
+      <Sheet
+        visible={isEditing}
+        onClose={() => setIsEditing(false)}
+        title="Your classes"
+        subtitle={classesStatus}
+        footer={
+          <Button label="Save classes" fullWidth loading={isSaving} onPress={handleSaveClasses} />
+        }>
           <TextInput
             autoCapitalize="characters"
             editable={!isSaving}
@@ -631,10 +685,10 @@ export default function ProfileScreen() {
                     ]}>
                     <Text style={[TypeScale.code, { color: palette.text }]}>{course.code}</Text>
                     <Text style={[TypeScale.body, { color: palette.text }]} numberOfLines={1}>
-                      {course.title}
+                      {formatCourseTitle(course.title)}
                     </Text>
                     <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-                      {course.subjectName} · {course.credits}
+                      {course.subjectName}, {course.credits}
                     </Text>
                   </Pressable>
                 ))
@@ -655,7 +709,7 @@ export default function ProfileScreen() {
                   <Text
                     style={[TypeScale.body, styles.classTitle, { color: palette.text }]}
                     numberOfLines={1}>
-                    {courseTitlesByCode.get(classCode) ?? 'UW–Madison course'}
+                    {courseTitlesByCode.get(classCode) ?? 'UW Madison course'}
                   </Text>
                   <Pressable
                     accessibilityRole="button"
@@ -672,81 +726,49 @@ export default function ProfileScreen() {
               ))}
             </View>
           ) : null}
-          <Button label="Save classes" fullWidth loading={isSaving} onPress={handleSaveClasses} />
-        </View>
-      ) : null}
+      </Sheet>
 
-      {/* Saved locations (board ProfileScreen ~1814). */}
+      {/* Top-rated campus locations. */}
       <View style={styles.section}>
-        <SectionHeader eyebrow="Saved locations" />
+        <SectionHeader eyebrow="Top study spots" />
         {savedLocations.length > 0 ? (
-          <View style={styles.rowList}>
+          <View style={[styles.rowList, { borderTopColor: palette.border }]}>
             {savedLocations.map((location) => (
-              <View
-                key={location.name}
-                style={[styles.locationRow, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${location.name}, open on the map`}
+                key={location.locationId}
+                onPress={() =>
+                  router.push({
+                    pathname: '/explore',
+                    params: { locationId: location.locationId },
+                  })
+                }
+                style={({ pressed }) => [
+                  styles.locationRow,
+                  { borderBottomColor: palette.border, opacity: pressed ? 0.55 : 1 },
+                  pressed ? styles.pressedRow : null,
+                ]}>
                 <Text style={[TypeScale.bodyStrong, styles.locationName, { color: palette.text }]} numberOfLines={1}>
                   {location.name}
                 </Text>
                 <Text style={[TypeScale.label, { color: palette.icon }]}>
                   {location.rating != null ? `★ ${location.rating.toFixed(1)}` : 'New'}
                 </Text>
-              </View>
+                <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+              </Pressable>
             ))}
           </View>
         ) : (
           <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            Rate a study spot to see your places here.
+            Rated study spots will appear here.
           </Text>
         )}
       </View>
 
-      {/* Study Buddies entry — friends, requests, and classmate suggestions
-          live at /friends (design spec §3.9). No new bottom tab: the current
-          5-tab structure stays, with this as the entry point. */}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Study buddies"
-        onPress={() => router.push('/friends' as Href)}
-        style={({ pressed }) => [
-          styles.settingsRow,
-          {
-            backgroundColor: palette.surface,
-            borderColor: palette.border,
-            opacity: pressed ? 0.7 : 1,
-          },
-        ]}>
-        <View style={styles.settingsRowBody}>
-          <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Study buddies</Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            Friends, requests, and classmates
-          </Text>
-        </View>
-        <Text style={[TypeScale.heading, { color: palette.icon }]}>›</Text>
-      </Pressable>
-
-      {/* Settings entry (design spec §3.12 footer Settings link). Privacy,
-          support, sign out, and delete account live there now. */}
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => router.push('/settings' as Href)}
-        style={({ pressed }) => [
-          styles.settingsRow,
-          {
-            backgroundColor: palette.surface,
-            borderColor: palette.border,
-            opacity: pressed ? 0.7 : 1,
-          },
-        ]}>
-        <View style={styles.settingsRowBody}>
-          <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Settings</Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            Notifications, privacy, and account
-          </Text>
-        </View>
-        <Text style={[TypeScale.heading, { color: palette.icon }]}>›</Text>
-      </Pressable>
+      </ScreenTransition>
     </ScrollView>
+    </View>
   );
 }
 
@@ -765,46 +787,30 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
   },
-  profileTopAction: {
-    alignSelf: 'flex-end',
-    marginBottom: -Space.md,
+  transition: {
+    gap: Space.xl,
+  },
+  pressedRow: {
+    transform: [{ scale: 0.99 }],
   },
   identity: {
     alignItems: 'center',
-    gap: Space.sm,
-  },
-  nameRow: {
-    alignItems: 'center',
     flexDirection: 'row',
-    gap: Space.sm - 2,
-    marginTop: Space.xs,
+    gap: Space.md,
+  },
+  identityCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
   },
   identityName: {
     fontFamily: FontFamily.serifItalic,
-    fontSize: 28,
-    lineHeight: 34,
+    fontSize: 26,
+    lineHeight: 31,
     flexShrink: 1,
-    textAlign: 'center',
-  },
-  verifiedCheck: {
-    alignItems: 'center',
-    borderRadius: Radius.pill,
-    height: 18,
-    justifyContent: 'center',
-    width: 18,
-  },
-  verifiedCheckMark: {
-    color: '#FFFFFF',
-    fontFamily: FontFamily.bodySemiBold,
-    fontSize: 10,
-    lineHeight: 12,
-  },
-  classYear: {
-    marginTop: Space.xs,
   },
   bioText: {
-    maxWidth: 320,
-    textAlign: 'center',
+    marginTop: Space.xs,
   },
   yearRow: {
     flexDirection: 'row',
@@ -813,8 +819,8 @@ const styles = StyleSheet.create({
   },
   yearChip: {
     alignItems: 'center',
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: Radius.md,
+    borderWidth: 1,
     justifyContent: 'center',
     minHeight: 40,
     paddingHorizontal: Space.md + 2,
@@ -830,15 +836,14 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   statsGrid: {
+    borderBottomWidth: 1,
+    borderTopWidth: 1,
     flexDirection: 'row',
-    gap: Space.sm,
   },
   statCell: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
     flex: 1,
-    gap: Space.xs,
+    gap: 2,
     paddingHorizontal: Space.sm,
     paddingVertical: Space.md,
   },
@@ -848,21 +853,17 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   statLabel: {
-    fontFamily: FontFamily.bodySemiBold,
-    fontSize: 9,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
+    ...TypeScale.caption,
   },
   section: {
     gap: Space.md,
   },
   rowList: {
-    gap: Space.sm,
+    borderTopWidth: 1,
   },
   classRow: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
@@ -881,8 +882,7 @@ const styles = StyleSheet.create({
   },
   locationRow: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
@@ -945,10 +945,13 @@ const styles = StyleSheet.create({
     gap: Space.xs,
     padding: Space.md + 2,
   },
+  settingsList: {
+    borderBottomWidth: 1,
+    borderTopWidth: 1,
+  },
   settingsRow: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.md,
     justifyContent: 'space-between',
@@ -956,8 +959,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.md + 2,
     paddingVertical: Space.sm,
   },
+  settingsIcon: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 28,
+  },
   settingsRowBody: {
-    flexShrink: 1,
+    flex: 1,
     gap: 2,
+  },
+  settingsRowLast: {
+    borderBottomWidth: 0,
   },
 });

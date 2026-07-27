@@ -118,11 +118,11 @@ const styles = StyleSheet.create({
   container: {
     gap: 8,
   },
+  // Sentence case: caps-and-tracking is decoration, not hierarchy.
   label: {
-    fontSize: 12,
-    letterSpacing: 1,
+    fontSize: 13,
+    fontWeight: '600',
     opacity: 0.72,
-    textTransform: 'uppercase',
   },
   menu: {
     borderRadius: 14,

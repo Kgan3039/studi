@@ -5,10 +5,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
 import { Colors, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -119,8 +119,12 @@ export default function MessagesScreen() {
         <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
       }
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      <ScreenHeader action={<NotificationCenterButton />} title="Messages" />
+      <ScreenHeader
+        showNotifications
+        title="Messages"
+      />
 
+      <ScreenTransition style={styles.transition}>
       {conversations.length > 0 ? (
         <SearchBar
           accessibilityLabel="Search messages"
@@ -216,6 +220,7 @@ export default function MessagesScreen() {
           onAction={() => router.push('/sessions')}
         />
       )}
+      </ScreenTransition>
     </ScrollView>
   );
 }
@@ -226,6 +231,9 @@ const styles = StyleSheet.create({
     gap: Space.lg,
     paddingBottom: Space.xxl + 4,
     paddingHorizontal: Space.lg + 4,
+  },
+  transition: {
+    gap: Space.lg,
   },
   threadRow: {
     alignItems: 'center',

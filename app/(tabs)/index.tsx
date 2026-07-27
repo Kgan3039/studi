@@ -12,15 +12,18 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { formatSessionStart, formatSessionWindow } from '@/components/session-card';
-import { AvatarStack } from '@/components/ui/Avatar';
+import { Avatar, AvatarStack } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { NotificationCenterButton } from '@/components/ui/NotificationCenterButton';
+import { IconButton } from '@/components/ui/IconButton';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
-import { Colors, Elevation, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -35,10 +38,18 @@ import {
   type StudySession,
   type UserProfile,
 } from '@/lib/firestore';
-import { getStudyLocationDisplayName } from '@/lib/catalog';
+import {
+  UW_COURSE_CATALOG,
+  formatCourseTitle,
+  getStudyLocationDisplayName,
+} from '@/lib/catalog';
+import { getFriendsPage, type FriendListItem } from '@/lib/friends';
 import type { User } from 'firebase/auth';
 
 type TodaySession = StudySession & { locationName: string };
+
+/** Home shows a short list; the full roster lives behind the add action. */
+const BUDDY_PREVIEW_COUNT = 4;
 
 type HeroKind = 'live' | 'joined' | 'matched';
 
@@ -72,12 +83,6 @@ function isLive(session: StudySession, nowMs: number) {
   );
 }
 
-/**
- * Board HomeScreen hero (index.tsx ~218-241): eyebrow row with live dot and
- * going count, lg course chip, sans title, location line, avatar stack +
- * one primary action. No capacity/seats data exists, so the counter shows
- * the going count instead of "3 / 5 seats".
- */
 function HeroCard({
   session,
   kind,
@@ -120,12 +125,12 @@ function HeroCard({
       onPress={onPress}
       style={({ pressed }) => [
         styles.heroCard,
-        Elevation.e1,
         {
           backgroundColor: palette.surface,
           borderColor: palette.border,
           opacity: pressed ? 0.92 : 1,
         },
+        pressed ? styles.pressed : null,
       ]}>
       <View style={styles.heroTopRow}>
         <View style={styles.heroEyebrowRow}>
@@ -134,13 +139,13 @@ function HeroCard({
           ) : null}
           <Text
             style={[
-              TypeScale.eyebrow,
+              TypeScale.meta,
               { color: kind === 'live' ? palette.tint : palette.icon },
             ]}>
             {eyebrow}
           </Text>
         </View>
-        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
+        <Text style={[TypeScale.meta, { color: palette.icon }]}>
           {goingLabel}
         </Text>
       </View>
@@ -149,7 +154,7 @@ function HeroCard({
         {session.title}
       </Text>
       <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
-        {formatSessionWindow(session.startTime, session.endTime)} · {session.locationName}
+        {formatSessionWindow(session.startTime, session.endTime)}, {session.locationName}
       </Text>
       <View style={styles.heroFooter}>
         <AvatarStack names={attendeeNames} max={3} size="sm" totalCount={going} />
@@ -160,12 +165,123 @@ function HeroCard({
 }
 
 /**
- * Board upcoming row (index.tsx ~247-269): standalone card, course chip +
- * title + "location · time" left, big accent count + tiny uppercase label
- * right. The board's number is seats-left — now real via capacity;
- * pre-capacity sessions fall back to the going count.
+ * A class the user is enrolled in, with the number of upcoming sessions it
+ * currently matches. Doubles as the empty-state next step: every row can start
+ * a session for that class.
  */
-function UpcomingRow({ session, onPress }: { session: TodaySession; onPress: () => void }) {
+function ClassRow({
+  code,
+  title,
+  activeCount,
+  onPress,
+  onHost,
+  isLast,
+}: {
+  code: string;
+  title: string;
+  activeCount: number;
+  onPress: () => void;
+  onHost: () => void;
+  isLast: boolean;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${code}, ${activeCount} upcoming ${
+        activeCount === 1 ? 'session' : 'sessions'
+      }`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.classRow,
+        {
+          borderBottomColor: palette.border,
+          borderBottomWidth: isLast ? 0 : 1,
+          opacity: pressed ? 0.6 : 1,
+        },
+        pressed ? styles.pressed : null,
+      ]}>
+      <CourseChip code={code} size="sm" />
+      <View style={styles.classRowBody}>
+        <Text style={[TypeScale.meta, { color: palette.icon }]} numberOfLines={2}>
+          {title}
+        </Text>
+        <Text style={[TypeScale.caption, { color: palette.icon }]}>
+          {activeCount > 0
+            ? `${activeCount} upcoming ${activeCount === 1 ? 'session' : 'sessions'}`
+            : 'No sessions yet'}
+        </Text>
+      </View>
+      {activeCount > 0 ? (
+        <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Start a ${code} session`}
+          hitSlop={8}
+          onPress={onHost}
+          style={({ pressed }) => [styles.classRowAction, { opacity: pressed ? 0.5 : 1 }]}>
+          <Text style={[TypeScale.label, { color: palette.tint }]}>Start one</Text>
+        </Pressable>
+      )}
+    </Pressable>
+  );
+}
+
+/** A study buddy with the context that makes them worth tapping right now. */
+function BuddyRow({
+  name,
+  detail,
+  onPress,
+  isLast,
+}: {
+  name: string;
+  detail: string;
+  onPress: () => void;
+  isLast: boolean;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${name}, ${detail}`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.buddyRow,
+        {
+          borderBottomColor: palette.border,
+          borderBottomWidth: isLast ? 0 : 1,
+          opacity: pressed ? 0.6 : 1,
+        },
+        pressed ? styles.pressed : null,
+      ]}>
+      <Avatar name={name} size="sm" verified />
+      <View style={styles.buddyCopy}>
+        <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
+          {name}
+        </Text>
+        <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+          {detail}
+        </Text>
+      </View>
+      <IconSymbol name="chevron.right" size={18} color={palette.icon} />
+    </Pressable>
+  );
+}
+
+function UpcomingRow({
+  session,
+  onPress,
+  isLast,
+}: {
+  session: TodaySession;
+  onPress: () => void;
+  isLast: boolean;
+}) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const isFull = session.status === 'full' || isSessionAtCapacity(session);
@@ -185,8 +301,8 @@ function UpcomingRow({ session, onPress }: { session: TodaySession; onPress: () 
       style={({ pressed }) => [
         styles.upcomingCard,
         {
-          backgroundColor: palette.surface,
           borderColor: palette.border,
+          borderBottomWidth: isLast ? 0 : 1,
           opacity: pressed ? 0.85 : isFull ? 0.6 : 1,
         },
       ]}>
@@ -198,7 +314,7 @@ function UpcomingRow({ session, onPress }: { session: TodaySession; onPress: () 
           {session.title}
         </Text>
         <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-          {session.locationName} · {formatSessionStart(session.startTime)}
+          {session.locationName}, {formatSessionStart(session.startTime)}
         </Text>
       </View>
       {isFull ? (
@@ -225,6 +341,7 @@ export default function HomeScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [heroAttendeeNames, setHeroAttendeeNames] = useState<string[]>([]);
   const [joiningHero, setJoiningHero] = useState(false);
+  const [friends, setFriends] = useState<FriendListItem[]>([]);
   const { toast, show: showToast } = useSuccessToast();
   // The (tabs) layout gate redirects signed-out/unverified users to the
   // (auth) flow; this flag only guards the brief frame before that happens.
@@ -306,6 +423,32 @@ export default function HomeScreen() {
   useEffect(() => {
     loadSessions();
   }, [loadSessions]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!currentUser || !currentUser.emailVerified) {
+      setFriends([]);
+      return;
+    }
+
+    getFriendsPage(currentUser.uid)
+      .then((page) => {
+        if (!cancelled) {
+          setFriends(page.items);
+        }
+      })
+      .catch(() => {
+        // The rest of Home is still useful without the buddy list.
+        if (!cancelled) {
+          setFriends([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser]);
 
   const savedName = splitDisplayName(profile?.displayName);
 
@@ -417,6 +560,54 @@ export default function HomeScreen() {
   const dateEyebrow = new Date()
     .toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 
+  // How many upcoming sessions each saved class currently matches — the number
+  // that makes "your classes" worth looking at rather than a row of labels.
+  const activeByClass = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const session of sessions) {
+      const code = session.classId.trim().toUpperCase();
+      counts.set(code, (counts.get(code) ?? 0) + 1);
+    }
+
+    return counts;
+  }, [sessions]);
+
+  const courseTitlesByCode = useMemo(
+    () =>
+      new Map(
+        UW_COURSE_CATALOG.map((course) => [course.code, formatCourseTitle(course.title)] as const)
+      ),
+    []
+  );
+
+  /**
+   * Buddies are ranked by how many of your upcoming sessions they're also in,
+   * then by how recently you connected. Studi doesn't record per-person
+   * interaction counts, and shared sessions are the closest real signal — they
+   * are also the ones you're most likely to want to message today.
+   */
+  const topBuddies = useMemo(() => {
+    return friends
+      .map((friend) => {
+        const shared = sessions.filter((session) =>
+          session.participantIds.includes(friend.friendUid)
+        );
+
+        return {
+          userId: friend.friendUid,
+          name: friend.profile?.displayName?.trim() || 'Student',
+          sharedCount: shared.length,
+          detail:
+            shared.length > 0
+              ? `${shared.length} shared ${shared.length === 1 ? 'session' : 'sessions'}`
+              : friend.profile?.major?.trim() || 'Classmate',
+        };
+      })
+      .sort((first, second) => second.sharedCount - first.sharedCount)
+      .slice(0, BUDDY_PREVIEW_COUNT);
+  }, [friends, sessions]);
+
   if (!isSignedIn) {
     return null;
   }
@@ -436,101 +627,158 @@ export default function HomeScreen() {
           />
         }
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{dateEyebrow}</Text>
-            <Text
-              style={[styles.greeting, { color: palette.text }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit>
-              {timeOfDayGreeting()}
-              {savedName.firstName ? `, ${savedName.firstName}` : ''}
-            </Text>
-          </View>
-          <NotificationCenterButton />
-        </View>
+        {/* Same header shape as every other tab — serif title, supporting line,
+            actions anchored right. The warmth comes from the name, not from a
+            different layout. */}
+        <ScreenHeader
+          showNotifications
+          status={dateEyebrow}
+          subtitle={timeOfDayGreeting()}
+          title={savedName.firstName ? `Hi, ${savedName.firstName}` : 'Home'}
+          titleStyle={styles.greetingName}
+        />
 
-        {hero ? (
-          <HeroCard
-            session={hero}
-            kind={heroKind}
-            attendeeNames={heroAttendeeNames}
-            joined={heroJoined}
-            joining={joiningHero}
-            onJoin={handleJoinHero}
-            onPress={() => router.push(`/session/${hero.sessionId}`)}
-          />
-        ) : null}
-
-        {upcoming.length > 0 ? (
-          <View style={styles.section}>
-            <SectionHeader
-              eyebrow="Upcoming today"
-              action={
+        <ScreenTransition style={styles.transition}>
+        {/* Every block on this screen carries a heading so the page reads as a
+            sequence of answers, not a stack of loose parts. */}
+        <View style={styles.section}>
+          <SectionHeader
+            eyebrow={hero ? 'Your next session' : 'Up next'}
+            action={
+              hero || upcoming.length > 0 ? (
                 <Pressable accessibilityRole="button" onPress={() => router.push('/sessions')}>
                   <Text style={[TypeScale.label, { color: palette.tint }]}>See all</Text>
                 </Pressable>
-              }
+              ) : null
+            }
+          />
+
+          {hero ? (
+            <HeroCard
+              session={hero}
+              kind={heroKind}
+              attendeeNames={heroAttendeeNames}
+              joined={heroJoined}
+              joining={joiningHero}
+              onJoin={handleJoinHero}
+              onPress={() => router.push(`/session/${hero.sessionId}`)}
             />
+          ) : null}
+
+          {upcoming.length > 0 ? (
             <View style={styles.upcomingList}>
-              {upcoming.map((session) => (
+              {upcoming.map((session, index) => (
                 <UpcomingRow
                   key={session.sessionId}
                   session={session}
                   onPress={() => router.push(`/session/${session.sessionId}`)}
+                  isLast={index === upcoming.length - 1}
                 />
               ))}
             </View>
-          </View>
+          ) : null}
+
+        {showEmpty && sessionsError ? (
+          <EmptyState
+            icon="seat"
+            headline="Sessions could not load"
+            body={sessionsError}
+            actionLabel="Try again"
+            onAction={loadSessions}
+            style={styles.emptyState}
+          />
         ) : null}
 
-        {showEmpty ? (
-          sessionsError ? (
-            <EmptyState
-              icon="seat"
-              headline="Something went off-script."
-              body={sessionsError}
-              actionLabel="Try again"
-              onAction={loadSessions}
-              style={styles.emptyState}
-            />
-          ) : profileClasses.length === 0 ? (
-            <EmptyState
-              icon="calendar"
-              headline="Make it yours"
-              body="Add your classes to see sessions that match."
-              actionLabel="Add classes"
-              onAction={() => router.push('/profile')}
-              style={styles.emptyState}
-            />
-          ) : (
-            <EmptyState
-              icon="seat"
-              headline="Quiet on State St."
-              body="No sessions for your classes right now. Someone has to set the first table."
-              actionLabel="Host one"
-              onAction={() => router.push('/create-session')}
-              style={styles.emptyState}
-            />
-          )
+        {showEmpty && !sessionsError && profileClasses.length === 0 ? (
+          <EmptyState
+            icon="calendar"
+            headline="Add your classes"
+            body="Studi uses your schedule to find sessions that match."
+            actionLabel="Add classes"
+            onAction={() => router.push('/profile')}
+            style={styles.emptyState}
+          />
         ) : null}
+
+        {/* With classes saved, a centered empty blob would be a dead end — the
+            class list below already offers the next step, so this stays a
+            single quiet line above it. */}
+        {showEmpty && !sessionsError && profileClasses.length > 0 ? (
+          <View style={styles.quietEmpty}>
+            <Text style={[TypeScale.body, { color: palette.icon }]}>
+              Nothing scheduled yet.
+            </Text>
+            <Button
+              label="Host a session"
+              fullWidth
+              onPress={() => router.push('/create-session')}
+            />
+          </View>
+        ) : null}
+        </View>
 
         {profileClasses.length > 0 ? (
           <View style={styles.section}>
-            <SectionHeader eyebrow="Your classes this week" />
-            <View style={styles.chipWrap}>
-              {profileClasses.map((classCode) => (
-                <CourseChip
+            <SectionHeader
+              eyebrow="Your classes"
+              action={
+                <IconButton
+                  accessibilityLabel="Edit your classes"
+                  icon="square.and.pencil"
+                  onPress={() => router.push('/profile')}
+                />
+              }
+            />
+            <View style={[styles.classList, { borderTopColor: palette.border }]}>
+              {profileClasses.map((classCode, index) => (
+                <ClassRow
                   key={classCode}
                   code={classCode}
+                  title={courseTitlesByCode.get(classCode) ?? 'UW–Madison course'}
+                  activeCount={activeByClass.get(classCode) ?? 0}
+                  isLast={index === profileClasses.length - 1}
                   onPress={() =>
                     router.push({ pathname: '/sessions', params: { classId: classCode } })
+                  }
+                  onHost={() =>
+                    router.push({ pathname: '/create-session', params: { classId: classCode } })
                   }
                 />
               ))}
             </View>
           </View>
         ) : null}
+
+        <View style={styles.section}>
+          <SectionHeader
+            eyebrow="Study buddies"
+            action={
+              <IconButton
+                accessibilityLabel="Find study buddies"
+                icon="person.badge.plus"
+                onPress={() => router.push('/friends')}
+              />
+            }
+          />
+          {topBuddies.length > 0 ? (
+            <View style={[styles.classList, { borderTopColor: palette.border }]}>
+              {topBuddies.map((buddy, index) => (
+                <BuddyRow
+                  key={buddy.userId}
+                  name={buddy.name}
+                  detail={buddy.detail}
+                  isLast={index === topBuddies.length - 1}
+                  onPress={() => router.push(`/user/${buddy.userId}`)}
+                />
+              ))}
+            </View>
+          ) : (
+            <Text style={[TypeScale.body, { color: palette.icon }]}>
+              No buddies yet. Add classmates to study together.
+            </Text>
+          )}
+        </View>
+        </ScreenTransition>
       </ScrollView>
       <SuccessToast toast={toast} />
     </View>
@@ -546,24 +794,15 @@ const styles = StyleSheet.create({
     padding: Space.lg + 4,
     paddingBottom: Space.xxl + 4,
   },
-  header: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: Space.md,
-  },
-  headerText: {
-    flexShrink: 1,
-    gap: Space.xs + 1,
-  },
-  greeting: {
+  greetingName: {
     fontFamily: FontFamily.serifItalic,
-    fontSize: 29,
-    lineHeight: 35,
+  },
+  transition: {
+    gap: Space.xl,
   },
   heroCard: {
-    borderRadius: Radius.xxl - 4,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
     padding: Space.lg + 4,
   },
   heroTopRow: {
@@ -601,16 +840,15 @@ const styles = StyleSheet.create({
     gap: Space.md,
   },
   upcomingList: {
-    gap: Space.md - 2,
+    gap: 0,
   },
   upcomingCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: Space.md,
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    padding: Space.lg,
+    paddingHorizontal: 0,
+    paddingVertical: Space.lg,
   },
   upcomingBody: {
     flexShrink: 1,
@@ -630,9 +868,7 @@ const styles = StyleSheet.create({
   },
   upcomingNumberLabel: {
     fontFamily: FontFamily.bodySemiBold,
-    fontSize: 9,
-    letterSpacing: 0.9,
-    textTransform: 'uppercase',
+    fontSize: 11,
     marginTop: 1,
   },
   chipWrap: {
@@ -642,5 +878,42 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     paddingVertical: Space.lg,
+  },
+  // Presses compress slightly to confirm the tap. Nothing moves while idle.
+  pressed: {
+    transform: [{ scale: 0.98 }],
+  },
+  quietEmpty: {
+    gap: Space.md,
+  },
+  classList: {
+    borderTopWidth: 1,
+  },
+  classRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.md,
+    minHeight: 60,
+    paddingVertical: Space.md,
+  },
+  classRowBody: {
+    flex: 1,
+    gap: 1,
+    minWidth: 0,
+  },
+  classRowAction: {
+    paddingVertical: Space.xs,
+  },
+  buddyRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.md,
+    minHeight: 60,
+    paddingVertical: Space.md,
+  },
+  buddyCopy: {
+    flex: 1,
+    gap: 1,
+    minWidth: 0,
   },
 });

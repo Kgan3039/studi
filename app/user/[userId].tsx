@@ -8,6 +8,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -163,7 +164,7 @@ export default function PublicProfileScreen() {
     none: 'Add study buddy',
     outgoing: 'Requested',
     incoming: 'Accept request',
-    friends: 'Study buddies ✓',
+    friends: 'Study buddies',
   };
 
   if (loadState === 'loading') {
@@ -204,7 +205,7 @@ export default function PublicProfileScreen() {
   const name = profile.displayName || 'Student';
   const academicLine = [profile.year, profile.major, profile.pronouns]
     .filter(Boolean)
-    .join(' · ');
+    .join(', ');
   const shared = sharedClasses(myClasses, profile.classes);
   const isSelf = status === 'self';
 
@@ -214,15 +215,16 @@ export default function PublicProfileScreen() {
       contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Space.xxl }]}>
       <Stack.Screen options={{ title: 'Profile' }} />
 
+      <ScreenTransition style={styles.transition}>
       <View style={styles.identity}>
         <Avatar name={name} size="xl" verified tone="accent" />
         <Text style={[styles.name, { color: palette.text }]} numberOfLines={2}>
           {name}
         </Text>
         {academicLine ? (
-          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>{academicLine}</Text>
+          <Text style={[TypeScale.body, { color: palette.icon }]}>{academicLine}</Text>
         ) : null}
-        <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>Verified @wisc.edu</Text>
+        <Text style={[TypeScale.label, { color: palette.tint }]}>Verified @wisc.edu</Text>
       </View>
 
       {profile.bio ? (
@@ -232,12 +234,14 @@ export default function PublicProfileScreen() {
       {!isSelf ? (
         <View style={styles.actions}>
           <Button
+            icon="message.fill"
             label={openingChat ? 'Opening…' : 'Message'}
             fullWidth
             loading={openingChat}
             onPress={handleMessage}
           />
           <Button
+            icon={status === 'friends' ? 'checkmark.circle.fill' : 'person.badge.plus'}
             label={friendActionLabel[status]}
             variant="secondary"
             fullWidth
@@ -247,14 +251,14 @@ export default function PublicProfileScreen() {
         </View>
       ) : (
         <Text style={[TypeScale.caption, styles.selfNote, { color: palette.icon }]}>
-          This is you. Edit your profile from the You tab.
+          This is you. Edit your details from the Profile tab.
         </Text>
       )}
 
       {profile.classes.length > 0 ? (
         <View style={styles.section}>
-          <Text style={[TypeScale.eyebrow, { color: palette.icon }]}>
-            {shared.length > 0 ? `Classes · ${shared.length} shared` : 'Classes'}
+          <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>
+            {shared.length > 0 ? `Classes (${shared.length} shared)` : 'Classes'}
           </Text>
           <View style={styles.chipWrap}>
             {profile.classes.map((code) => (
@@ -263,6 +267,7 @@ export default function PublicProfileScreen() {
           </View>
         </View>
       ) : null}
+      </ScreenTransition>
     </ScrollView>
   );
 }
@@ -275,9 +280,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   content: {
-    gap: Space.xl,
     padding: Space.lg + 4,
     paddingTop: Space.xl,
+  },
+  transition: {
+    gap: Space.xl,
   },
   identity: {
     alignItems: 'center',

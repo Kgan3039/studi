@@ -14,7 +14,10 @@ import { Timestamp } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
+import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
+import { IconButton } from '@/components/ui/IconButton';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Colors, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -28,18 +31,15 @@ import {
 } from '@/lib/firestore';
 import { isAllowedNotificationUrl } from '@/lib/notifications';
 
-// Board NotificationsScreen renders type icons as text glyphs in a tinted
-// disc — mirrored here so no icon-font plumbing is needed. friend/group
-// glyphs are mapped now so reserved types render correctly when they ship.
-const GLYPH_BY_TYPE: Record<string, string> = {
-  dm_message: '✉',
-  group_message: '✉',
-  session_joined: '+',
-  session_updated: '✦',
-  session_cancelled: '✕',
-  session_reminder: '◴',
-  friend_request: '♟',
-  friend_accepted: '♟',
+const ICON_BY_TYPE: Record<string, IconSymbolName> = {
+  dm_message: 'message.fill',
+  group_message: 'message.fill',
+  session_joined: 'calendar',
+  session_updated: 'calendar',
+  session_cancelled: 'calendar',
+  session_reminder: 'calendar',
+  friend_request: 'person.2.fill',
+  friend_accepted: 'person.2.fill',
 };
 
 function formatTimestamp(value: Timestamp | null) {
@@ -219,14 +219,12 @@ export default function NotificationsScreen() {
         options={{
           headerRight: () =>
             loadState === 'ready' && unreadCount > 0 ? (
-              <Pressable
-                accessibilityRole="button"
+              <IconButton
                 accessibilityLabel="Mark all notifications read"
-                hitSlop={8}
+                icon="checkmark.circle.fill"
                 onPress={handleMarkAllRead}
-                style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
-                <Text style={[TypeScale.label, { color: palette.tint }]}>Mark all read</Text>
-              </Pressable>
+                tone="accent"
+              />
             ) : null,
         }}
       />
@@ -237,7 +235,7 @@ export default function NotificationsScreen() {
         </View>
       ) : loadState === 'error' ? (
         <EmptyState
-          headline="Something went off-script."
+          headline="Notifications could not load"
           body="We couldn't load your notifications."
           actionLabel="Try again"
           onAction={() => loadFirstPage()}
@@ -258,40 +256,24 @@ export default function NotificationsScreen() {
             />
           }
           renderSectionHeader={({ section }) => (
-            <Text style={[TypeScale.eyebrow, styles.sectionHeader, { color: palette.icon }]}>
+            <Text style={[TypeScale.sectionTitle, styles.sectionHeader, { color: palette.text }]}>
               {section.title}
             </Text>
           )}
           ListHeaderComponent={
-            <View style={styles.filterRow}>
-              {(
-                [
-                  { id: 'all', label: 'All' },
-                  { id: 'unread', label: unreadCount > 0 ? `Unread ${unreadCount}` : 'Unread' },
-                ] as const
-              ).map((filter) => {
-                const selected = activeFilter === filter.id;
-                return (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    key={filter.id}
-                    onPress={() => setActiveFilter(filter.id)}
-                    style={({ pressed }) => [
-                      styles.filterChip,
-                      {
-                        backgroundColor: selected ? palette.tint : palette.surface,
-                        borderColor: selected ? palette.tint : palette.border,
-                        opacity: pressed ? 0.7 : 1,
-                      },
-                    ]}>
-                    <Text style={[TypeScale.label, { color: selected ? '#FFFFFF' : palette.icon }]}>
-                      {filter.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            <SegmentedControl
+              accessibilityLabel="Notification view"
+              onChange={setActiveFilter}
+              options={[
+                { value: 'all', label: 'All activity' },
+                {
+                  value: 'unread',
+                  label: unreadCount > 0 ? `Unread (${unreadCount})` : 'Unread',
+                },
+              ]}
+              style={styles.filterControl}
+              value={activeFilter}
+            />
           }
           renderItem={({ item }) => {
             const unread = !item.readAt;
@@ -305,23 +287,18 @@ export default function NotificationsScreen() {
                 style={({ pressed }) => [
                   styles.row,
                   {
-                    backgroundColor: palette.surface,
-                    borderColor: unread ? `${palette.tint}4D` : palette.border,
+                    borderBottomColor: palette.border,
                     opacity: pressed ? 0.7 : 1,
                   },
                 ]}>
                 {unread ? (
-                  <View style={[styles.unreadDot, { backgroundColor: palette.tint }]} />
+                  <View style={[styles.unreadMarker, { backgroundColor: palette.tint }]} />
                 ) : null}
-                <View
-                  style={[
-                    styles.iconDisc,
-                    { backgroundColor: isReminder ? `${palette.tint}1A` : palette.surfaceMuted },
-                  ]}>
-                  <Text style={[styles.iconGlyph, { color: isReminder ? palette.tint : palette.text }]}>
-                    {GLYPH_BY_TYPE[item.type] ?? '✦'}
-                  </Text>
-                </View>
+                <IconSymbol
+                  name={ICON_BY_TYPE[item.type] ?? 'circle.dashed'}
+                  size={22}
+                  color={isReminder || unread ? palette.tint : palette.icon}
+                />
                 <View style={styles.rowBody}>
                   <View style={styles.rowHeader}>
                     <Text
@@ -345,7 +322,7 @@ export default function NotificationsScreen() {
           ListEmptyComponent={
             activeFilter === 'unread' ? (
               <EmptyState
-                icon="dot"
+                icon="bell"
                 headline="You're all caught up"
                 body="There are no unread notifications right now."
                 actionLabel="View all"
@@ -353,7 +330,7 @@ export default function NotificationsScreen() {
               />
             ) : (
               <EmptyState
-                icon="dot"
+                icon="bell"
                 headline="You're all caught up"
                 body="Session updates, reminders, and new messages will land here."
                 actionLabel="Browse sessions"
@@ -389,46 +366,24 @@ const styles = StyleSheet.create({
     marginBottom: Space.sm,
     marginTop: Space.md,
   },
-  filterRow: {
-    flexDirection: 'row',
-    gap: Space.sm,
+  filterControl: {
     marginBottom: Space.xs,
   },
-  filterChip: {
-    borderRadius: Radius.pill,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    minHeight: 34,
-    paddingHorizontal: Space.md + 2,
-    justifyContent: 'center',
-  },
   row: {
-    alignItems: 'flex-start',
-    borderRadius: Radius.card,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    alignItems: 'center',
+    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: Space.md,
-    marginBottom: Space.sm,
-    minHeight: 56,
-    padding: Space.md + 2,
+    minHeight: 68,
+    paddingHorizontal: Space.xs,
+    paddingVertical: Space.md,
   },
-  unreadDot: {
-    borderRadius: Radius.pill,
-    height: 8,
-    left: -4,
+  unreadMarker: {
+    borderRadius: 2,
+    height: 32,
+    left: 0,
     position: 'absolute',
-    top: Space.lg + 4,
-    width: 8,
-  },
-  iconDisc: {
-    alignItems: 'center',
-    borderRadius: Radius.lg,
-    height: 36,
-    justifyContent: 'center',
-    width: 36,
-  },
-  iconGlyph: {
-    fontSize: 15,
-    lineHeight: 20,
+    width: 3,
   },
   rowBody: {
     flex: 1,
