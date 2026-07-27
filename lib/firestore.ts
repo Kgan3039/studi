@@ -981,6 +981,31 @@ export async function getUpcomingSessionsForClasses(options: {
     .slice(0, SESSIONS_PAGE_SIZE);
 }
 
+/**
+ * The authoritative participant roster, and nothing else. Deliberately lighter
+ * than getSessionById — no profile or location joins — because the pre-join
+ * blocked-participant check runs on the tap and only needs uids.
+ *
+ * Returns null when the session no longer exists, and throws when the read
+ * fails, so callers can tell "verified roster" from "could not check" and fail
+ * closed on the latter.
+ *
+ * The field is returned raw and unvalidated on purpose — hence `unknown`. The
+ * guarded-join core treats any malformed roster as unverifiable, and filtering
+ * here would quietly launder a bad document into a "verified" one: dropping a
+ * null out of [blockedUid, null] yields a roster that looks trustworthy and
+ * isn't. Validation belongs in one place, next to the decision it protects.
+ */
+export async function getSessionParticipantIds(sessionId: string): Promise<unknown> {
+  const snapshot = await getDoc(doc(db, COLLECTIONS.sessions, sessionId));
+
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  return snapshot.data().participantIds;
+}
+
 export async function getSessionById(sessionId: string) {
   const sessionSnapshot = await getDoc(doc(db, COLLECTIONS.sessions, sessionId));
 

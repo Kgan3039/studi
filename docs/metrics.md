@@ -22,6 +22,9 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 | `session_created` | `createSession()` succeeds | `classId`, `hoursUntilStart`, `capacity` |
 | `session_joined` | `joinSession()` performs a real join | `classId`, `participantCountAfter` |
 | `session_join_blocked_full` | Join attempt lost the race for the last seat (SessionFullError) | `classId` |
+| `blocked_session_warning_shown` | Join tapped on a session already containing someone the user has blocked, on any of the three join surfaces. Once per guarded attempt, however many blocked participants are present; repeat taps while one attempt is in flight are dropped. | `sessionId`, `blockedCount` (count only, never uids), `classId` |
+| `blocked_session_join_anyway` | "Join Anyway" chosen on that warning; the ordinary join then runs | `sessionId`, `blockedCount`, `classId` |
+| `blocked_session_cancel` | Warning dismissed via Cancel (or an Android dialog dismiss); no join attempt. **Never** fired when the roster or block list could not be verified — that path emits nothing at all, so `shown - join_anyway - cancel` is a real "asked but never answered" count, not a bucket of read failures. | `sessionId`, `blockedCount`, `classId` |
 | `session_viewed` | Session detail opened | `classId`, `isHost` |
 | `session_left` | `leaveSession()` succeeds | `classId` |
 | `map_directions_opened` | Directions tapped from the study map | `locationId` |
