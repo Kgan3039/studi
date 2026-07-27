@@ -37,6 +37,10 @@ import {
     type StudySession,
 } from '@/lib/firestore';
 import { getStudyLocationDisplayName } from '@/lib/catalog';
+import {
+    confirmBlockedJoinWithAlert,
+    requestGuardedSessionJoin,
+} from '@/lib/guarded-session-join';
 import { matchesSessionSearch } from '@/lib/session-search';
 import type { User } from 'firebase/auth';
 
@@ -243,8 +247,34 @@ export default function SessionsScreen() {
       return;
     }
 
+    // Same safety check as every other join surface; the guard re-reads the
+    // roster and block list at tap time and only then calls performJoin.
+    const listed = sessions.find((session) => session.sessionId === sessionId);
+
     try {
       setJoiningSessionId(sessionId);
+      await requestGuardedSessionJoin({
+        sessionId,
+        userId: currentUser.uid,
+        ...(listed ? { classId: listed.classId } : {}),
+        confirm: confirmBlockedJoinWithAlert,
+        onVerificationError: (message) => {
+          setStatus(message);
+          Alert.alert('Unable to Join', message);
+        },
+        join: () => performJoin(sessionId),
+      });
+    } finally {
+      setJoiningSessionId('');
+    }
+  }
+
+  async function performJoin(sessionId: string) {
+    if (!currentUser) {
+      return;
+    }
+
+    try {
       const result = await joinSession(sessionId, currentUser.uid);
       await loadSessions();
 
@@ -276,8 +306,6 @@ export default function SessionsScreen() {
       const message = error instanceof Error ? error.message : 'Unable to join this session right now.';
       setStatus(message);
       Alert.alert('Join Session Error', message);
-    } finally {
-      setJoiningSessionId('');
     }
   }
 
