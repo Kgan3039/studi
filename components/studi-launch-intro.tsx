@@ -152,6 +152,7 @@ export function StudiLaunchIntro({ onFinish }: StudiLaunchIntroProps) {
             }}>
             <Image
               accessibilityIgnoresInvertColors
+              resizeMode="contain"
               source={require('../assets/images/studi-logo.png')}
               style={styles.pin}
             />
@@ -197,7 +198,6 @@ const styles = StyleSheet.create({
   },
   pin: {
     height: 118,
-    resizeMode: 'contain',
     width: 118,
   },
   ripple: {

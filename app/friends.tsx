@@ -109,6 +109,11 @@ export default function FriendsScreen() {
   const [pendingRemoval, setPendingRemoval] = useState<{ uid: string; name: string } | null>(
     null
   );
+  const [pendingRequest, setPendingRequest] = useState<{
+    uid: string;
+    name: string;
+    source: 'search' | 'suggested';
+  } | null>(null);
 
   /**
    * A search hit is not necessarily a stranger. Without this, someone you're
@@ -343,21 +348,25 @@ export default function FriendsScreen() {
     });
   }
 
-  async function handleSend(toUid: string, source: 'search' | 'suggested') {
-    if (!currentUser) return;
-    markPending(toUid, true);
+  // Sending and removing both confirm first (accepting/declining/cancelling
+  // don't — those already read as a direct response to something).
+  async function handleConfirmSend() {
+    const target = pendingRequest;
+    if (!currentUser || !target) return;
+    markPending(target.uid, true);
     try {
-      await sendFriendRequest(currentUser.uid, toUid);
-      track('friend_request_sent', { source });
-      if (source === 'search') {
-        setSentTo((current) => new Set(current).add(toUid));
+      await sendFriendRequest(currentUser.uid, target.uid);
+      track('friend_request_sent', { source: target.source });
+      if (target.source === 'search') {
+        setSentTo((current) => new Set(current).add(target.uid));
       } else {
-        setSuggested((current) => current.filter((item) => item.profile.uid !== toUid));
+        setSuggested((current) => current.filter((item) => item.profile.uid !== target.uid));
       }
+      setPendingRequest(null);
     } catch {
-      // Leave the button re-enabled so the user can retry.
+      // Leave the dialog open so the request can be retried.
     } finally {
-      markPending(toUid, false);
+      markPending(target.uid, false);
     }
   }
 
@@ -461,7 +470,7 @@ export default function FriendsScreen() {
           relationshipByUid={relationshipByUid}
           palette={palette}
           onOpen={openProfile}
-          onSend={(uid) => handleSend(uid, 'search')}
+          onSend={(uid, name) => setPendingRequest({ uid, name, source: 'search' })}
         />
       ) : tab === 'friends' ? (
         <FriendsList
@@ -506,12 +515,22 @@ export default function FriendsScreen() {
           hasClasses={myClasses.length > 0}
           onRetry={loadSuggested}
           onOpen={openProfile}
-          onSend={(uid) => handleSend(uid, 'suggested')}
+          onSend={(uid, name) => setPendingRequest({ uid, name, source: 'suggested' })}
         />
       )}
       </ScreenTransition>
 
       <View style={{ height: insets.bottom }} />
+
+      <ConfirmDialog
+        visible={!!pendingRequest}
+        title={`Send ${pendingRequest?.name ?? 'this student'} a study buddy request?`}
+        body="They'll see your request and can accept or ignore it."
+        confirmLabel="Send request"
+        loading={!!pendingRequest && pendingUids.has(pendingRequest.uid)}
+        onConfirm={handleConfirmSend}
+        onCancel={() => setPendingRequest(null)}
+      />
 
       <ConfirmDialog
         visible={!!pendingRemoval}
@@ -837,7 +856,7 @@ function SuggestedList({
   hasClasses: boolean;
   onRetry: () => void;
   onOpen: (uid: string) => void;
-  onSend: (uid: string) => void;
+  onSend: (uid: string, name: string) => void;
 }) {
   if (state !== 'ready') {
     return <LoadingOrError state={state} palette={palette} onRetry={onRetry} />;
@@ -876,7 +895,7 @@ function SuggestedList({
               label="Add"
               size="sm"
               disabled={pendingUids.has(item.profile.uid)}
-              onPress={() => onSend(item.profile.uid)}
+              onPress={() => onSend(item.profile.uid, name)}
             />
           </Pressable>
         );
@@ -913,7 +932,7 @@ function SearchResults({
   relationshipByUid: Map<string, FriendStatus>;
   palette: Palette;
   onOpen: (uid: string) => void;
-  onSend: (uid: string) => void;
+  onSend: (uid: string, name: string) => void;
 }) {
   if (state === 'loading') {
     return (
@@ -976,7 +995,7 @@ function SearchResults({
                 size="sm"
                 variant={relationship === 'none' ? 'primary' : 'secondary'}
                 disabled={relationship !== 'none' || pendingUids.has(item.uid)}
-                onPress={() => onSend(item.uid)}
+                onPress={() => onSend(item.uid, item.displayName || 'this student')}
               />
             )}
           </Pressable>

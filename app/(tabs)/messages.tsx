@@ -1,5 +1,5 @@
-import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -7,13 +7,22 @@ import { Avatar } from '@/components/ui/Avatar';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
+import {
+  PullToRefreshIndicator,
+  usePullToRefreshDistance,
+} from '@/components/ui/PullToRefreshIndicator';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
-import { subscribeToUserConversations, type ConversationListItem } from '@/lib/firestore';
+import {
+  getBlockedUserIds,
+  subscribeToUserConversations,
+  type ConversationListItem,
+} from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
 function formatTimestamp(value: unknown) {
@@ -36,8 +45,10 @@ export default function MessagesScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const { onPullScroll, pullDistance } = usePullToRefreshDistance();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
+  const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -51,6 +62,37 @@ export default function MessagesScreen() {
 
     return unsubscribe;
   }, []);
+
+  // A block is written outside the conversations collection, so its snapshot
+  // cannot update this list by itself. Re-read when the tab regains focus —
+  // including after returning from a conversation, profile, or report sheet.
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      if (!currentUser) {
+        setBlockedUserIds([]);
+        return () => {
+          active = false;
+        };
+      }
+
+      void getBlockedUserIds(currentUser.uid)
+        .then((ids) => {
+          if (active) {
+            setBlockedUserIds(ids);
+          }
+        })
+        .catch(() => {
+          // Leave the thread list usable if this supporting status read is
+          // temporarily unavailable; the next focused visit retries it.
+        });
+
+      return () => {
+        active = false;
+      };
+    }, [currentUser])
+  );
 
   useEffect(() => {
     if (!currentUser) {
@@ -110,118 +152,141 @@ export default function MessagesScreen() {
   }, [conversations, searchQuery]);
 
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      // Rows and the clear control stay tappable in one tap while the search
-      // keyboard is open.
-      keyboardShouldPersistTaps="handled"
-      refreshControl={
-        <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
-      }
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
-      <ScreenHeader
-        showNotifications
-        title="Messages"
-      />
-
-      <ScreenTransition style={styles.transition}>
-      {conversations.length > 0 ? (
-        <SearchBar
-          accessibilityLabel="Search messages"
-          clearAccessibilityLabel="Clear message search"
-          onChangeText={setSearchQuery}
-          placeholder="Search messages"
-          value={searchQuery}
-        />
-      ) : null}
-
-      {isLoading ? (
-        <LoadingState title="Loading conversations" />
-      ) : errorMessage ? (
-        <ErrorState body={errorMessage} onRetry={handleRefresh} />
-      ) : conversations.length > 0 ? (
-        visibleConversations.length > 0 ? (
-          <View>
-            {visibleConversations.map((conversation, index) => {
-              const otherName = conversation.otherParticipant?.displayName || 'Student';
-
-              return (
-                <Pressable
-                  key={conversation.conversationId}
-                  accessibilityRole="button"
-                  onPress={() =>
-                    router.push({
-                      pathname: '/conversation/[conversationId]',
-                      params: {
-                        conversationId: conversation.conversationId,
-                        otherUserId: conversation.otherParticipant?.uid ?? '',
-                        otherUserName: otherName,
-                      },
-                    })
-                  }
-                  style={({ pressed }) => [
-                    styles.threadRow,
-                    index > 0 && {
-                      borderTopColor: palette.border,
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                    },
-                    { opacity: pressed ? 0.7 : 1 },
-                  ]}>
-                  <Avatar name={otherName} size="md" />
-                  <View style={styles.threadBody}>
-                    <View style={styles.threadHeader}>
-                      <Text
-                        style={[
-                          TypeScale.bodyStrong,
-                          styles.threadName,
-                          { color: palette.primaryText },
-                        ]}
-                        numberOfLines={1}>
-                        {otherName}
-                      </Text>
-                      <Text
-                        // Metadata is capped so a scaled timestamp cannot eat
-                        // the row and starve the name at accessibility sizes.
-                        maxFontSizeMultiplier={1.6}
-                        style={[
-                          TypeScale.meta,
-                          styles.threadTimestamp,
-                          { color: palette.secondaryText },
-                        ]}
-                        numberOfLines={1}>
-                        {formatTimestamp(conversation.lastMessageAt || conversation.updatedAt)}
-                      </Text>
-                    </View>
-                    <Text
-                      style={[TypeScale.body, { color: palette.secondaryText }]}
-                      numberOfLines={1}>
-                      {conversation.lastMessagePreview || 'Say hi before you arrive.'}
-                    </Text>
-                  </View>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : (
-          <EmptyState
-            icon="chat"
-            headline="No matching conversations"
-            body={`Nothing matches “${searchQuery.trim()}”.`}
-            actionLabel="Clear search"
-            onAction={() => setSearchQuery('')}
+    <View style={[styles.screen, { backgroundColor: palette.background }]}>
+      <ScrollView
+        onScroll={onPullScroll}
+        scrollEventThrottle={16}
+        style={styles.screen}
+        // Rows and the clear control stay tappable in one tap while the search
+        // keyboard is open.
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            colors={['transparent']}
+            progressBackgroundColor="transparent"
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor="transparent"
           />
-        )
-      ) : (
-        <EmptyState
-          icon="chat"
-          headline="No messages yet"
-          body="Open a session and tap Message to start a chat with the host."
-          actionLabel="Find a session"
-          onAction={() => router.push('/sessions')}
-        />
-      )}
-      </ScreenTransition>
-    </ScrollView>
+        }
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
+        <ScreenHeader showNotifications title="Messages" />
+
+        <ScreenTransition style={styles.transition}>
+          {conversations.length > 0 ? (
+            <SearchBar
+              accessibilityLabel="Search messages"
+              clearAccessibilityLabel="Clear message search"
+              onChangeText={setSearchQuery}
+              placeholder="Search messages"
+              value={searchQuery}
+            />
+          ) : null}
+
+          {isLoading ? (
+            <LoadingState title="Loading conversations" />
+          ) : errorMessage ? (
+            <ErrorState body={errorMessage} onRetry={handleRefresh} />
+          ) : conversations.length > 0 ? (
+            visibleConversations.length > 0 ? (
+              <View>
+                {visibleConversations.map((conversation, index) => {
+                  const otherName = conversation.otherParticipant?.displayName || 'Student';
+                  const isBlocked = !!conversation.otherParticipant?.uid &&
+                    blockedUserIds.includes(conversation.otherParticipant.uid);
+
+                  return (
+                    <Pressable
+                      key={conversation.conversationId}
+                      accessibilityLabel={
+                        isBlocked ? `Conversation with ${otherName}, blocked` : `Conversation with ${otherName}`
+                      }
+                      accessibilityRole="button"
+                      onPress={() =>
+                        router.push({
+                          pathname: '/conversation/[conversationId]',
+                          params: {
+                            conversationId: conversation.conversationId,
+                            otherUserId: conversation.otherParticipant?.uid ?? '',
+                            otherUserName: otherName,
+                          },
+                        })
+                      }
+                      style={({ pressed }) => [
+                        styles.threadRow,
+                        index > 0 && {
+                          borderTopColor: palette.border,
+                          borderTopWidth: StyleSheet.hairlineWidth,
+                        },
+                        { opacity: pressed ? 0.7 : 1 },
+                      ]}>
+                      <Avatar name={otherName} size="md" />
+                      <View style={styles.threadBody}>
+                        <View style={styles.threadHeader}>
+                          <Text
+                            style={[
+                              TypeScale.bodyStrong,
+                              styles.threadName,
+                              { color: palette.primaryText },
+                            ]}
+                            numberOfLines={1}>
+                            {otherName}
+                          </Text>
+                          <Text
+                            // Metadata is capped so a scaled timestamp cannot eat
+                            // the row and starve the name at accessibility sizes.
+                            maxFontSizeMultiplier={1.6}
+                            style={[
+                              TypeScale.meta,
+                              styles.threadTimestamp,
+                              { color: palette.secondaryText },
+                            ]}
+                            numberOfLines={1}>
+                            {formatTimestamp(
+                              conversation.lastMessageAt || conversation.updatedAt
+                            )}
+                          </Text>
+                        </View>
+                        <View style={styles.threadPreview}>
+                          {isBlocked ? (
+                            <IconSymbol color={palette.tint} name="nosign" size={15} />
+                          ) : null}
+                          <Text
+                            style={[
+                              TypeScale.body,
+                              { color: isBlocked ? palette.tint : palette.secondaryText },
+                            ]}
+                            numberOfLines={1}>
+                            {isBlocked ? 'Blocked' : conversation.lastMessagePreview || 'Say hi before you arrive.'}
+                          </Text>
+                        </View>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : (
+              <EmptyState
+                icon="chat"
+                headline="No matching conversations"
+                body={`Nothing matches “${searchQuery.trim()}”.`}
+                actionLabel="Clear search"
+                onAction={() => setSearchQuery('')}
+              />
+            )
+          ) : (
+            <EmptyState
+              icon="chat"
+              headline="No messages yet"
+              body="Open a session and tap Message to start a chat with the host."
+              actionLabel="Find a session"
+              onAction={() => router.push('/sessions')}
+            />
+          )}
+        </ScreenTransition>
+      </ScrollView>
+      <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
+    </View>
   );
 }
 
@@ -252,6 +317,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Space.sm,
     justifyContent: 'space-between',
+  },
+  threadPreview: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.xs + 2,
+    minWidth: 0,
   },
   threadName: {
     flexShrink: 1,

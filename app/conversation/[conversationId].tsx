@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,16 +12,28 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { IconButton } from '@/components/ui/IconButton';
+import {
+  PullToRefreshIndicator,
+  usePullToRefreshDistance,
+} from '@/components/ui/PullToRefreshIndicator';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
+import {
+  acceptFriendRequest,
+  cancelFriendRequest,
+  getFriendStatus,
+  removeFriend,
+  sendFriendRequest,
+  type FriendStatus,
+} from '@/lib/friends';
 import {
   blockUser,
   getBlockedUserIds,
@@ -32,6 +44,7 @@ import {
   unblockUser,
   type ConversationMessage,
 } from '@/lib/firestore';
+import { getReportedUserIds } from '@/lib/reported-users';
 import type { User } from 'firebase/auth';
 
 function toDate(value: unknown): Date | null {
@@ -95,7 +108,15 @@ export default function ConversationScreen() {
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [isBlockedByOther, setIsBlockedByOther] = useState(false);
   const [confirmBlock, setConfirmBlock] = useState(false);
+  const [confirmUnblock, setConfirmUnblock] = useState(false);
+  const [isUnblocking, setIsUnblocking] = useState(false);
+  const [reportedUserIds, setReportedUserIds] = useState<string[]>([]);
+  const [confirmAddFriend, setConfirmAddFriend] = useState(false);
+  const [confirmRemoveFriend, setConfirmRemoveFriend] = useState(false);
   const [isBlocking, setIsBlocking] = useState(false);
+  const [friendStatus, setFriendStatus] = useState<FriendStatus>('none');
+  const [isFriendActionPending, setIsFriendActionPending] = useState(false);
+  const { onPullScroll, pullDistance } = usePullToRefreshDistance();
   // Opening from a notification or push link carries no name/id params, so the
   // thread resolves its own partner rather than falling back to "Student".
   const [resolvedPartner, setResolvedPartner] = useState<{
@@ -162,26 +183,76 @@ export default function ConversationScreen() {
     return unsubscribe;
   }, [conversationId, currentUser, partnerName, refreshNonce]);
 
-  useEffect(() => {
-    async function loadBlocks() {
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
       if (!currentUser) {
         setBlockedUserIds([]);
         setIsBlockedByOther(false);
+        setFriendStatus('none');
         isRefreshingRef.current = false;
         setIsRefreshing(false);
+        return () => {
+          active = false;
+        };
+      }
+
+      // Profile and report actions can change a block while this conversation
+      // is behind an overlay. Refresh on focus so its composer and safety
+      // controls never describe the old relationship.
+      void Promise.all([
+        getBlockedUserIds(currentUser.uid),
+        partnerId ? isBlockedByUser(currentUser.uid, partnerId) : false,
+      ])
+        .then(([loadedBlockedUserIds, blockedByOther]) => {
+          if (active) {
+            setBlockedUserIds(loadedBlockedUserIds);
+            setIsBlockedByOther(blockedByOther);
+          }
+        })
+        .catch(() => {
+          // Preserve the last known state if the supporting block read fails.
+        });
+
+      return () => {
+        active = false;
+      };
+    }, [currentUser, partnerId])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      if (!currentUser || !partnerId) {
+        setFriendStatus('none');
         return;
       }
 
-      const [loadedBlockedUserIds, blockedByOther] = await Promise.all([
-        getBlockedUserIds(currentUser.uid),
-        partnerId ? isBlockedByUser(currentUser.uid, partnerId) : false,
-      ]);
-      setBlockedUserIds(loadedBlockedUserIds);
-      setIsBlockedByOther(blockedByOther);
-    }
+      void getFriendStatus(currentUser.uid, partnerId)
+        .then((relationship) => {
+          if (active) {
+            setFriendStatus(relationship);
+          }
+        })
+        .catch(() => {
+          // Messaging remains available if the relationship badge cannot load.
+        });
 
-    loadBlocks();
-  }, [currentUser, partnerId, refreshNonce]);
+      // Re-read on focus so the indicator is already correct when the report
+      // screen closes and hands this screen back.
+      void getReportedUserIds().then((ids) => {
+        if (active) {
+          setReportedUserIds(ids);
+        }
+      });
+
+      return () => {
+        active = false;
+      };
+    }, [currentUser, partnerId])
+  );
 
   async function handleSendMessage() {
     if (!currentUser || !conversationId) {
@@ -212,7 +283,11 @@ export default function ConversationScreen() {
       track('user_blocked', { context: 'conversation' });
       setBlockedUserIds((currentIds) => [...new Set([...currentIds, partnerId])]);
       setConfirmBlock(false);
-      router.replace('/messages');
+      // Pop back to the existing Messages tab whenever it is in the stack;
+      // only deep links fall back to replacing the current route. `replace`
+      // unconditionally created duplicate tab entries, which made Back feel
+      // unpredictable after blocking someone.
+      router.dismissTo('/messages');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to block this user.';
       Alert.alert('Block Error', message);
@@ -227,12 +302,93 @@ export default function ConversationScreen() {
     }
 
     try {
+      setIsUnblocking(true);
       await unblockUser(currentUser.uid, partnerId);
       track('user_unblocked', { context: 'conversation' });
       setBlockedUserIds((currentIds) => currentIds.filter((id) => id !== partnerId));
+      setConfirmUnblock(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to unblock this user.';
       Alert.alert('Unblock Error', message);
+    } finally {
+      setIsUnblocking(false);
+    }
+  }
+
+  async function handleFriendAction() {
+    if (!currentUser || !partnerId || isFriendActionPending) {
+      return;
+    }
+
+    // Adding and removing both confirm first; accepting an incoming request
+    // or cancelling one you just sent doesn't need to ask again.
+    if (friendStatus === 'friends') {
+      setConfirmRemoveFriend(true);
+      return;
+    }
+    if (friendStatus === 'none') {
+      setConfirmAddFriend(true);
+      return;
+    }
+
+    try {
+      setIsFriendActionPending(true);
+
+      if (friendStatus === 'incoming') {
+        await acceptFriendRequest(currentUser.uid, partnerId);
+        setFriendStatus('friends');
+        track('friend_request_accepted', { source: 'conversation' });
+      } else {
+        await cancelFriendRequest(currentUser.uid, partnerId);
+        setFriendStatus('none');
+        track('friend_request_cancelled', { source: 'conversation' });
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to update this study buddy.';
+      Alert.alert('Study Buddy Error', message);
+    } finally {
+      setIsFriendActionPending(false);
+    }
+  }
+
+  async function handleConfirmAddFriend() {
+    if (!currentUser || !partnerId) {
+      return;
+    }
+
+    try {
+      setIsFriendActionPending(true);
+      await sendFriendRequest(currentUser.uid, partnerId);
+      setFriendStatus('outgoing');
+      setConfirmAddFriend(false);
+      track('friend_request_sent', { source: 'conversation' });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to send that request.';
+      Alert.alert('Study Buddy Error', message);
+    } finally {
+      setIsFriendActionPending(false);
+    }
+  }
+
+  async function handleRemoveFriend() {
+    if (!currentUser || !partnerId) {
+      return;
+    }
+
+    try {
+      setIsFriendActionPending(true);
+      await removeFriend(currentUser.uid, partnerId);
+      setFriendStatus('none');
+      setConfirmRemoveFriend(false);
+      track('friend_removed', { source: 'conversation' });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to remove this study buddy.';
+      Alert.alert('Study Buddy Error', message);
+    } finally {
+      setIsFriendActionPending(false);
     }
   }
 
@@ -248,8 +404,17 @@ export default function ConversationScreen() {
   }
 
   const hasBlockedOther = !!partnerId && blockedUserIds.includes(partnerId);
+  const hasReportedOther = !!partnerId && reportedUserIds.includes(partnerId);
   const isMessagingDisabled = hasBlockedOther || isBlockedByOther;
   const canSend = !isSending && !isMessagingDisabled && draft.trim().length > 0;
+  const friendActionLabel =
+    friendStatus === 'friends'
+      ? `Remove ${partnerName || 'student'} as a study buddy`
+      : friendStatus === 'incoming'
+        ? `Accept ${partnerName || 'student'}'s study buddy request`
+        : friendStatus === 'outgoing'
+          ? `Cancel study buddy request to ${partnerName || 'student'}`
+          : `Add ${partnerName || 'student'} as a study buddy`;
 
   return (
     <KeyboardAvoidingView
@@ -258,20 +423,56 @@ export default function ConversationScreen() {
       style={[styles.screen, { backgroundColor: palette.background }]}>
       {/* Identity strip under the nav header — sans-only utility surface. */}
       <View style={[styles.identityBar, { borderBottomColor: palette.border }]}>
-        <Avatar name={partnerName || 'Student'} size="sm" verified />
-        <View style={styles.identityText}>
-          <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
-            {partnerName || 'Student'}
-          </Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-            {status}
-          </Text>
-        </View>
-        {/* Grouped so the two safety actions sit together at the same rhythm as
-            every other header action row in the app. */}
+        <Pressable
+          accessibilityLabel={`View ${partnerName || 'student'}'s profile`}
+          accessibilityRole="button"
+          disabled={!partnerId}
+          onPress={() => router.push(`/user/${partnerId}`)}
+          style={({ pressed }) => [
+            styles.identityProfile,
+            { opacity: pressed ? 0.58 : 1 },
+          ]}>
+          <Avatar name={partnerName || 'Student'} size="sm" verified />
+          <View style={styles.identityText}>
+            <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
+              {partnerName || 'Student'}
+            </Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+              {status}
+            </Text>
+          </View>
+        </Pressable>
+        {/* Social action first, followed by the same safety actions used on
+            public profiles. */}
         <View style={styles.identityActions}>
+          {!isBlockedByOther && !hasBlockedOther && friendStatus !== 'self' ? (
+            <IconButton
+              accessibilityLabel={friendActionLabel}
+              disabled={!partnerId}
+              // Same glyph family everywhere a buddy relationship is
+              // acted on (see components/ui/icon-symbol.tsx): a plus badge
+              // adds, a minus badge removes. Only the badge changes.
+              icon={
+                friendStatus === 'friends' || friendStatus === 'outgoing'
+                  ? 'person.badge.minus'
+                  : 'person.badge.plus'
+              }
+              loading={isFriendActionPending}
+              onPress={handleFriendAction}
+              selected={friendStatus === 'friends' || friendStatus === 'outgoing'}
+              tone={friendStatus === 'incoming' ? 'accent' : 'default'}
+            />
+          ) : null}
+          {/* `selected` tints the control so an already-reported or
+              already-blocked person is obvious at a glance, instead of the
+              icons looking identical whether or not you've acted. */}
           <IconButton
-            accessibilityLabel={`Report ${partnerName || 'student'}`}
+            accessibilityLabel={
+              hasReportedOther
+                ? `${partnerName || 'Student'} reported. Report again`
+                : `Report ${partnerName || 'student'}`
+            }
+            disabled={!partnerId}
             icon="exclamationmark.triangle"
             onPress={() =>
               router.push({
@@ -283,16 +484,20 @@ export default function ConversationScreen() {
                 },
               })
             }
+            selected={hasReportedOther}
           />
           {!isBlockedByOther ? (
             <IconButton
               accessibilityLabel={
                 hasBlockedOther
-                  ? `Unblock ${partnerName || 'student'}`
+                  ? `${partnerName || 'Student'} blocked. Unblock them`
                   : `Block ${partnerName || 'student'}`
               }
               icon="nosign"
-              onPress={hasBlockedOther ? handleUnblockUser : () => setConfirmBlock(true)}
+              onPress={() =>
+                hasBlockedOther ? setConfirmUnblock(true) : setConfirmBlock(true)
+              }
+              selected={hasBlockedOther}
               tone={hasBlockedOther ? 'accent' : 'default'}
             />
           ) : null}
@@ -301,9 +506,17 @@ export default function ConversationScreen() {
 
       <ScrollView
         style={styles.thread}
+        onScroll={onPullScroll}
         refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+          <RefreshControl
+            colors={['transparent']}
+            progressBackgroundColor="transparent"
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor="transparent"
+          />
         }
+        scrollEventThrottle={16}
         contentContainerStyle={styles.threadContent}>
         {messages.length > 0 ? (
           messages.map((message, index) => {
@@ -365,6 +578,7 @@ export default function ConversationScreen() {
           </View>
         )}
       </ScrollView>
+      <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
 
       <View
         style={[
@@ -423,6 +637,33 @@ export default function ConversationScreen() {
         onConfirm={handleBlockUser}
         onCancel={() => setConfirmBlock(false)}
       />
+      <ConfirmDialog
+        visible={confirmUnblock}
+        title={`Unblock ${partnerName || 'this student'}?`}
+        body="They'll be able to message you and see you in sessions again."
+        confirmLabel="Unblock"
+        loading={isUnblocking}
+        onConfirm={handleUnblockUser}
+        onCancel={() => setConfirmUnblock(false)}
+      />
+      <ConfirmDialog
+        visible={confirmAddFriend}
+        title={`Send ${partnerName || 'this student'} a study buddy request?`}
+        body="They'll see your request and can accept or ignore it."
+        confirmLabel="Send request"
+        loading={isFriendActionPending}
+        onConfirm={handleConfirmAddFriend}
+        onCancel={() => setConfirmAddFriend(false)}
+      />
+      <ConfirmDialog
+        visible={confirmRemoveFriend}
+        title={`Remove ${partnerName || 'this student'}?`}
+        body="You'll both stop being study buddies. You can send a new request later."
+        confirmLabel="Remove"
+        loading={isFriendActionPending}
+        onConfirm={handleRemoveFriend}
+        onCancel={() => setConfirmRemoveFriend(false)}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -442,11 +683,20 @@ const styles = StyleSheet.create({
     gap: 1,
     minWidth: 0,
   },
+  identityProfile: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: Space.md,
+    minWidth: 0,
+  },
   identityActions: {
     alignItems: 'center',
     flexDirection: 'row',
     flexShrink: 0,
-    gap: Space.xs,
+    // Three full-size utility targets need to stay compact enough that the
+    // person and status copy never collapse into a hanging fragment.
+    gap: 0,
   },
   thread: {
     flex: 1,

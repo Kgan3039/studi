@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { User } from 'firebase/auth';
 
@@ -45,6 +45,7 @@ export default function PublicProfileScreen() {
   const [myClasses, setMyClasses] = useState<string[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [status, setStatus] = useState<FriendStatus>('none');
+  const [confirmAdd, setConfirmAdd] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmBlock, setConfirmBlock] = useState(false);
   const [loadState, setLoadState] = useState<LoadState>('loading');
@@ -114,12 +115,11 @@ export default function PublicProfileScreen() {
     if (!currentUser || !userId) return;
 
     // A pending request in either direction has its own resolution — you can
-    // never "add" someone you already have a relationship with.
+    // never "add" someone you already have a relationship with. Adding and
+    // removing both confirm first; cancelling a request you just sent is the
+    // one reversal that doesn't need to ask again.
     if (status === 'none') {
-      runAction(async () => {
-        await sendFriendRequest(currentUser.uid, userId);
-        track('friend_request_sent', { source: 'profile' });
-      }, 'outgoing');
+      setConfirmAdd(true);
     } else if (status === 'outgoing') {
       runAction(async () => {
         await cancelFriendRequest(currentUser.uid, userId);
@@ -128,6 +128,15 @@ export default function PublicProfileScreen() {
     } else if (status === 'friends') {
       setConfirmRemove(true);
     }
+  }
+
+  function handleConfirmAdd() {
+    if (!currentUser || !userId) return;
+    runAction(async () => {
+      await sendFriendRequest(currentUser.uid, userId);
+      track('friend_request_sent', { source: 'profile' });
+      setConfirmAdd(false);
+    }, 'outgoing');
   }
 
   function handleAcceptRequest() {
@@ -288,7 +297,11 @@ export default function PublicProfileScreen() {
             </View>
           ) : (
             <Button
-              icon={status === 'friends' ? 'checkmark.circle.fill' : 'person.badge.plus'}
+              icon={
+                status === 'friends' || status === 'outgoing'
+                  ? 'person.badge.minus'
+                  : 'person.badge.plus'
+              }
               label={friendActionLabel[status]}
               variant="secondary"
               fullWidth
@@ -297,13 +310,33 @@ export default function PublicProfileScreen() {
             />
           )}
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Block ${name}`}
-            onPress={() => setConfirmBlock(true)}
-            style={({ pressed }) => [styles.blockLink, { opacity: pressed ? 0.5 : 1 }]}>
-            <Text style={[TypeScale.label, { color: palette.icon }]}>Block {name}</Text>
-          </Pressable>
+          {/* Match the conversation header's familiar safety icons, but keep
+              text labels here because a profile has room for explicit actions. */}
+          <View style={styles.safetyActions}>
+            <Button
+              icon="exclamationmark.triangle"
+              label="Report"
+              onPress={() =>
+                router.push({
+                  pathname: '/report-user',
+                  params: {
+                    reportedUserId: userId,
+                    reportedUserName: name,
+                    context: 'profile',
+                  },
+                })
+              }
+              style={styles.safetyAction}
+              variant="secondary"
+            />
+            <Button
+              icon="nosign"
+              label="Block"
+              onPress={() => setConfirmBlock(true)}
+              style={styles.safetyAction}
+              variant="secondary"
+            />
+          </View>
         </View>
       ) : (
         <Text style={[TypeScale.caption, styles.selfNote, { color: palette.icon }]}>
@@ -324,6 +357,16 @@ export default function PublicProfileScreen() {
         </View>
       ) : null}
       </ScreenTransition>
+
+      <ConfirmDialog
+        visible={confirmAdd}
+        title={`Send ${name} a study buddy request?`}
+        body="They'll see your request and can accept or ignore it."
+        confirmLabel="Send request"
+        loading={actionPending}
+        onConfirm={handleConfirmAdd}
+        onCancel={() => setConfirmAdd(false)}
+      />
 
       <ConfirmDialog
         visible={confirmRemove}
@@ -385,10 +428,13 @@ const styles = StyleSheet.create({
   requestAction: {
     flex: 1,
   },
-  blockLink: {
-    alignItems: 'center',
-    minHeight: 44,
-    justifyContent: 'center',
+  safetyActions: {
+    flexDirection: 'row',
+    gap: Space.sm,
+    marginTop: Space.xs,
+  },
+  safetyAction: {
+    flex: 1,
   },
   selfNote: {
     textAlign: 'center',

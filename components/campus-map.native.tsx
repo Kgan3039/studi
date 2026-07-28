@@ -1,7 +1,7 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import MapView, { Marker, type LatLng } from 'react-native-maps';
+import MapView, { Marker, type LatLng, type MapPressEvent } from 'react-native-maps';
 
 import {
   Brand,
@@ -26,6 +26,7 @@ import type { MapSessionTiming } from '@/components/campus-map.types';
 type CampusMapProps = {
   locations: StudyLocation[];
   onOpenCampusMap: () => void;
+  onOpenLocation: (locationId: string) => void;
   onSelectLocation: (locationId: string) => void;
   selectedLocationId: string | null;
   sessionTimingByLocation: Map<string, MapSessionTiming>;
@@ -137,9 +138,11 @@ const CampusMapMarker = memo(function CampusMapMarker({
   const handlePress = useCallback(() => {
     // Hidden markers are relocated off-campus and never selectable, but keep
     // the guard so a tap racing a visibility change cannot select one.
-    if (isVisible) {
-      onSelectLocation(location.locationId);
+    if (!isVisible) {
+      return;
     }
+
+    onSelectLocation(location.locationId);
   }, [isVisible, location.locationId, onSelectLocation]);
 
   return (
@@ -193,6 +196,7 @@ const CampusMapMarker = memo(function CampusMapMarker({
 export function CampusMap({
   locations,
   onOpenCampusMap,
+  onOpenLocation,
   onSelectLocation,
   selectedLocationId,
   sessionTimingByLocation,
@@ -203,6 +207,9 @@ export function CampusMap({
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const [isMapReady, setIsMapReady] = useState(false);
+  const lastMarkerTapRef = useRef<{ locationId: string; time: number } | null>(null);
+  const lastOpenRef = useRef<{ locationId: string; time: number } | null>(null);
+  const selectedLocationIdRef = useRef(selectedLocationId);
 
   // One entry per canonical location id, in canonical-id order, valid
   // coordinates only — MapView's direct children are exactly this list and
@@ -217,6 +224,78 @@ export function CampusMap({
         }
       ),
     [locations]
+  );
+  const selectedLocation =
+    markers.find(
+      ({ location }) =>
+        location.locationId === selectedLocationId &&
+        visibleLocationIds.has(location.locationId)
+    )?.location ?? null;
+
+  useEffect(() => {
+    selectedLocationIdRef.current = selectedLocationId;
+  }, [selectedLocationId]);
+
+  const openLocationOnce = useCallback(
+    (locationId: string) => {
+      const now = Date.now();
+      const previous = lastOpenRef.current;
+
+      if (previous?.locationId === locationId && now - previous.time < 280) {
+        return;
+      }
+
+      lastOpenRef.current = { locationId, time: now };
+      onOpenLocation(locationId);
+    },
+    [onOpenLocation]
+  );
+
+  const handleMarkerTap = useCallback(
+    (locationId: string) => {
+      const now = Date.now();
+      const previous = lastMarkerTapRef.current;
+
+      selectedLocationIdRef.current = locationId;
+
+      if (previous?.locationId === locationId && now - previous.time <= 500) {
+        lastMarkerTapRef.current = null;
+        openLocationOnce(locationId);
+        return;
+      }
+
+      lastMarkerTapRef.current = { locationId, time: now };
+      onSelectLocation(locationId);
+    },
+    [onSelectLocation, openLocationOnce]
+  );
+
+  const handleMapDoublePress = useCallback(
+    (event: MapPressEvent) => {
+      const locationId = selectedLocationIdRef.current;
+      const selectedMarker = markers.find(
+        ({ location }) => location.locationId === locationId
+      );
+
+      if (!locationId || !selectedMarker) {
+        return;
+      }
+
+      const { coordinate } = event.nativeEvent;
+      const latitudeDistance = Math.abs(
+        coordinate.latitude - selectedMarker.coordinate.latitude
+      );
+      const longitudeDistance = Math.abs(
+        coordinate.longitude - selectedMarker.coordinate.longitude
+      );
+
+      // The map may receive the second tap instead of the custom Marker. Only
+      // claim it when it landed close to the already-selected pin.
+      if (latitudeDistance <= 0.0015 && longitudeDistance <= 0.002) {
+        openLocationOnce(locationId);
+      }
+    },
+    [markers, openLocationOnce]
   );
 
   // Same-length, same-order, same-key list on every render: hidden markers
@@ -307,6 +386,7 @@ export function CampusMap({
         maxZoomLevel={19}
         minZoomLevel={12}
         moveOnMarkerPress={false}
+        onDoublePress={handleMapDoublePress}
         onMapReady={() => setIsMapReady(true)}
         pitchEnabled={false}
         rotateEnabled={false}
@@ -316,7 +396,8 @@ export function CampusMap({
         showsPointsOfInterest
         style={StyleSheet.absoluteFill}
         toolbarEnabled={false}
-        userInterfaceStyle={colorScheme}>
+        userInterfaceStyle={colorScheme}
+        zoomTapEnabled={false}>
         {markerPlan.markers.map(({ canonicalId, isVisible, location, renderCoordinate }) => (
           <CampusMapMarker
             key={canonicalId}
@@ -324,7 +405,7 @@ export function CampusMap({
             isSelected={selectedLocationId === location.locationId}
             isVisible={isVisible}
             location={location}
-            onSelectLocation={onSelectLocation}
+            onSelectLocation={handleMarkerTap}
             palette={palette}
             sessionCount={sessionsByLocation.get(location.locationId) ?? 0}
             timing={sessionTimingByLocation.get(location.locationId) ?? 'none'}
@@ -345,6 +426,33 @@ export function CampusMap({
             Clear search or try another filter.
           </Text>
         </View>
+      ) : null}
+
+      {selectedLocation ? (
+        <Pressable
+          accessibilityHint="Opens the spot in the list below"
+          accessibilityLabel={`View details for ${selectedLocation.name}`}
+          accessibilityRole="button"
+          onPress={() => openLocationOnce(selectedLocation.locationId)}
+          style={({ pressed }) => [
+            styles.selectedLabel,
+            Elevation.e2,
+            {
+              backgroundColor: palette.surface,
+              borderColor: palette.border,
+              opacity: pressed ? 0.78 : 1,
+            },
+          ]}>
+          <View style={styles.selectedLabelCopy}>
+            <Text numberOfLines={1} style={[TypeScale.label, { color: palette.text }]}>
+              {selectedLocation.name}
+            </Text>
+            <Text numberOfLines={1} style={[TypeScale.caption, { color: palette.icon }]}>
+              Double-tap pin for details
+            </Text>
+          </View>
+          <MaterialIcons color={palette.icon} name="chevron-right" size={20} />
+        </Pressable>
       ) : null}
 
       <Pressable
@@ -415,6 +523,24 @@ const styles = StyleSheet.create({
     height: 44,
     justifyContent: 'center',
     width: 44,
+  },
+  selectedLabel: {
+    alignItems: 'center',
+    borderRadius: Radius.md,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flexDirection: 'row',
+    gap: Space.sm,
+    left: Space.md,
+    minHeight: 48,
+    paddingHorizontal: Space.md,
+    position: 'absolute',
+    right: Space.md,
+    top: Space.md,
+  },
+  selectedLabelCopy: {
+    flex: 1,
+    gap: 1,
+    minWidth: 0,
   },
   uwMapButton: {
     alignItems: 'center',

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,12 +13,12 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
+import { FieldLabel, FormSection } from '@/components/ui/FormSection';
 import { FilterChip } from '@/components/ui/FilterChip';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { ScreenTransition } from '@/components/ui/ScreenTransition';
-import { Brand, Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
+import { useOverlayEntrance } from '@/components/ui/overlay-motion';
+import { Brand, Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
 import { LOCATION_RATING_TAG_GROUPS } from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -34,14 +36,15 @@ export default function RateLocationScreen() {
   const palette = Colors[colorScheme];
   const isDark = colorScheme === 'dark';
   const insets = useSafeAreaInsets();
-  const starActiveColor = isDark ? '#D9A45C' : Brand.warning;
+  const starActiveColor = isDark ? Brand.starDark : Brand.star;
+  // Presented as a transparentModal route, so it drives its own entrance.
+  const { panelStyle, scrimStyle } = useOverlayEntrance(true);
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authResolved, setAuthResolved] = useState(false);
   const [selectedStars, setSelectedStars] = useState(0);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasExistingRating, setHasExistingRating] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
@@ -56,21 +59,18 @@ export default function RateLocationScreen() {
 
   useEffect(() => {
     if (authResolved && !currentUser) {
-      router.replace('/');
+      router.back();
     }
   }, [authResolved, currentUser, router]);
 
-  const loadExistingRating = useCallback(async (options?: { showInitialLoader?: boolean }) => {
+  const loadExistingRating = useCallback(async () => {
     if (!currentUser || !locationId) {
       setIsLoading(false);
-      setIsRefreshing(false);
       return;
     }
 
     try {
-      if (options?.showInitialLoader ?? true) {
-        setIsLoading(true);
-      }
+      setIsLoading(true);
       const existing = await getUserLocationRating(locationId, currentUser.uid);
       if (existing) {
         setSelectedStars(existing.stars);
@@ -79,7 +79,6 @@ export default function RateLocationScreen() {
       }
     } finally {
       setIsLoading(false);
-      setIsRefreshing(false);
     }
   }, [currentUser, locationId]);
 
@@ -101,165 +100,182 @@ export default function RateLocationScreen() {
 
     try {
       await submitLocationRating(locationId, currentUser.uid, selectedStars, selectedTags);
-      setHasExistingRating(true);
-      setStatusMessage(hasExistingRating ? 'Rating updated.' : 'Rating submitted!');
+      router.back();
     } catch {
       setStatusMessage('Something went wrong. Please try again.');
-    } finally {
       setIsSubmitting(false);
     }
   }
 
-  async function handleRefresh() {
-    if (!currentUser || !locationId) {
-      return;
-    }
-
-    setIsRefreshing(true);
-    await loadExistingRating({ showInitialLoader: false });
-  }
-
-  if (!authResolved || !currentUser || isLoading) {
-    return (
-      <View style={[styles.loadingScreen, { backgroundColor: palette.background }]}>
-        <ActivityIndicator color={palette.tint} />
-      </View>
-    );
-  }
+  const displayName = getStudyLocationDisplayName(locationId ?? '', locationName);
 
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      refreshControl={
-        <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
-      }
-      contentContainerStyle={[
-        styles.content,
-        { paddingTop: Space.lg, paddingBottom: insets.bottom + Space.xxl },
-      ]}>
-      <ScreenTransition style={styles.transition}>
-      <View style={styles.header}>
-        <Text style={[TypeScale.title, { color: palette.text }]}>
-          {getStudyLocationDisplayName(locationId ?? '', locationName)}
-        </Text>
-        <Text style={[TypeScale.body, { color: palette.icon }]}>
-          Share what this study spot is actually like.
-        </Text>
-        {hasExistingRating ? (
-          <View style={styles.noticeRow}>
-            <BadgeChip label="Already rated" tone="info" />
-            <Text style={[TypeScale.caption, styles.noticeText, { color: palette.icon }]}>
-              Submitting will update your rating.
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.overlay}>
+      <Animated.View style={[StyleSheet.absoluteFill, styles.scrim, scrimStyle]} />
+      <Pressable
+        accessibilityLabel="Close"
+        accessibilityRole="button"
+        onPress={() => router.back()}
+        style={StyleSheet.absoluteFill}
+      />
+      <Animated.View
+        accessibilityViewIsModal
+        style={[
+          styles.panel,
+          Elevation.e3,
+          panelStyle,
+          {
+            backgroundColor: palette.background,
+            borderColor: palette.border,
+            marginTop: insets.top + Space.md,
+          },
+        ]}>
+        <View style={[styles.panelHeader, { borderBottomColor: palette.border }]}>
+          <View style={styles.panelHeaderCopy}>
+            <Text style={[TypeScale.h2, { color: palette.text }]} numberOfLines={1}>
+              {displayName}
+            </Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+              {hasExistingRating ? 'Update your rating' : 'Rate this spot'}
             </Text>
           </View>
-        ) : null}
-      </View>
-
-      <View style={styles.section}>
-        <Text style={[styles.question, { color: palette.text }]}>Your rating</Text>
-        <View style={styles.starRow}>
-          {[1, 2, 3, 4, 5].map((star) => (
-            <Pressable
-              accessibilityLabel={`${star} out of 5 stars`}
-              accessibilityRole="button"
-              accessibilityState={{ selected: selectedStars === star }}
-              key={star}
-              onPress={() => setSelectedStars(star)}
-              style={({ pressed }) => [
-                styles.starButton,
-                pressed && { opacity: 0.6, transform: [{ scale: 0.88 }] },
-              ]}>
-              <IconSymbol
-                color={star <= selectedStars ? starActiveColor : palette.outline}
-                name="star.fill"
-                size={34}
-              />
-            </Pressable>
-          ))}
+          <Pressable
+            accessibilityLabel="Close"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={() => router.back()}
+            style={({ pressed }) => [
+              styles.closeButton,
+              { backgroundColor: palette.surfaceMuted, opacity: pressed ? 0.6 : 1 },
+            ]}>
+            <IconSymbol name="xmark" size={17} color={palette.text} />
+          </Pressable>
         </View>
-        <Text style={[TypeScale.caption, { color: palette.icon }]}>
-          {selectedStars === 0 ? 'Tap a star to rate this spot.' : `${selectedStars} of 5 stars`}
-        </Text>
-      </View>
 
-      <View style={styles.section}>
-        <Text style={[styles.question, { color: palette.text }]}>Tags</Text>
-        <Text style={[TypeScale.caption, { color: palette.icon }]}>
-          Select any that apply. These help other students filter study spots.
-        </Text>
-        {LOCATION_RATING_TAG_GROUPS.map((group) => (
-          <View key={group.label} style={styles.tagGroup}>
-            <Text style={[TypeScale.label, { color: palette.text }]}>{group.label}</Text>
-            <View style={styles.tagGrid}>
-              {group.tags.map((tag) => {
-                const isSelected = selectedTags.includes(tag);
-                return (
-                  <FilterChip
-                    key={tag}
-                    label={tag}
-                    onPress={() => toggleTag(tag)}
-                    selected={isSelected}
-                  />
-                );
-              })}
-            </View>
+        {isLoading ? (
+          <View style={styles.loading}>
+            <ActivityIndicator color={palette.tint} />
           </View>
-        ))}
-      </View>
+        ) : (
+          <ScrollView
+            contentContainerStyle={[styles.content, { paddingBottom: Space.lg }]}
+            keyboardShouldPersistTaps="handled">
+            <FormSection icon="star.fill" title="Your rating">
+              <View style={styles.starRow}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <Pressable
+                    accessibilityLabel={`${star} out of 5 stars`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: selectedStars === star }}
+                    key={star}
+                    onPress={() => setSelectedStars(star)}
+                    style={({ pressed }) => [
+                      styles.starButton,
+                      pressed && { opacity: 0.6, transform: [{ scale: 0.88 }] },
+                    ]}>
+                    <IconSymbol
+                      color={star <= selectedStars ? starActiveColor : palette.outline}
+                      name="star.fill"
+                      size={32}
+                    />
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                {selectedStars === 0 ? 'Tap a star to rate this spot.' : `${selectedStars} of 5 stars`}
+              </Text>
+            </FormSection>
 
-      {statusMessage ? (
-        <Text style={[TypeScale.meta, styles.statusText, { color: palette.icon }]}>
-          {statusMessage}
-        </Text>
-      ) : null}
+            <FormSection icon="tag" title="Tags" caption="Optional">
+              {LOCATION_RATING_TAG_GROUPS.map((group) => (
+                <View key={group.label}>
+                  <FieldLabel>{group.label}</FieldLabel>
+                  <View style={styles.tagGrid}>
+                    {group.tags.map((tag) => (
+                      <FilterChip
+                        key={tag}
+                        label={tag}
+                        onPress={() => toggleTag(tag)}
+                        selected={selectedTags.includes(tag)}
+                      />
+                    ))}
+                  </View>
+                </View>
+              ))}
+            </FormSection>
 
-      <Button
-        label={hasExistingRating ? 'Update rating' : 'Submit rating'}
-        size="lg"
-        fullWidth
-        loading={isSubmitting}
-        disabled={selectedStars === 0}
-        onPress={handleSubmit}
-      />
-      </ScreenTransition>
-    </ScrollView>
+            {statusMessage ? (
+              <Text style={[TypeScale.meta, styles.statusText, { color: palette.icon }]}>
+                {statusMessage}
+              </Text>
+            ) : null}
+          </ScrollView>
+        )}
+
+        <View
+          style={[
+            styles.footer,
+            { borderTopColor: palette.border, paddingBottom: Math.max(insets.bottom, Space.md) },
+          ]}>
+          <Button
+            label={hasExistingRating ? 'Update rating' : 'Submit rating'}
+            fullWidth
+            loading={isSubmitting}
+            disabled={selectedStars === 0 || isLoading}
+            onPress={handleSubmit}
+          />
+        </View>
+      </Animated.View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  loadingScreen: {
-    alignItems: 'center',
+  overlay: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
   },
-  screen: {
+  scrim: {
+    backgroundColor: 'rgba(18, 24, 21, 0.32)',
+  },
+  panel: {
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    marginHorizontal: Space.md,
+    maxHeight: '88%',
+    overflow: 'hidden',
+  },
+  panelHeader: {
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+    paddingBottom: Space.md,
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
+  },
+  panelHeaderCopy: {
     flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  closeButton: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
+  loading: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Space.xxl,
   },
   content: {
-    padding: Space.lg + 4,
-  },
-  transition: {
-    gap: Space.xl,
-  },
-  header: {
-    gap: Space.xs,
-  },
-  noticeRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.sm,
-    marginTop: Space.xs,
-  },
-  noticeText: {
-    flexShrink: 1,
-  },
-  section: {
-    gap: Space.md,
-  },
-  question: {
-    fontFamily: FontFamily.serifItalic,
-    fontSize: 24,
-    lineHeight: 29,
+    gap: Space.lg,
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
   },
   starRow: {
     flexDirection: 'row',
@@ -272,12 +288,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Space.sm,
-  },
-  tagGroup: {
-    gap: Space.sm,
-    marginTop: Space.xs,
+    marginTop: Space.sm,
   },
   statusText: {
     textAlign: 'center',
+  },
+  footer: {
+    borderTopWidth: 1,
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.md,
   },
 });

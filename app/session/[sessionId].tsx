@@ -1,49 +1,45 @@
 import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { formatSessionWindow } from '@/components/session-card';
 import { Avatar } from '@/components/ui/Avatar';
 import { BadgeChip } from '@/components/ui/BadgeChip';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
-import { IconButton } from '@/components/ui/IconButton';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import {
+  PullToRefreshIndicator,
+  usePullToRefreshDistance,
+} from '@/components/ui/PullToRefreshIndicator';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
-import {
-    Brand,
-    Colors,
-    FontFamily,
-    Radius,
-    Space,
-    TypeScale,
-} from '@/constants/theme';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
-    cancelSession,
-    getBlockedUserIds,
-    getOrCreateDirectConversation,
-    getSessionById,
-    getSessionChatLastReadAt,
-    hasUnreadSessionChat,
-    isGroupChatAvailable,
-    isSessionAtCapacity,
-    joinSession,
-    leaveSession,
-    SessionFullError,
-    type StudySessionListItem,
+  cancelSession,
+  getBlockedUserIds,
+  getOrCreateDirectConversation,
+  getSessionById,
+  getSessionChatLastReadAt,
+  hasUnreadSessionChat,
+  isGroupChatAvailable,
+  isSessionAtCapacity,
+  joinSession,
+  leaveSession,
+  SessionFullError,
+  type StudySessionListItem,
 } from '@/lib/firestore';
 import { getStudyLocationDisplayName } from '@/lib/catalog';
 import { FirebaseError } from 'firebase/app';
@@ -67,7 +63,7 @@ export default function SessionDetailScreen() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [session, setSession] = useState<StudySessionListItem | null>(null);
-  const [status, setStatus] = useState('Loading session details...');
+  const [, setStatus] = useState('Loading session details...');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
@@ -75,6 +71,7 @@ export default function SessionDetailScreen() {
   const [isOpeningHostChat, setIsOpeningHostChat] = useState(false);
   const [chatLastReadAt, setChatLastReadAt] = useState<Timestamp | null>(null);
   const { toast, show: showToast } = useSuccessToast();
+  const { onPullScroll, pullDistance } = usePullToRefreshDistance();
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -152,7 +149,7 @@ export default function SessionDetailScreen() {
       return () => {
         cancelled = true;
       };
-    }, [currentUser, sessionId])
+    }, [currentUser, sessionId]),
   );
 
   function openSessionChat(source: 'session_detail' | 'auto_join') {
@@ -249,14 +246,10 @@ export default function SessionDetailScreen() {
   }
 
   function confirmLeaveSession() {
-    Alert.alert(
-      'Leave session?',
-      'You can rejoin later while a seat is open.',
-      [
-        { text: 'Stay', style: 'cancel' },
-        { text: 'Leave', style: 'destructive', onPress: handleLeaveSession },
-      ],
-    );
+    Alert.alert('Leave session?', 'You can rejoin later while a seat is open.', [
+      { text: 'Stay', style: 'cancel' },
+      { text: 'Leave', style: 'destructive', onPress: handleLeaveSession },
+    ]);
   }
 
   async function handleCancelSession() {
@@ -287,7 +280,11 @@ export default function SessionDetailScreen() {
       'Everyone going will see this session as cancelled. This can’t be undone.',
       [
         { text: 'Keep session', style: 'cancel' },
-        { text: 'Cancel session', style: 'destructive', onPress: handleCancelSession },
+        {
+          text: 'Cancel session',
+          style: 'destructive',
+          onPress: handleCancelSession,
+        },
       ],
     );
   }
@@ -316,9 +313,8 @@ export default function SessionDetailScreen() {
     }
   }
 
-  const isParticipant = currentUser && session
-    ? session.participantIds.includes(currentUser.uid)
-    : false;
+  const isParticipant =
+    currentUser && session ? session.participantIds.includes(currentUser.uid) : false;
   const isHost = currentUser && session ? session.hostId === currentUser.uid : false;
   // Oversized legacy sessions (past the group-chat fanout ceiling) get a
   // read-only chat — no unread dot, and the card says so.
@@ -332,18 +328,17 @@ export default function SessionDetailScreen() {
   const visibleAttendees = session
     ? session.attendeeProfiles.filter((attendee) => !blockedUserIds.includes(attendee.uid))
     : [];
+  const visibleGuests = visibleAttendees.filter((attendee) => attendee.uid !== session?.hostId);
   // Full is derived from capacity (host included); the legacy manual
   // status === 'full' still counts for pre-capacity sessions.
-  const isFull =
-    session?.status === 'full' || (!!session && isSessionAtCapacity(session));
+  const isFull = session?.status === 'full' || (!!session && isSessionAtCapacity(session));
   const isCancelled = session?.status === 'cancelled';
   const hostName = formatDisplayName(session?.hostProfile?.displayName);
   // Seat math uses the true participant count — blocked users still occupy
   // seats even though they're hidden from the attendee list below.
   const goingCount = session?.participantIds.length ?? 0;
   const capacity = session?.capacity;
-  const spotsLeft =
-    typeof capacity === 'number' ? Math.max(capacity - goingCount, 0) : undefined;
+  const spotsLeft = typeof capacity === 'number' ? Math.max(capacity - goingCount, 0) : undefined;
   const goingHeading =
     typeof capacity === 'number' ? `Going (${goingCount} of ${capacity})` : `Going (${goingCount})`;
   const joinStatusLabel = isParticipant
@@ -358,13 +353,20 @@ export default function SessionDetailScreen() {
 
   const startDate = session?.startTime.toDate();
   const endDate = session?.endTime.toDate();
-  const dateTileLabel = startDate
+  const sessionDayLabel = startDate
     ? startDate.toDateString() === new Date().toDateString()
       ? 'Today'
-      : startDate.toLocaleDateString('en-US', { weekday: 'short' })
+      : startDate.toLocaleDateString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+        })
     : '';
-  const timeTileValue = startDate
-    ? startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  const startTimeLabel = startDate
+    ? startDate.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+      })
     : '';
   // Board DetailScreen shows a Duration tile — derived from existing times.
   const durationMinutes =
@@ -379,6 +381,15 @@ export default function SessionDetailScreen() {
         : durationMinutes % 60 === 0
           ? `${durationMinutes / 60} hr`
           : `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m`;
+  const endTimeLabel = endDate
+    ? endDate.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+      })
+    : '';
+  const scheduleLabel =
+    sessionDayLabel && startTimeLabel ? `${sessionDayLabel} at ${startTimeLabel}` : 'Time pending';
+  const durationSummary = endTimeLabel ? `${durationLabel} · until ${endTimeLabel}` : durationLabel;
   // The course chip already names the class, so a title like
   // "COMP SCI 400 Study Session" would repeat it — show just the rest
   // ("Study Session"). Custom titles without the class prefix pass through.
@@ -392,39 +403,41 @@ export default function SessionDetailScreen() {
       ? rawTitle.slice(classPrefix.length).trim() || rawTitle
       : rawTitle;
 
-  // Board lists three authored "house rules"; per-session rules are not in the
-  // data model, so the spot's own notes + tags (the closest real guidance)
-  // stand in for them.
-  const houseRules = useMemo(() => {
-    if (!session?.location) {
-      return [];
-    }
-
-    return [session.location.notes ?? '', ...(session.location.tags ?? [])]
-      .map((rule) => rule.trim())
-      .filter((rule) => rule.length > 0);
-  }, [session]);
+  const locationTags =
+    session?.location?.tags?.map((tag) => tag.trim()).filter((tag) => tag.length > 0) ?? [];
+  const locationAddress = [
+    session?.location?.building,
+    session?.location?.campusArea ?? 'UW Madison',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const attendeeNames = visibleGuests.map(
+    (attendee) => formatDisplayName(attendee.displayName).split(' ')[0],
+  );
+  const attendeeSummary =
+    attendeeNames.length > 3
+      ? `${attendeeNames.slice(0, 3).join(', ')} +${attendeeNames.length - 3}`
+      : attendeeNames.join(', ');
 
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
       <ScrollView
         style={styles.screen}
+        onScroll={onPullScroll}
         refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+          <RefreshControl
+            colors={['transparent']}
+            progressBackgroundColor="transparent"
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor="transparent"
+          />
         }
-        contentContainerStyle={[styles.content, { paddingTop: Space.sm }]}>
+        scrollEventThrottle={16}
+        contentContainerStyle={styles.content}>
         {session ? (
           <ScreenTransition style={styles.transition}>
             <View style={styles.heroBlock}>
-              <View style={styles.metaRow}>
-                <IconSymbol color={palette.tint} name="mappin.and.ellipse" size={17} />
-                <Text
-                  style={[TypeScale.meta, styles.metaText, { color: palette.icon }]}
-                  numberOfLines={1}>
-                  {locationDisplayName}
-                  {session.location?.campusArea ? `, ${session.location.campusArea}` : ''}
-                </Text>
-              </View>
               <View style={styles.heroChipRow}>
                 <CourseChip code={session.classId} size="lg" />
                 {isCancelled ? (
@@ -434,119 +447,140 @@ export default function SessionDetailScreen() {
                 ) : null}
               </View>
               <Text style={[styles.heroTitle, { color: palette.text }]}>{heroTitle}</Text>
-              {/* The banner directly above already names the spot, so the
-                  meta line only carries the time window. */}
-              <Text style={[TypeScale.body, { color: palette.icon }]} numberOfLines={1}>
-                {formatSessionWindow(session.startTime, session.endTime)}
-              </Text>
-            </View>
-
-            <View
-              style={[
-                styles.card,
-                { borderColor: palette.border },
-              ]}>
-              <View style={styles.hostRow}>
-                <Avatar name={hostName} size="lg" verified />
-                <View style={styles.hostText}>
-                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
-                    {hostName}
-                  </Text>
-                  {/* Reputation/stats area. Host rating, hosted count, and
-                      show-up % are not in the data model; the verified-UW
-                      trust signal is the available metric and stands in. */}
-                  <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                    Host, verified UW student
+              <View style={styles.heroMeta}>
+                <View style={styles.metaRow}>
+                  <View style={[styles.metaIcon, { backgroundColor: palette.hero }]}>
+                    <IconSymbol color={palette.tint} name="calendar" size={17} />
+                  </View>
+                  <Text style={[TypeScale.body, styles.metaText, { color: palette.text }]}>
+                    {scheduleLabel}
                   </Text>
                 </View>
-                <Button
-                  label="Message"
-                  variant="secondary"
-                  size="sm"
-                  loading={isOpeningHostChat}
-                  onPress={handleOpenHostChat}
-                />
+                <View style={styles.metaRow}>
+                  <View style={[styles.metaIcon, { backgroundColor: palette.surfaceMuted }]}>
+                    <IconSymbol color={palette.icon} name="clock" size={17} />
+                  </View>
+                  <Text style={[TypeScale.body, styles.metaText, { color: palette.text }]}>
+                    {durationSummary}
+                  </Text>
+                </View>
+                <View style={styles.metaRow}>
+                  <View style={[styles.metaIcon, { backgroundColor: palette.surfaceMuted }]}>
+                    <IconSymbol color={palette.icon} name="mappin.and.ellipse" size={17} />
+                  </View>
+                  <Text
+                    style={[TypeScale.body, styles.metaText, { color: palette.text }]}
+                    numberOfLines={2}>
+                    {locationDisplayName}
+                    {session.location?.campusArea ? ` · ${session.location.campusArea}` : ''}
+                  </Text>
+                </View>
               </View>
             </View>
 
-            {isParticipant ? (
-              <View
-                style={[
-                  styles.card,
-                  { borderColor: palette.border },
-                ]}>
-                <View style={styles.chatRow}>
-                  <View style={styles.chatText}>
-                    <View style={styles.chatTitleRow}>
-                      <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
-                        Session chat
-                      </Text>
-                      {hasUnreadChat ? (
-                        <View
-                          accessibilityLabel="Unread messages"
-                          style={[styles.unreadDot, { backgroundColor: palette.tint }]}
-                        />
-                      ) : null}
-                    </View>
-                    <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-                      {!isChatAvailable
-                        ? 'Chat is unavailable for sessions this large.'
-                        : hasUnreadChat
-                          ? 'New messages from your group.'
-                          : 'Coordinate with everyone going.'}
+            <View style={[styles.surfaceCard, { backgroundColor: palette.surface }]}>
+              <View style={styles.hostRow}>
+                {/* The row itself opens the host's profile; Message stays a
+                    separate sibling tap target rather than living inside it. */}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`View ${hostName}'s profile`}
+                  disabled={!session?.hostId}
+                  onPress={() => router.push(`/user/${session?.hostId}`)}
+                  style={({ pressed }) => [styles.hostIdentity, pressed && styles.pressed]}>
+                  <Avatar name={hostName} size="lg" verified />
+                  <View style={styles.hostText}>
+                    <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
+                      Hosted by {hostName}
+                    </Text>
+                    <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                      Verified UW student
                     </Text>
                   </View>
+                </Pressable>
+                {!isHost ? (
                   <Button
-                    label="Open chat"
+                    icon="message"
+                    label="Message"
                     variant="secondary"
                     size="sm"
-                    onPress={() => openSessionChat('session_detail')}
+                    loading={isOpeningHostChat}
+                    onPress={handleOpenHostChat}
                   />
-                </View>
+                ) : null}
               </View>
-            ) : null}
 
-            <View
-              style={[
-                styles.card,
-                { borderColor: palette.border },
-              ]}>
+              {isParticipant ? (
+                <>
+                  <View style={[styles.cardDivider, { backgroundColor: palette.border }]} />
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Open session chat"
+                    onPress={() => openSessionChat('session_detail')}
+                    style={({ pressed }) => [styles.chatRow, pressed && styles.pressed]}>
+                    <View style={[styles.metaIcon, { backgroundColor: palette.hero }]}>
+                      <IconSymbol color={palette.tint} name="message.fill" size={17} />
+                    </View>
+                    <View style={styles.chatText}>
+                      <View style={styles.chatTitleRow}>
+                        <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
+                          Session chat
+                        </Text>
+                        {hasUnreadChat ? (
+                          <View
+                            accessibilityLabel="Unread messages"
+                            style={[styles.unreadDot, { backgroundColor: palette.tint }]}
+                          />
+                        ) : null}
+                      </View>
+                      <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+                        {!isChatAvailable
+                          ? 'Chat is unavailable for sessions this large.'
+                          : hasUnreadChat
+                            ? 'New messages from your group.'
+                            : 'Coordinate with everyone going.'}
+                      </Text>
+                    </View>
+                    <IconSymbol color={palette.icon} name="chevron.right" size={18} />
+                  </Pressable>
+                </>
+              ) : null}
+            </View>
+
+            <View style={styles.section}>
               <View style={styles.attendanceHeader}>
-                <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>
-                  {goingHeading}
-                </Text>
+                <View style={styles.sectionTitleRow}>
+                  <IconSymbol color={palette.tint} name="person.2.fill" size={19} />
+                  <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>
+                    {goingHeading}
+                  </Text>
+                </View>
                 <BadgeChip
                   label={joinStatusLabel}
                   tone={isParticipant ? 'success' : isFull || isCancelled ? 'neutral' : 'info'}
                 />
               </View>
-              {visibleAttendees.length > 0 ? (
-                <View style={styles.attendeeList}>
-                  {visibleAttendees.map((attendee) => {
-                    const isHost = attendee.uid === session.hostId;
-
-                    return (
-                      <View key={attendee.uid} style={styles.attendeeRow}>
-                        <Avatar
-                          name={formatDisplayName(attendee.displayName)}
-                          size="md"
-                          verified
-                        />
-                        <Text
-                          style={[TypeScale.body, styles.attendeeName, { color: palette.text }]}
-                          numberOfLines={1}>
-                          {formatDisplayName(attendee.displayName)}
-                        </Text>
-                        {isHost ? (
-                          <Text style={[TypeScale.caption, { color: palette.icon }]}>host</Text>
-                        ) : null}
-                      </View>
-                    );
-                  })}
+              {visibleGuests.length > 0 ? (
+                <View style={styles.attendeeSummary}>
+                  <View style={styles.attendeeAvatars}>
+                    {visibleGuests.slice(0, 4).map((attendee) => (
+                      <Avatar
+                        key={attendee.uid}
+                        name={formatDisplayName(attendee.displayName)}
+                        size="sm"
+                        verified
+                      />
+                    ))}
+                  </View>
+                  <Text
+                    style={[TypeScale.body, styles.attendeeNames, { color: palette.text }]}
+                    numberOfLines={2}>
+                    {attendeeSummary}
+                  </Text>
                 </View>
               ) : (
                 <Text style={[TypeScale.body, { color: palette.icon }]}>
-                  Be the first at the table.
+                  The host is currently the only attendee.
                 </Text>
               )}
               <View style={styles.verifiedRow}>
@@ -557,80 +591,38 @@ export default function SessionDetailScreen() {
               </View>
             </View>
 
-            <View
-              style={[
-                styles.card,
-                { borderColor: palette.border },
-              ]}>
-              <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>House rules</Text>
-              {houseRules.length > 0 ? (
-                <View style={styles.ruleList}>
-                  {houseRules.map((rule) => (
-                    <View key={rule} style={styles.ruleRow}>
-                      <View style={[styles.ruleDot, { backgroundColor: palette.tint }]} />
-                      <Text style={[TypeScale.body, styles.ruleText, { color: palette.text }]}>
-                        {rule}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              ) : (
-                <Text style={[TypeScale.body, { color: palette.icon }]}>
-                  No house rules listed for this spot.
+            <View style={[styles.surfaceCard, { backgroundColor: palette.surface }]}>
+              <View style={styles.sectionTitleRow}>
+                <IconSymbol color={palette.tint} name="mappin.and.ellipse" size={19} />
+                <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>Location</Text>
+              </View>
+              <View style={styles.locationCopy}>
+                <Text style={[TypeScale.heading, { color: palette.text }]}>
+                  {locationDisplayName}
                 </Text>
-              )}
-            </View>
-
-            <View
-              style={[
-                styles.tileRow,
-                { borderBottomColor: palette.border, borderTopColor: palette.border },
-              ]}>
-              {[
-                { label: dateTileLabel, value: timeTileValue },
-                { label: 'Duration', value: durationLabel },
-                {
-                  label: 'Going',
-                  value:
-                    typeof capacity === 'number' ? `${goingCount} of ${capacity}` : `${goingCount}`,
-                },
-              ].map((tile, index) => (
-                <View
-                  key={tile.label}
-                  style={[
-                    styles.tile,
-                    index > 0 ? { borderLeftColor: palette.border, borderLeftWidth: 1 } : null,
-                  ]}>
-                  <Text style={[TypeScale.meta, { color: palette.icon }]}>{tile.label}</Text>
-                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>{tile.value}</Text>
-                </View>
-              ))}
-            </View>
-
-            <View
-              style={[
-                styles.card,
-                { borderColor: palette.border },
-              ]}>
-              <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>Location</Text>
-              <Text style={[TypeScale.heading, { color: palette.text }]}>
-                {locationDisplayName}
-              </Text>
-              <Text style={[TypeScale.body, { color: palette.icon }]}>
-                {session.location?.building ?? 'Campus location'}
-                {', '}
-                {session.location?.campusArea ?? 'UW Madison'}
-              </Text>
+                <Text style={[TypeScale.body, { color: palette.icon }]}>
+                  {locationAddress || 'UW Madison'}
+                </Text>
+              </View>
               {session.location?.notes ? (
-                <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                <Text style={[TypeScale.body, { color: palette.text }]}>
                   {session.location.notes}
                 </Text>
               ) : null}
+              {locationTags.length > 0 ? (
+                <View style={styles.tagRow}>
+                  {locationTags.map((tag) => (
+                    <BadgeChip key={tag} label={tag} tone="neutral" />
+                  ))}
+                </View>
+              ) : null}
               {session.location ? (
                 <Button
-                  label="Rate this spot"
+                  icon="star.fill"
+                  label="Rate spot"
                   variant="ghost"
                   size="sm"
+                  style={styles.rateButton}
                   onPress={() =>
                     router.push({
                       pathname: '/rate-location',
@@ -643,26 +635,9 @@ export default function SessionDetailScreen() {
                 />
               ) : null}
             </View>
-
-            <View style={styles.statusRow}>
-              <Text style={[TypeScale.caption, styles.statusText, { color: palette.icon }]}>
-                {status}
-              </Text>
-              <IconButton
-                accessibilityLabel="Refresh session"
-                disabled={isLoading || isRefreshing}
-                icon="arrow.clockwise"
-                loading={isLoading || isRefreshing}
-                onPress={handleRefresh}
-              />
-            </View>
           </ScreenTransition>
         ) : (
-          <View
-            style={[
-              styles.card,
-              { borderColor: palette.border },
-            ]}>
+          <View style={[styles.surfaceCard, { backgroundColor: palette.surface }]}>
             {isLoading ? (
               <ActivityIndicator color={palette.tint} />
             ) : (
@@ -678,6 +653,7 @@ export default function SessionDetailScreen() {
           </View>
         )}
       </ScrollView>
+      <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
 
       {/* 5. PRIMARY CTA AREA. */}
       {session ? (
@@ -693,6 +669,7 @@ export default function SessionDetailScreen() {
           {isHost ? (
             !isCancelled ? (
               <Button
+                icon="xmark"
                 label="Cancel session"
                 variant="secondary"
                 size="lg"
@@ -701,29 +678,28 @@ export default function SessionDetailScreen() {
                 onPress={confirmCancelSession}
               />
             ) : (
-              <Button label="Session cancelled" variant="secondary" size="lg" fullWidth disabled />
-            )
-          ) : isParticipant ? (
-            <View style={styles.ctaStack}>
               <Button
                 disabled
                 fullWidth
-                icon="checkmark.circle.fill"
-                label="Going"
+                icon="xmark.circle.fill"
+                label="Session cancelled"
                 size="lg"
-                variant="success"
+                variant="secondary"
               />
-              <Button
-                label="Leave session"
-                variant="ghost"
-                size="md"
-                fullWidth
-                loading={isLeaving}
-                onPress={confirmLeaveSession}
-              />
-            </View>
+            )
+          ) : isParticipant ? (
+            <Button
+              fullWidth
+              icon="xmark"
+              label="Leave session"
+              loading={isLeaving}
+              onPress={confirmLeaveSession}
+              size="lg"
+              variant="secondary"
+            />
           ) : (
             <Button
+              icon="plus.circle.fill"
               label={isFull ? 'Session full' : 'Join session'}
               size="lg"
               fullWidth
@@ -744,20 +720,32 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: Space.lg,
-    padding: Space.lg + 4,
     paddingBottom: Space.xxl,
+    paddingHorizontal: Space.lg + 4,
+    paddingTop: Space.lg,
   },
   transition: {
-    gap: Space.lg,
+    gap: Space.xl,
   },
   heroBlock: {
+    gap: Space.md,
+  },
+  heroMeta: {
     gap: Space.sm + 2,
+    marginTop: Space.xs,
   },
   metaRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: Space.sm,
+    gap: Space.md,
+    minHeight: 32,
+  },
+  metaIcon: {
+    alignItems: 'center',
+    borderRadius: Radius.md,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
   },
   metaText: {
     flex: 1,
@@ -770,31 +758,33 @@ const styles = StyleSheet.create({
   },
   heroTitle: {
     fontFamily: FontFamily.serifItalic,
-    fontSize: 30,
-    lineHeight: 36,
+    fontSize: 32,
+    lineHeight: 38,
   },
-  tileRow: {
-    borderBottomWidth: 1,
-    borderTopWidth: 1,
-    flexDirection: 'row',
+  surfaceCard: {
+    borderRadius: Radius.xl,
+    gap: Space.md,
+    padding: Space.lg,
   },
-  tile: {
-    flex: 1,
-    alignItems: 'center',
-    gap: Space.xs,
-    paddingVertical: Space.lg,
-    paddingHorizontal: Space.sm,
-  },
-  card: {
-    borderBottomWidth: 1,
-    gap: Space.sm + 2,
-    paddingHorizontal: 0,
-    paddingVertical: Space.lg,
+  cardDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginVertical: Space.xs,
   },
   hostRow: {
-    flexDirection: 'row',
     alignItems: 'center',
+    flexDirection: 'row',
     gap: Space.md,
+  },
+  hostIdentity: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: Space.md,
+    minWidth: 0,
+  },
+  // Confirms the tap without any continuous motion.
+  pressed: {
+    opacity: 0.7,
   },
   chatRow: {
     alignItems: 'center',
@@ -820,52 +810,47 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   attendanceHeader: {
-    flexDirection: 'row',
     alignItems: 'center',
+    flexDirection: 'row',
     justifyContent: 'space-between',
     gap: Space.sm,
   },
-  attendeeList: {
+  section: {
     gap: Space.md,
+    paddingHorizontal: Space.xs,
   },
-  attendeeRow: {
+  sectionTitleRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: Space.md,
-  },
-  attendeeName: {
-    flexShrink: 1,
-  },
-  ruleList: {
     gap: Space.sm,
   },
-  ruleRow: {
+  attendeeSummary: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: Space.md,
   },
-  ruleDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+  attendeeAvatars: {
+    flexDirection: 'row',
+    gap: Space.xs,
   },
-  ruleText: {
-    flexShrink: 1,
+  attendeeNames: {
+    flex: 1,
+  },
+  locationCopy: {
+    gap: 2,
+  },
+  tagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  rateButton: {
+    paddingHorizontal: 0,
   },
   verifiedRow: {
-    flexDirection: 'row',
     alignItems: 'center',
+    flexDirection: 'row',
     gap: Space.sm - 2,
-    marginTop: Space.xs,
-  },
-  statusRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.md,
-    justifyContent: 'space-between',
-  },
-  statusText: {
-    flexShrink: 1,
   },
   emptyHeadline: {
     fontFamily: FontFamily.serifItalic,
@@ -876,8 +861,5 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: Space.lg + 4,
     paddingTop: Space.md,
-  },
-  ctaStack: {
-    gap: Space.xs,
   },
 });

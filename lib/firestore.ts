@@ -1562,6 +1562,29 @@ export async function getUserLocationRating(locationId: string, userId: string) 
   };
 }
 
+/**
+ * Every spot this user has rated, keyed by the raw stored locationId. One query
+ * instead of a per-spot `get`, so the spots list can show which places you've
+ * already rated without a read per row. Callers canonicalize the ids — that
+ * mapping lives in lib/catalog, which this module deliberately doesn't import.
+ */
+export async function getOwnLocationRatings(userId: string): Promise<Map<string, number>> {
+  const snapshot = await getDocs(
+    query(collection(db, COLLECTIONS.locationRatings), where("userId", "==", userId))
+  );
+
+  const ratings = new Map<string, number>();
+
+  for (const ratingDoc of snapshot.docs) {
+    const rating = ratingDoc.data() as LocationRating;
+    if (typeof rating.locationId === "string" && typeof rating.stars === "number") {
+      ratings.set(rating.locationId, rating.stars);
+    }
+  }
+
+  return ratings;
+}
+
 // Aggregates are precomputed on the location docs by the onRatingWritten
 // Cloud Function (ratingCount / ratingSum / tagCounts) — reading them costs
 // `locations.length` reads and zero ratings reads, replacing the old

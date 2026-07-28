@@ -1,9 +1,9 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useMemo } from 'react';
+import { memo, useMemo, useRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { MapSessionTiming } from '@/components/campus-map.types';
-import { Brand, Colors, Elevation, FontFamily, Radius, TypeScale } from '@/constants/theme';
+import { Brand, Colors, Elevation, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { canonicalStudyLocationId } from '@/lib/catalog';
 import type { StudyLocation } from '@/lib/firestore';
@@ -12,6 +12,7 @@ import { buildCampusMarkerEntries } from '@/lib/map-markers';
 type CampusMapProps = {
   locations: StudyLocation[];
   onOpenCampusMap: () => void;
+  onOpenLocation: (locationId: string) => void;
   onSelectLocation: (locationId: string) => void;
   selectedLocationId: string | null;
   sessionTimingByLocation: Map<string, MapSessionTiming>;
@@ -62,9 +63,94 @@ function getTimingColor(timing: MapSessionTiming, tint: string, icon: string) {
   }
 }
 
+type CampusMapMarkerProps = {
+  isSelected: boolean;
+  location: StudyLocation;
+  onOpenLocation: (locationId: string) => void;
+  onSelectLocation: (locationId: string) => void;
+  palette: (typeof Colors)[keyof typeof Colors];
+  sessionCount: number;
+  timing: MapSessionTiming;
+};
+
+const CampusMapMarker = memo(function CampusMapMarker({
+  isSelected,
+  location,
+  onOpenLocation,
+  onSelectLocation,
+  palette,
+  sessionCount,
+  timing,
+}: CampusMapMarkerProps) {
+  const lastPressAtRef = useRef(0);
+  const timingColor = getTimingColor(timing, palette.tint, palette.icon);
+  const position = getSafeMapPosition(location.mapPosition);
+
+  function handlePress() {
+    const now = Date.now();
+
+    if (now - lastPressAtRef.current <= 500) {
+      lastPressAtRef.current = 0;
+      onOpenLocation(location.locationId);
+      return;
+    }
+
+    lastPressAtRef.current = now;
+    onSelectLocation(location.locationId);
+  }
+
+  return (
+    <Pressable
+      accessibilityHint="Selects this spot. Double-tap again to open details."
+      accessibilityLabel={`${location.name}, ${sessionCount} upcoming ${sessionCount === 1 ? 'session' : 'sessions'}, ${timing === 'live' ? 'happening now' : timing === 'soon' ? 'starting soon' : timing === 'later' ? 'later' : 'no scheduled sessions'}`}
+      accessibilityRole="button"
+      accessibilityState={{ selected: isSelected }}
+      hitSlop={8}
+      onPress={handlePress}
+      style={({ pressed }) => [
+        styles.markerWrap,
+        {
+          left: `${position.xPercent}%`,
+          opacity: pressed ? 0.72 : 1,
+          top: `${position.yPercent}%`,
+          zIndex: isSelected ? 4 : sessionCount > 0 ? 3 : 2,
+        },
+      ]}>
+      <View
+        style={[
+          styles.markerHalo,
+          isSelected && styles.markerHaloSelected,
+          {
+            backgroundColor: isSelected ? `${timingColor}20` : 'transparent',
+          },
+        ]}>
+        <View
+          style={[
+            styles.markerCore,
+            isSelected && styles.markerCoreSelected,
+            Elevation.e1,
+            {
+              backgroundColor: palette.surface,
+              borderColor: isSelected ? timingColor : palette.border,
+            },
+          ]}>
+          <View
+            style={[
+              styles.markerStatus,
+              isSelected && styles.markerStatusSelected,
+              { backgroundColor: timingColor },
+            ]}
+          />
+        </View>
+      </View>
+    </Pressable>
+  );
+});
+
 export function CampusMap({
   locations,
   onOpenCampusMap,
+  onOpenLocation,
   onSelectLocation,
   selectedLocationId,
   sessionTimingByLocation,
@@ -84,6 +170,9 @@ export function CampusMap({
       ),
     [locations, visibleLocationIds]
   );
+  const selectedLocation =
+    visibleMarkers.find(({ location }) => location.locationId === selectedLocationId)?.location ??
+    null;
 
   return (
     <View
@@ -154,54 +243,18 @@ export function CampusMap({
         const isSelected = selectedLocationId === location.locationId;
         const sessionCount = sessionsByLocation.get(location.locationId) ?? 0;
         const timing = sessionTimingByLocation.get(location.locationId) ?? 'none';
-        const timingColor = getTimingColor(timing, palette.tint, palette.icon);
-        const position = getSafeMapPosition(location.mapPosition);
 
         return (
-          <Pressable
-            accessibilityLabel={`${location.name}, ${sessionCount} upcoming ${sessionCount === 1 ? 'session' : 'sessions'}, ${timing === 'live' ? 'happening now' : timing === 'soon' ? 'starting soon' : timing === 'later' ? 'later' : 'no scheduled sessions'}`}
-            accessibilityRole="button"
-            accessibilityState={{ selected: isSelected }}
-            hitSlop={8}
+          <CampusMapMarker
+            isSelected={isSelected}
             key={canonicalId}
-            onPress={() => onSelectLocation(location.locationId)}
-            style={({ pressed }) => [
-              styles.markerWrap,
-              {
-                left: `${position.xPercent}%`,
-                opacity: pressed ? 0.72 : 1,
-                top: `${position.yPercent}%`,
-                zIndex: isSelected ? 4 : sessionCount > 0 ? 3 : 2,
-              },
-            ]}>
-            <View
-              style={[
-                styles.markerHalo,
-                isSelected && styles.markerHaloSelected,
-                {
-                  backgroundColor: isSelected ? `${timingColor}20` : 'transparent',
-                },
-              ]}>
-              <View
-                style={[
-                  styles.markerCore,
-                  isSelected && styles.markerCoreSelected,
-                  Elevation.e1,
-                  {
-                    backgroundColor: palette.surface,
-                    borderColor: isSelected ? timingColor : palette.border,
-                  },
-                ]}>
-                <View
-                  style={[
-                    styles.markerStatus,
-                    isSelected && styles.markerStatusSelected,
-                    { backgroundColor: timingColor },
-                  ]}
-                />
-              </View>
-            </View>
-          </Pressable>
+            location={location}
+            onOpenLocation={onOpenLocation}
+            onSelectLocation={onSelectLocation}
+            palette={palette}
+            sessionCount={sessionCount}
+            timing={timing}
+          />
         );
       })}
 
@@ -214,6 +267,33 @@ export function CampusMap({
             Clear search or try another filter.
           </Text>
         </View>
+      ) : null}
+
+      {selectedLocation ? (
+        <Pressable
+          accessibilityHint="Opens the spot in the list below"
+          accessibilityLabel={`View details for ${selectedLocation.name}`}
+          accessibilityRole="button"
+          onPress={() => onOpenLocation(selectedLocation.locationId)}
+          style={({ pressed }) => [
+            styles.selectedLabel,
+            Elevation.e2,
+            {
+              backgroundColor: palette.surface,
+              borderColor: palette.border,
+              opacity: pressed ? 0.78 : 1,
+            },
+          ]}>
+          <View style={styles.selectedLabelCopy}>
+            <Text numberOfLines={1} style={[TypeScale.label, { color: palette.text }]}>
+              {selectedLocation.name}
+            </Text>
+            <Text numberOfLines={1} style={[TypeScale.caption, { color: palette.icon }]}>
+              Double-tap pin for details
+            </Text>
+          </View>
+          <MaterialIcons color={palette.icon} name="chevron-right" size={20} />
+        </Pressable>
       ) : null}
     </View>
   );
@@ -381,5 +461,24 @@ const styles = StyleSheet.create({
   markerStatusSelected: {
     height: 9,
     width: 9,
+  },
+  selectedLabel: {
+    alignItems: 'center',
+    borderRadius: Radius.md,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    bottom: Space.md,
+    flexDirection: 'row',
+    gap: Space.sm,
+    left: 108,
+    minHeight: 48,
+    paddingHorizontal: Space.md,
+    position: 'absolute',
+    right: Space.md,
+    zIndex: 7,
+  },
+  selectedLabelCopy: {
+    flex: 1,
+    gap: 1,
+    minWidth: 0,
   },
 });

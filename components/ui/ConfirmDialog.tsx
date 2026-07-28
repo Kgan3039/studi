@@ -1,4 +1,6 @@
+import { type ReactNode } from 'react';
 import {
+  Animated,
   Modal,
   Pressable,
   StyleSheet,
@@ -7,6 +9,7 @@ import {
 } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
+import { useOverlayEntrance } from '@/components/ui/overlay-motion';
 import { Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
@@ -21,6 +24,10 @@ export type ConfirmDialogProps = {
   loading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Extra content between the body and the actions — e.g. a re-auth field.
+   *  Most confirmations don't need this; reach for it only when the decision
+   *  itself requires input, not as a shortcut around a proper Sheet. */
+  children?: ReactNode;
 };
 
 /**
@@ -37,35 +44,40 @@ export function ConfirmDialog({
   loading = false,
   onConfirm,
   onCancel,
+  children,
 }: ConfirmDialogProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
+  const { panelStyle, scrimStyle } = useOverlayEntrance(visible);
 
   return (
     <Modal
-      animationType="fade"
+      animationType="none"
       onRequestClose={onCancel}
       statusBarTranslucent
       transparent
       visible={visible}>
       <View style={styles.overlay}>
+        <Animated.View style={[StyleSheet.absoluteFill, styles.scrim, scrimStyle]} />
         <Pressable
           accessibilityLabel="Cancel"
           accessibilityRole="button"
           onPress={onCancel}
           style={StyleSheet.absoluteFill}
         />
-        <View
+        <Animated.View
           accessibilityViewIsModal
           style={[
             styles.dialog,
             Elevation.e3,
+            panelStyle,
             { backgroundColor: palette.background, borderColor: palette.border },
           ]}>
           <Text style={[TypeScale.h2, { color: palette.text }]}>{title}</Text>
           {body ? (
             <Text style={[TypeScale.body, { color: palette.icon }]}>{body}</Text>
           ) : null}
+          {children}
           <View style={styles.actions}>
             <Button
               label={cancelLabel}
@@ -83,7 +95,7 @@ export function ConfirmDialog({
               style={styles.confirmAction}
             />
           </View>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -92,10 +104,12 @@ export function ConfirmDialog({
 const styles = StyleSheet.create({
   overlay: {
     alignItems: 'center',
-    backgroundColor: 'rgba(18, 24, 21, 0.32)',
     flex: 1,
     justifyContent: 'center',
     padding: Space.xl,
+  },
+  scrim: {
+    backgroundColor: 'rgba(18, 24, 21, 0.32)',
   },
   dialog: {
     borderRadius: Radius.xl,

@@ -16,6 +16,10 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import {
+  PullToRefreshIndicator,
+  usePullToRefreshDistance,
+} from '@/components/ui/PullToRefreshIndicator';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { IconButton } from '@/components/ui/IconButton';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
@@ -100,6 +104,7 @@ export default function ProfileScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const { onPullScroll, pullDistance } = usePullToRefreshDistance();
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -402,12 +407,20 @@ export default function ProfileScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
-    <ScrollView
-      style={styles.screen}
-      refreshControl={
-        <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
-      }
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
+      <ScrollView
+        onScroll={onPullScroll}
+        scrollEventThrottle={16}
+        style={styles.screen}
+        refreshControl={
+          <RefreshControl
+            colors={['transparent']}
+            progressBackgroundColor="transparent"
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor="transparent"
+          />
+        }
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <ScreenHeader
         showNotifications
         title="Profile"
@@ -747,7 +760,13 @@ export default function ProfileScreen() {
                 onPress={() =>
                   router.push({
                     pathname: '/explore',
-                    params: { locationId: location.locationId },
+                    // Explore stays mounted as a tab. A fresh request token
+                    // makes a second tap on the same spot an intentional
+                    // scroll request instead of a no-op route update.
+                    params: {
+                      locationId: location.locationId,
+                      locationRequest: String(Date.now()),
+                    },
                   })
                 }
                 style={({ pressed }) => [
@@ -767,7 +786,11 @@ export default function ProfileScreen() {
                 </View>
                 {location.rating != null ? (
                   <View style={[styles.ratingPill, { backgroundColor: palette.surfaceMuted }]}>
-                    <IconSymbol name="star.fill" size={12} color={palette.warning} />
+                    <IconSymbol
+                      name="star.fill"
+                      size={12}
+                      color={colorScheme === 'dark' ? Brand.starDark : Brand.star}
+                    />
                     <Text style={[TypeScale.label, { color: palette.text }]}>
                       {location.rating.toFixed(1)}
                     </Text>
@@ -787,7 +810,8 @@ export default function ProfileScreen() {
       </View>
 
       </ScreenTransition>
-    </ScrollView>
+      </ScrollView>
+      <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
     </View>
   );
 }

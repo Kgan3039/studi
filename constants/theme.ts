@@ -26,6 +26,13 @@ export const Brand = {
   warning: '#9A661D',
   info: '#345574',
   overlay: 'rgba(28, 25, 21, 0.58)',
+  /**
+   * Ratings only. `warning` is a brown-gold tuned for text on cream, which
+   * reads muddy when it fills a whole star — this is the brighter gold stars
+   * are actually expected to be. Dark mode lifts it further off the surface.
+   */
+  star: '#EDB230',
+  starDark: '#F2C255',
 
   // Legacy aliases (Direction D names) — same values as above
   red600: accentLight,

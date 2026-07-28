@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Alert,
+  Animated,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -17,11 +18,13 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { FilterChip } from '@/components/ui/FilterChip';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { useOverlayEntrance } from '@/components/ui/overlay-motion';
 import { Brand, Colors, Elevation, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import { blockUser, reportUser } from '@/lib/firestore';
+import { rememberReportedUser } from '@/lib/reported-users';
 import type { User } from 'firebase/auth';
 
 const REPORT_REASONS = ['Spam', 'Harassment', 'Unsafe behavior', 'Impersonation', 'Other'];
@@ -43,6 +46,8 @@ export default function ReportUserScreen() {
   const [confirmSubmit, setConfirmSubmit] = useState(false);
 
   const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
+  // Presented as a transparentModal route, so it drives its own entrance.
+  const { panelStyle, scrimStyle } = useOverlayEntrance(true);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -62,6 +67,7 @@ export default function ReportUserScreen() {
       setIsSubmitting(true);
       await reportUser(currentUser.uid, reportedUserId, selectedReason, details, context || 'general');
       track('report_submitted', { reason: selectedReason, context: context || 'general' });
+      await rememberReportedUser(reportedUserId);
 
       // Reporting someone always blocks them too: nobody wants to keep hearing
       // from a person they just reported while the review is pending.
@@ -91,17 +97,19 @@ export default function ReportUserScreen() {
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={styles.overlay}>
+      <Animated.View style={[StyleSheet.absoluteFill, styles.scrim, scrimStyle]} />
       <Pressable
         accessibilityLabel="Close report"
         accessibilityRole="button"
         onPress={() => router.back()}
         style={StyleSheet.absoluteFill}
       />
-      <View
+      <Animated.View
         accessibilityViewIsModal
         style={[
           styles.panel,
           Elevation.e3,
+          panelStyle,
           {
             backgroundColor: palette.background,
             borderColor: palette.border,
@@ -190,7 +198,7 @@ export default function ReportUserScreen() {
           />
         </View>
         </ScrollView>
-      </View>
+      </Animated.View>
 
       <ConfirmDialog
         visible={confirmSubmit}
@@ -209,9 +217,11 @@ export default function ReportUserScreen() {
 
 const styles = StyleSheet.create({
   overlay: {
-    backgroundColor: 'rgba(18, 24, 21, 0.32)',
     flex: 1,
     justifyContent: 'flex-start',
+  },
+  scrim: {
+    backgroundColor: 'rgba(18, 24, 21, 0.32)',
   },
   panel: {
     borderRadius: Radius.xl,
