@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Timestamp } from 'firebase/firestore';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -17,15 +18,21 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SessionCard } from '@/components/session-card';
+import { SessionCreatedTransition } from '@/components/session-created-transition';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { FieldLabel, FormSection } from '@/components/ui/FormSection';
 import { IconButton } from '@/components/ui/IconButton';
-import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { useOverlayEntrance } from '@/components/ui/overlay-motion';
+import {
+  PullToRefreshIndicator,
+  usePullToRefreshDistance,
+} from '@/components/ui/PullToRefreshIndicator';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
-import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { formatTimeLabel, TimeDropdown } from '@/components/time-dropdown';
-import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { Brand, Colors, Elevation, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -123,51 +130,6 @@ const DURATION_PRESETS = [
  */
 const CAPACITY_PRESETS = [2, 4, 6, 8, 10, 12, 16, 20];
 
-/**
- * One block of the create form. A rule and generous space separate sections —
- * this is a single scrollable form, not a wizard, so numbered steps would
- * promise a progression that isn't there.
- */
-function FormSection({
-  icon,
-  title,
-  caption,
-  children,
-}: {
-  icon: IconSymbolName;
-  title: string;
-  caption?: string;
-  children: React.ReactNode;
-}) {
-  const colorScheme = useColorScheme() ?? 'light';
-  const palette = Colors[colorScheme];
-
-  return (
-    <View style={[styles.formSection, { borderTopColor: palette.border }]}>
-      <View style={styles.formSectionHeader}>
-        <IconSymbol color={palette.tint} name={icon} size={19} />
-        <Text style={[TypeScale.sectionTitle, styles.formSectionTitle, { color: palette.text }]}>
-          {title}
-        </Text>
-        {caption ? (
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>{caption}</Text>
-        ) : null}
-      </View>
-      <View style={styles.formSectionBody}>{children}</View>
-    </View>
-  );
-}
-
-/** Quiet label for a group inside a section (e.g. "Duration" under Time). */
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  const colorScheme = useColorScheme() ?? 'light';
-  const palette = Colors[colorScheme];
-
-  return (
-    <Text style={[TypeScale.label, styles.fieldLabel, { color: palette.icon }]}>{children}</Text>
-  );
-}
-
 /** "HH:MM" + minutes, or null when it would cross midnight (end must be same-day). */
 function addMinutesToTime(time: string, minutes: number): string | null {
   const [hours, mins] = time.split(':').map(Number);
@@ -179,6 +141,7 @@ function addMinutesToTime(time: string, minutes: number): string | null {
 }
 
 export default function CreateSessionScreen() {
+  const router = useRouter();
   const { classId: requestedClassId, locationId: requestedLocationId } = useLocalSearchParams<{
     classId?: string;
     locationId?: string;
@@ -186,6 +149,9 @@ export default function CreateSessionScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const { onPullScroll, pullDistance } = usePullToRefreshDistance();
+  // Presented as a transparentModal route, so it drives its own entrance.
+  const { panelStyle, scrimStyle } = useOverlayEntrance(true);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [classes, setClasses] = useState<string[]>([]);
   const [locations, setLocations] = useState<StudyLocation[]>([]);
@@ -202,7 +168,11 @@ export default function CreateSessionScreen() {
   const [endTime, setEndTime] = useState('');
   const [capacity, setCapacity] = useState(SESSION_CAPACITY_DEFAULT);
   const [focusText, setFocusText] = useState('');
-  const { toast, show: showToast } = useSuccessToast();
+  const [createdSession, setCreatedSession] = useState<{
+    classId: string;
+    locationName: string;
+    sessionId: string;
+  } | null>(null);
   const [status, setStatus] = useState('Sign in to create a study session.');
   const [scheduleHint, setScheduleHint] = useState(
     `Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`
@@ -406,7 +376,7 @@ export default function CreateSessionScreen() {
 
     try {
       setIsSaving(true);
-      await createSession({
+      const sessionId = await createSession({
         classId: selectedClass,
         hostId: currentUser.uid,
         locationId: selectedLocationId,
@@ -425,13 +395,11 @@ export default function CreateSessionScreen() {
         ),
       });
       setStatus('Your session is live. Classmates can join now.');
-      setScheduleHint(`Choose a date between today and the next ${MAX_DAYS_IN_FUTURE} days.`);
-      setSessionDate('');
-      setStartTime('');
-      setEndTime('');
-      setCapacity(SESSION_CAPACITY_DEFAULT);
-      setFocusText('');
-      showToast('Session posted', sessionTitle);
+      setCreatedSession({
+        classId: selectedClass,
+        locationName: selectedLocation?.name ?? 'your study spot',
+        sessionId,
+      });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Unable to create the study session right now.';
@@ -471,23 +439,77 @@ export default function CreateSessionScreen() {
     (location) => location.locationId === selectedLocationId
   );
   const placeholderColor = colorScheme === 'dark' ? '#9F918B' : Brand.charcoal400;
+  const handleCreatedTransitionFinish = useCallback(() => {
+    if (!createdSession) {
+      return;
+    }
+
+    router.replace({
+      pathname: '/session/[sessionId]',
+      params: { sessionId: createdSession.sessionId },
+    });
+  }, [createdSession, router]);
 
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
-      style={[styles.screen, { backgroundColor: palette.background }]}>
+      style={styles.overlay}>
+      <Animated.View style={[StyleSheet.absoluteFill, styles.scrim, scrimStyle]} />
+      <Pressable
+        accessibilityLabel="Close"
+        accessibilityRole="button"
+        onPress={() => router.back()}
+        style={StyleSheet.absoluteFill}
+      />
+      <Animated.View
+        accessibilityViewIsModal
+        style={[
+          styles.panel,
+          Elevation.e3,
+          panelStyle,
+          {
+            backgroundColor: palette.background,
+            borderColor: palette.border,
+            marginTop: insets.top + Space.md,
+          },
+        ]}>
+        <View style={[styles.panelHeader, { borderBottomColor: palette.border }]}>
+          <View style={styles.panelHeaderCopy}>
+            <Text style={[TypeScale.h2, { color: palette.text }]}>New session</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+              Classmates can join once you post it
+            </Text>
+          </View>
+          <Pressable
+            accessibilityLabel="Close"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={() => router.back()}
+            style={({ pressed }) => [
+              styles.closeButton,
+              { backgroundColor: palette.surfaceMuted, opacity: pressed ? 0.6 : 1 },
+            ]}>
+            <IconSymbol name="xmark" size={17} color={palette.text} />
+          </Pressable>
+        </View>
       <ScrollView
         keyboardShouldPersistTaps="handled"
-        style={styles.screen}
+        onScroll={onPullScroll}
+        scrollEventThrottle={16}
         refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+          <RefreshControl
+            colors={['transparent']}
+            progressBackgroundColor="transparent"
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor="transparent"
+          />
         }
         contentContainerStyle={[
           styles.content,
-          { paddingBottom: insets.bottom + 56, paddingTop: Space.lg },
+          { paddingBottom: Math.max(insets.bottom, Space.lg) },
         ]}>
-        {/* The modal header titles this screen and the sections below explain
+        {/* The panel header titles this screen and the sections below explain
             themselves, so there's no intro copy here. Only real status — an
             error or a save result — earns a line. */}
         {status ? (
@@ -851,7 +873,14 @@ export default function CreateSessionScreen() {
         />
         </ScreenTransition>
       </ScrollView>
-      <SuccessToast toast={toast} />
+      <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
+      </Animated.View>
+      <SessionCreatedTransition
+        classId={createdSession?.classId ?? ''}
+        locationName={createdSession?.locationName ?? ''}
+        onFinish={handleCreatedTransitionFinish}
+        visible={createdSession !== null}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -860,8 +889,45 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
   },
+  overlay: {
+    flex: 1,
+    justifyContent: 'flex-start',
+  },
+  scrim: {
+    backgroundColor: 'rgba(18, 24, 21, 0.32)',
+  },
+  panel: {
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    marginHorizontal: Space.md,
+    maxHeight: '88%',
+    overflow: 'hidden',
+  },
+  panelHeader: {
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+    paddingBottom: Space.md,
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
+  },
+  panelHeaderCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  closeButton: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
   content: {
-    padding: Space.lg + 4,
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
   },
   transition: {
     gap: Space.xxl,
@@ -874,47 +940,12 @@ const styles = StyleSheet.create({
   section: {
     gap: Space.md,
   },
-  formSection: {
-    borderTopWidth: 1,
-    gap: Space.md,
-    paddingTop: Space.lg,
-  },
-  formSectionHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Space.sm,
-  },
-  formSectionTitle: {
-    marginRight: Space.xs,
-  },
-  formSectionBody: {
-    gap: Space.md,
-  },
   formStatus: {
     marginBottom: Space.xs,
   },
   showAllRow: {
     borderBottomWidth: 0,
     justifyContent: 'center',
-  },
-  fieldLabel: {
-    marginBottom: -Space.xs,
-  },
-  stepHeader: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    gap: Space.md,
-  },
-  stepIcon: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 32,
-    width: 28,
-  },
-  stepCopy: {
-    flex: 1,
-    gap: 2,
   },
   chipRow: {
     flexDirection: 'row',

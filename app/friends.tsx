@@ -1,5 +1,5 @@
 import { Stack, useFocusEffect, useRouter, type Href } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -15,6 +15,7 @@ import type { QueryDocumentSnapshot } from 'firebase/firestore';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
@@ -29,6 +30,7 @@ import {
   cancelFriendRequest,
   declineFriendRequest,
   FRIEND_SEARCH_MIN_QUERY_LENGTH,
+  getFriendStatus,
   getFriendsPage,
   getIncomingRequestsPage,
   getOutgoingRequestsPage,
@@ -39,6 +41,7 @@ import {
   sharedClasses,
   type FriendListItem,
   type FriendRequestListItem,
+  type FriendStatus,
   type SuggestedClassmate,
 } from '@/lib/friends';
 
@@ -100,6 +103,54 @@ export default function FriendsScreen() {
   const [searchResults, setSearchResults] = useState<UserProfile[]>([]);
   const [searchState, setSearchState] = useState<LoadState | 'idle'>('idle');
   const [sentTo, setSentTo] = useState<Set<string>>(() => new Set());
+  const [searchStatuses, setSearchStatuses] = useState<Map<string, FriendStatus>>(
+    () => new Map()
+  );
+  const [pendingRemoval, setPendingRemoval] = useState<{ uid: string; name: string } | null>(
+    null
+  );
+  const [pendingRequest, setPendingRequest] = useState<{
+    uid: string;
+    name: string;
+    source: 'search' | 'suggested';
+  } | null>(null);
+
+  /**
+   * A search hit is not necessarily a stranger. Without this, someone you're
+   * already buddies with — or who already requested you — still renders an
+   * "Add" button, which either fails against the rules or creates a second
+   * request pointing the other way.
+   */
+  const relationshipByUid = useMemo(() => {
+    const relationships = new Map<string, FriendStatus>();
+
+    for (const item of friends) {
+      relationships.set(item.friendUid, 'friends');
+    }
+    for (const item of incoming) {
+      if (!relationships.has(item.otherUid)) {
+        relationships.set(item.otherUid, 'incoming');
+      }
+    }
+    for (const item of outgoing) {
+      if (!relationships.has(item.otherUid)) {
+        relationships.set(item.otherUid, 'outgoing');
+      }
+    }
+    // Resolved per search hit, so it wins over whatever the tab lists happen
+    // to have cached.
+    for (const [uid, status] of searchStatuses) {
+      relationships.set(uid, status);
+    }
+    // Sent this session — last so an optimistic send always shows.
+    for (const uid of sentTo) {
+      if ((relationships.get(uid) ?? 'none') === 'none') {
+        relationships.set(uid, 'outgoing');
+      }
+    }
+
+    return relationships;
+  }, [friends, incoming, outgoing, searchStatuses, sentTo]);
 
   useEffect(() => subscribeToAuthState(setCurrentUser), []);
 
@@ -263,6 +314,19 @@ export default function FriendsScreen() {
         const results = await searchUsersByNamePrefix(currentUser.uid, trimmed);
         setSearchResults(results);
         setSearchState('ready');
+
+        // Search runs regardless of which tab is loaded, so the tab lists
+        // can't be trusted to know these people. Resolve each hit directly.
+        const statuses = await Promise.all(
+          results.map(async (result) => {
+            try {
+              return [result.uid, await getFriendStatus(currentUser.uid, result.uid)] as const;
+            } catch {
+              return [result.uid, 'none'] as const;
+            }
+          })
+        );
+        setSearchStatuses(new Map(statuses));
       } catch {
         setSearchState('error');
       }
@@ -284,21 +348,25 @@ export default function FriendsScreen() {
     });
   }
 
-  async function handleSend(toUid: string, source: 'search' | 'suggested') {
-    if (!currentUser) return;
-    markPending(toUid, true);
+  // Sending and removing both confirm first (accepting/declining/cancelling
+  // don't — those already read as a direct response to something).
+  async function handleConfirmSend() {
+    const target = pendingRequest;
+    if (!currentUser || !target) return;
+    markPending(target.uid, true);
     try {
-      await sendFriendRequest(currentUser.uid, toUid);
-      track('friend_request_sent', { source });
-      if (source === 'search') {
-        setSentTo((current) => new Set(current).add(toUid));
+      await sendFriendRequest(currentUser.uid, target.uid);
+      track('friend_request_sent', { source: target.source });
+      if (target.source === 'search') {
+        setSentTo((current) => new Set(current).add(target.uid));
       } else {
-        setSuggested((current) => current.filter((item) => item.profile.uid !== toUid));
+        setSuggested((current) => current.filter((item) => item.profile.uid !== target.uid));
       }
+      setPendingRequest(null);
     } catch {
-      // Leave the button re-enabled so the user can retry.
+      // Leave the dialog open so the request can be retried.
     } finally {
-      markPending(toUid, false);
+      markPending(target.uid, false);
     }
   }
 
@@ -344,17 +412,20 @@ export default function FriendsScreen() {
     }
   }
 
-  async function handleRemove(friendUid: string) {
-    if (!currentUser) return;
-    markPending(friendUid, true);
+  // Removing a buddy is not undoable from the UI, so it always asks first.
+  async function handleConfirmRemove() {
+    const target = pendingRemoval;
+    if (!currentUser || !target) return;
+    markPending(target.uid, true);
     try {
-      await removeFriend(currentUser.uid, friendUid);
+      await removeFriend(currentUser.uid, target.uid);
       track('friend_removed');
-      setFriends((current) => current.filter((item) => item.friendUid !== friendUid));
+      setFriends((current) => current.filter((item) => item.friendUid !== target.uid));
+      setPendingRemoval(null);
     } catch {
       // keep the row
     } finally {
-      markPending(friendUid, false);
+      markPending(target.uid, false);
     }
   }
 
@@ -396,10 +467,10 @@ export default function FriendsScreen() {
           results={searchResults}
           myClasses={myClasses}
           pendingUids={pendingUids}
-          sentTo={sentTo}
+          relationshipByUid={relationshipByUid}
           palette={palette}
           onOpen={openProfile}
-          onSend={(uid) => handleSend(uid, 'search')}
+          onSend={(uid, name) => setPendingRequest({ uid, name, source: 'search' })}
         />
       ) : tab === 'friends' ? (
         <FriendsList
@@ -412,7 +483,7 @@ export default function FriendsScreen() {
           onEndReached={loadMoreFriends}
           onRetry={loadFriends}
           onOpen={openProfile}
-          onRemove={handleRemove}
+          onRemove={(uid, name) => setPendingRemoval({ uid, name })}
           onBrowseSuggested={() => setTab('suggested')}
         />
       ) : tab === 'requests' ? (
@@ -444,12 +515,32 @@ export default function FriendsScreen() {
           hasClasses={myClasses.length > 0}
           onRetry={loadSuggested}
           onOpen={openProfile}
-          onSend={(uid) => handleSend(uid, 'suggested')}
+          onSend={(uid, name) => setPendingRequest({ uid, name, source: 'suggested' })}
         />
       )}
       </ScreenTransition>
 
       <View style={{ height: insets.bottom }} />
+
+      <ConfirmDialog
+        visible={!!pendingRequest}
+        title={`Send ${pendingRequest?.name ?? 'this student'} a study buddy request?`}
+        body="They'll see your request and can accept or ignore it."
+        confirmLabel="Send request"
+        loading={!!pendingRequest && pendingUids.has(pendingRequest.uid)}
+        onConfirm={handleConfirmSend}
+        onCancel={() => setPendingRequest(null)}
+      />
+
+      <ConfirmDialog
+        visible={!!pendingRemoval}
+        title={`Remove ${pendingRemoval?.name ?? 'this student'}?`}
+        body="You'll both stop being study buddies. You can send a new request later."
+        confirmLabel="Remove"
+        loading={!!pendingRemoval && pendingUids.has(pendingRemoval.uid)}
+        onConfirm={handleConfirmRemove}
+        onCancel={() => setPendingRemoval(null)}
+      />
     </View>
   );
 }
@@ -533,7 +624,7 @@ function FriendsList({
   onEndReached: () => void;
   onRetry: () => void;
   onOpen: (uid: string) => void;
-  onRemove: (uid: string) => void;
+  onRemove: (uid: string, name: string) => void;
   onBrowseSuggested: () => void;
 }) {
   if (state !== 'ready') {
@@ -571,7 +662,7 @@ function FriendsList({
               variant="ghost"
               size="sm"
               disabled={pendingUids.has(item.friendUid)}
-              onPress={() => onRemove(item.friendUid)}
+              onPress={() => onRemove(item.friendUid, name)}
             />
           </Pressable>
         );
@@ -765,7 +856,7 @@ function SuggestedList({
   hasClasses: boolean;
   onRetry: () => void;
   onOpen: (uid: string) => void;
-  onSend: (uid: string) => void;
+  onSend: (uid: string, name: string) => void;
 }) {
   if (state !== 'ready') {
     return <LoadingOrError state={state} palette={palette} onRetry={onRetry} />;
@@ -804,7 +895,7 @@ function SuggestedList({
               label="Add"
               size="sm"
               disabled={pendingUids.has(item.profile.uid)}
-              onPress={() => onSend(item.profile.uid)}
+              onPress={() => onSend(item.profile.uid, name)}
             />
           </Pressable>
         );
@@ -829,7 +920,7 @@ function SearchResults({
   results,
   myClasses,
   pendingUids,
-  sentTo,
+  relationshipByUid,
   palette,
   onOpen,
   onSend,
@@ -838,10 +929,10 @@ function SearchResults({
   results: UserProfile[];
   myClasses: string[];
   pendingUids: Set<string>;
-  sentTo: Set<string>;
+  relationshipByUid: Map<string, FriendStatus>;
   palette: Palette;
   onOpen: (uid: string) => void;
-  onSend: (uid: string) => void;
+  onSend: (uid: string, name: string) => void;
 }) {
   if (state === 'loading') {
     return (
@@ -867,7 +958,7 @@ function SearchResults({
       contentContainerStyle={styles.listContent}
       renderItem={({ item }) => {
         const shared = sharedClasses(myClasses, item.classes);
-        const alreadySent = sentTo.has(item.uid);
+        const relationship = relationshipByUid.get(item.uid) ?? 'none';
         return (
           <Pressable
             accessibilityRole="button"
@@ -883,13 +974,30 @@ function SearchResults({
               </Text>
               <SharedClassRow codes={shared} />
             </View>
-            <Button
-              label={alreadySent ? 'Sent' : 'Add'}
-              size="sm"
-              variant={alreadySent ? 'secondary' : 'primary'}
-              disabled={alreadySent || pendingUids.has(item.uid)}
-              onPress={() => onSend(item.uid)}
-            />
+            {relationship === 'incoming' ? (
+              // They asked first — answering happens on their request row, so
+              // this points there instead of offering a mirrored request.
+              <Button
+                label="Respond"
+                size="sm"
+                variant="secondary"
+                onPress={() => onOpen(item.uid)}
+              />
+            ) : (
+              <Button
+                label={
+                  relationship === 'friends'
+                    ? 'Buddies'
+                    : relationship === 'outgoing'
+                      ? 'Requested'
+                      : 'Add'
+                }
+                size="sm"
+                variant={relationship === 'none' ? 'primary' : 'secondary'}
+                disabled={relationship !== 'none' || pendingUids.has(item.uid)}
+                onPress={() => onSend(item.uid, item.displayName || 'this student')}
+              />
+            )}
           </Pressable>
         );
       }}

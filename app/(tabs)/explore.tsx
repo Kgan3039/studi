@@ -1,7 +1,18 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import {
+  AccessibilityInfo,
   ActivityIndicator,
+  Animated,
+  Easing,
+  LayoutAnimation,
   Linking,
   Platform,
   Pressable,
@@ -23,10 +34,14 @@ import { FilterChip } from '@/components/ui/FilterChip';
 import { Sheet } from '@/components/ui/Sheet';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import type { IconSymbolName } from '@/components/ui/icon-symbol';
+import {
+  PullToRefreshIndicator,
+  usePullToRefreshDistance,
+} from '@/components/ui/PullToRefreshIndicator';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
-import { Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
+import { Brand, Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import {
   getAtmosphereFiltersForLocationTags,
   type LocationAtmosphereFilter,
@@ -36,6 +51,7 @@ import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   getLocationRatingAggregates,
+  getOwnLocationRatings,
   getLocations,
   getUpcomingSessions,
   getUserProfile,
@@ -129,21 +145,76 @@ function formatSessionTime(session: StudySession) {
   return `${start.toLocaleDateString('en-US', { weekday: 'short' })}, ${time}`;
 }
 
+function ExpandedLocationDetails({
+  backgroundColor,
+  children,
+  reduceMotion,
+}: {
+  backgroundColor: string;
+  children: ReactNode;
+  reduceMotion: boolean;
+}) {
+  const progress = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
+
+  useEffect(() => {
+    if (reduceMotion) {
+      progress.setValue(1);
+      return;
+    }
+
+    Animated.timing(progress, {
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      toValue: 1,
+      useNativeDriver: true,
+    }).start();
+  }, [progress, reduceMotion]);
+
+  return (
+    <Animated.View
+      style={[
+        styles.locationDetails,
+        {
+          backgroundColor,
+          opacity: progress,
+          transform: [
+            {
+              translateY: progress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [-8, 0],
+              }),
+            },
+          ],
+        },
+      ]}>
+      {children}
+    </Animated.View>
+  );
+}
+
 export default function StudyLocationsScreen() {
   const router = useRouter();
-  const { locationId: requestedLocationId } = useLocalSearchParams<{ locationId?: string }>();
+  const { locationId: requestedLocationId, locationRequest } = useLocalSearchParams<{
+    locationId?: string;
+    locationRequest?: string;
+  }>();
   const scrollViewRef = useRef<ScrollView>(null);
+  const scrollYRef = useRef(0);
+  const locationRowRefs = useRef(new Map<string, View>());
+  const pendingScrollLocationRef = useRef<string | null>(null);
   const appliedRequestedLocationRef = useRef<string | null>(null);
   const loadRequestRef = useRef(0);
   const isMountedRef = useRef(true);
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const { onPullScroll, pullDistance } = usePullToRefreshDistance();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authResolved, setAuthResolved] = useState(false);
   const [locations, setLocations] = useState<StudyLocation[]>([]);
   const [sessions, setSessions] = useState<StudySession[]>([]);
   const [profileClasses, setProfileClasses] = useState<string[]>([]);
+  const [ownRatings, setOwnRatings] = useState<Map<string, number>>(new Map());
   const [ratingAggregates, setRatingAggregates] = useState<Map<string, LocationRatingAggregate>>(
     new Map()
   );
@@ -169,6 +240,9 @@ export default function StudyLocationsScreen() {
     setAtmosphereFilters([]);
   }
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
+  const [expandedLocationId, setExpandedLocationId] = useState<string | null>(null);
+  const [scrollRequestNonce, setScrollRequestNonce] = useState(0);
+  const [reduceMotion, setReduceMotion] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -178,6 +252,13 @@ export default function StudyLocationsScreen() {
     return () => {
       isMountedRef.current = false;
     };
+  }, []);
+
+  useEffect(() => {
+    void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+
+    return () => subscription.remove();
   }, []);
 
   useEffect(() => {
@@ -205,12 +286,14 @@ export default function StudyLocationsScreen() {
     setIsLoading(true);
 
     try {
-      const [loadedLocations, loadedSessions, aggregatesResult, profileResult] = await Promise.all([
-        getLocations(),
-        getUpcomingSessions({ includeInProgress: true }).catch(() => []),
-        getLocationRatingAggregates().catch(() => new Map<string, LocationRatingAggregate>()),
-        getUserProfile(currentUser.uid).catch(() => null),
-      ]);
+      const [loadedLocations, loadedSessions, aggregatesResult, profileResult, ownRatingsResult] =
+        await Promise.all([
+          getLocations(),
+          getUpcomingSessions({ includeInProgress: true }).catch(() => []),
+          getLocationRatingAggregates().catch(() => new Map<string, LocationRatingAggregate>()),
+          getUserProfile(currentUser.uid).catch(() => null),
+          getOwnLocationRatings(currentUser.uid).catch(() => new Map<string, number>()),
+        ]);
       // Sessions may reference Firestore-only alias ids (e.g. `morgridge`);
       // the pin list only carries the curated ids, so canonicalize before
       // grouping or those sessions never show up on the map.
@@ -236,6 +319,16 @@ export default function StudyLocationsScreen() {
       setLocations(loadedLocations);
       setSessions(canonicalSessions);
       setRatingAggregates(aggregatesResult);
+      // Stored ids can be Firestore-only aliases, so canonicalize to match the
+      // curated ids the list renders against.
+      setOwnRatings(
+        new Map(
+          [...ownRatingsResult].map(([locationId, stars]) => [
+            canonicalStudyLocationId(locationId),
+            stars,
+          ])
+        )
+      );
       setProfileClasses(profileResult?.classes ?? []);
       setSelectedLocationId((current) => current ?? firstLocation?.locationId ?? null);
       setLoadMessage(
@@ -347,14 +440,21 @@ export default function StudyLocationsScreen() {
     sessionsByLocationId,
   ]);
 
+  // Clear a map selection or expanded row when filters remove that spot.
   useEffect(() => {
     if (
-      filteredLocations.length > 0 &&
+      selectedLocationId &&
       !filteredLocations.some((location) => location.locationId === selectedLocationId)
     ) {
-      setSelectedLocationId(filteredLocations[0].locationId);
+      setSelectedLocationId(null);
     }
-  }, [filteredLocations, selectedLocationId]);
+    if (
+      expandedLocationId &&
+      !filteredLocations.some((location) => location.locationId === expandedLocationId)
+    ) {
+      setExpandedLocationId(null);
+    }
+  }, [expandedLocationId, filteredLocations, selectedLocationId]);
 
   const visibleLocationIds = useMemo(
     () => new Set(filteredLocations.map((location) => location.locationId)),
@@ -423,18 +523,18 @@ export default function StudyLocationsScreen() {
     return timings;
   }, [visibleSessions]);
 
-  const selectedLocation =
-    filteredLocations.find((location) => location.locationId === selectedLocationId) ?? null;
-  const selectedSessions = selectedLocation
-    ? [...(sessionsByLocationId.get(selectedLocation.locationId) ?? [])].sort(
+  const expandedLocation =
+    filteredLocations.find((location) => location.locationId === expandedLocationId) ?? null;
+  const expandedOwnStars = expandedLocation
+    ? ownRatings.get(expandedLocation.locationId)
+    : undefined;
+  const selectedSessions = expandedLocation
+    ? [...(sessionsByLocationId.get(expandedLocation.locationId) ?? [])].sort(
         (first, second) =>
           (getTimestampMillis(first.startTime) ?? Number.MAX_SAFE_INTEGER) -
           (getTimestampMillis(second.startTime) ?? Number.MAX_SAFE_INTEGER)
       )
     : [];
-  const selectedRating = selectedLocation
-    ? ratingAggregates.get(selectedLocation.locationId)
-    : undefined;
 
   async function handleRefresh() {
     setIsRefreshing(true);
@@ -448,20 +548,75 @@ export default function StudyLocationsScreen() {
     }
   }
 
-  function selectLocation(locationId: string) {
+  // A pin tap is intentionally lightweight: it identifies the spot on the map
+  // without moving the screen or opening a large block of content.
+  const selectLocation = useCallback((locationId: string) => {
     setSelectedLocationId(locationId);
+  }, []);
 
-    requestAnimationFrame(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
+  const animateDetailsLayout = useCallback(() => {
+    if (reduceMotion) {
+      return;
+    }
+
+    LayoutAnimation.configureNext({
+      create: {
+        duration: 200,
+        property: LayoutAnimation.Properties.opacity,
+        type: LayoutAnimation.Types.easeOut,
+      },
+      delete: {
+        duration: 180,
+        property: LayoutAnimation.Properties.opacity,
+        type: LayoutAnimation.Types.easeIn,
+      },
+      duration: 240,
+      update: {
+        duration: 240,
+        type: LayoutAnimation.Types.easeInEaseOut,
+      },
     });
-  }
+  }, [reduceMotion]);
+
+  const toggleLocationDetails = useCallback(
+    (locationId: string) => {
+      animateDetailsLayout();
+      setSelectedLocationId(locationId);
+      setExpandedLocationId((current) => (current === locationId ? null : locationId));
+    },
+    [animateDetailsLayout]
+  );
+
+  const openLocationDetails = useCallback(
+    (locationId: string, scrollToRow = false) => {
+      animateDetailsLayout();
+      setSelectedLocationId(locationId);
+      setExpandedLocationId(locationId);
+
+      if (scrollToRow) {
+        pendingScrollLocationRef.current = locationId;
+        setScrollRequestNonce((current) => current + 1);
+      }
+    },
+    [animateDetailsLayout]
+  );
+  const handleOpenLocationFromMap = useCallback(
+    (locationId: string) => openLocationDetails(locationId, true),
+    [openLocationDetails]
+  );
 
   // Arriving from a link (e.g. a spot on Profile) opens that spot's details
   // rather than dropping the person at the top of an unfiltered map.
   useEffect(() => {
     const requested = requestedLocationId?.trim();
 
-    if (!requested || locations.length === 0 || appliedRequestedLocationRef.current === requested) {
+    const requestKey = `${requested ?? ''}:${locationRequest ?? ''}`;
+
+    if (
+      !requested ||
+      locations.length === 0 ||
+      appliedRequestedLocationRef.current === requestKey
+    ) {
       return;
     }
 
@@ -472,13 +627,188 @@ export default function StudyLocationsScreen() {
       return;
     }
 
-    appliedRequestedLocationRef.current = requested;
+    appliedRequestedLocationRef.current = requestKey;
     // Clear narrowing filters so the requested spot can't be filtered out from
     // under the person who just asked for it.
     clearSpotFilters();
     setSearchQuery('');
-    selectLocation(canonicalId);
-  }, [locations, requestedLocationId]);
+    openLocationDetails(canonicalId, true);
+  }, [locationRequest, locations, openLocationDetails, requestedLocationId]);
+
+  useEffect(() => {
+    const locationId = pendingScrollLocationRef.current;
+
+    if (!locationId) {
+      return;
+    }
+
+    let animationFrame: number | null = null;
+    let cancelled = false;
+    let attempts = 0;
+
+    const scrollWhenReady = () => {
+      if (cancelled || pendingScrollLocationRef.current !== locationId) {
+        return;
+      }
+
+      const row = locationRowRefs.current.get(locationId);
+
+      // Filtering and the inline-details layout commit on separate frames.
+      // Keep the request alive until the row has a real screen position rather
+      // than silently abandoning it just because the row was not mounted yet.
+      if (!row) {
+        attempts += 1;
+        if (attempts < 10) {
+          animationFrame = requestAnimationFrame(scrollWhenReady);
+        }
+        return;
+      }
+
+      row.measureInWindow((_x, y, _width, height) => {
+        if (cancelled || !Number.isFinite(y) || !Number.isFinite(height) || height <= 0) {
+          attempts += 1;
+          if (attempts < 10) {
+            animationFrame = requestAnimationFrame(scrollWhenReady);
+          }
+          return;
+        }
+
+        const topInset = insets.top + Space.md;
+        const targetOffset = Math.max(0, scrollYRef.current + y - topInset);
+
+        scrollViewRef.current?.scrollTo({
+          animated: !reduceMotion,
+          y: targetOffset,
+        });
+        pendingScrollLocationRef.current = null;
+      });
+    };
+
+    // One frame allows the selected row and its expanded panel to commit;
+    // retries above cover slower mounts without adding a visible delay.
+    animationFrame = requestAnimationFrame(scrollWhenReady);
+
+    return () => {
+      cancelled = true;
+      if (animationFrame !== null) {
+        cancelAnimationFrame(animationFrame);
+      }
+    };
+  }, [expandedLocationId, filteredLocations.length, insets.top, reduceMotion, scrollRequestNonce]);
+
+  /**
+   * The expanded panel for the selected spot. Rendered inline under its own
+   * row, so it reads as that row opening rather than a sheet at the bottom of
+   * an unrelated list.
+   */
+  function renderLocationDetails() {
+    if (!expandedLocation) {
+      return null;
+    }
+
+    const tags = getLocationTags(expandedLocation).slice(0, 3);
+
+    return (
+      // No card here: this already sits inside the spots list, and a bordered
+      // panel inside a bordered list is the card-in-card the anti-slop rules
+      // reject. An indent plus the row's own tint is enough to show it belongs
+      // to the spot above it.
+      <ExpandedLocationDetails
+        backgroundColor={palette.surfaceMuted}
+        reduceMotion={reduceMotion}>
+        {expandedLocation.notes ? (
+          <Text style={[TypeScale.body, { color: palette.text }]}>
+            {expandedLocation.notes}
+          </Text>
+        ) : null}
+
+        {tags.length > 0 ? (
+          <View style={styles.tagRow}>
+            {tags.map((tag) => (
+              <View
+                key={tag}
+                style={[styles.tag, { backgroundColor: palette.background }]}>
+                <Text style={[TypeScale.caption, { color: palette.icon }]}>{tag}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        <View style={styles.detailsActions}>
+          <Button
+            icon="mappin.and.ellipse"
+            label="Directions"
+            size="sm"
+            onPress={() => openDirections(expandedLocation)}
+          />
+          <Button
+            icon="star.fill"
+            label={
+              expandedOwnStars !== undefined ? `Your rating · ${expandedOwnStars}` : 'Rate'
+            }
+            size="sm"
+            variant="secondary"
+            onPress={() => rateLocation(expandedLocation)}
+          />
+        </View>
+
+        {selectedSessions.length > 0 ? (
+          <View style={[styles.sessionList, { borderTopColor: palette.border }]}>
+            {selectedSessions.slice(0, 3).map((session) => {
+              const live = isLive(session, Date.now());
+              const participantCount = Array.isArray(session.participantIds)
+                ? session.participantIds.length
+                : 0;
+
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  key={session.sessionId}
+                  onPress={() => router.push(`/session/${session.sessionId}`)}
+                  style={({ pressed }) => [
+                    styles.sessionRow,
+                    { borderBottomColor: palette.border },
+                    pressed && styles.pressed,
+                  ]}>
+                  <CourseChip code={session.classId} size="sm" />
+                  <View style={styles.sessionCopy}>
+                    <Text numberOfLines={1} style={[TypeScale.bodyStrong, { color: palette.text }]}>
+                      {session.title}
+                    </Text>
+                    <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                      {formatSessionTime(session)}, {participantCount} going
+                    </Text>
+                  </View>
+                  {live ? (
+                    <Text style={[TypeScale.meta, { color: palette.tint }]}>● Live</Text>
+                  ) : (
+                    <MaterialIcons color={palette.icon} name="chevron-right" size={20} />
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={[styles.noSessions, { borderTopColor: palette.border }]}>
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>
+              No sessions here yet.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() =>
+                router.push({
+                  pathname: '/create-session',
+                  params: { locationId: expandedLocation.locationId },
+                })
+              }
+              style={({ pressed }) => [styles.hostLink, pressed && styles.pressed]}>
+              <Text style={[TypeScale.label, { color: palette.tint }]}>Host one here</Text>
+            </Pressable>
+          </View>
+        )}
+      </ExpandedLocationDetails>
+    );
+  }
 
   function openDirections(location: StudyLocation) {
     const destination = encodeURIComponent(
@@ -530,13 +860,20 @@ export default function StudyLocationsScreen() {
     <ScrollView
       ref={scrollViewRef}
       keyboardShouldPersistTaps="handled"
+      onScroll={(event) => {
+        scrollYRef.current = event.nativeEvent.contentOffset.y;
+        onPullScroll(event);
+      }}
       refreshControl={
         <RefreshControl
+          colors={['transparent']}
+          progressBackgroundColor="transparent"
           refreshing={isRefreshing}
           onRefresh={handleRefresh}
-          tintColor={palette.icon}
+          tintColor="transparent"
         />
       }
+      scrollEventThrottle={16}
       style={[styles.screen, { backgroundColor: palette.background }]}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <ScreenHeader
@@ -603,6 +940,7 @@ export default function StudyLocationsScreen() {
         <CampusMap
           locations={locations}
           onOpenCampusMap={openCampusMap}
+          onOpenLocation={handleOpenLocationFromMap}
           onSelectLocation={selectLocation}
           selectedLocationId={selectedLocationId}
           sessionTimingByLocation={sessionTimingByLocation}
@@ -626,174 +964,107 @@ export default function StudyLocationsScreen() {
 
             {filteredLocations.map((location) => {
               const isSelected = selectedLocationId === location.locationId;
+              const isExpanded = expandedLocationId === location.locationId;
               const sessionCount = sessionsByLocation.get(location.locationId) ?? 0;
               const aggregate = ratingAggregates.get(location.locationId);
+              const ownStars = ownRatings.get(location.locationId);
 
               return (
                 <View
                   key={location.locationId}
-                  style={[
-                    styles.locationListItem,
-                    {
-                      backgroundColor: isSelected ? palette.surfaceMuted : palette.background,
-                      borderBottomColor: palette.border,
-                    },
-                  ]}>
-                  <View style={styles.locationListCopy}>
-                    <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
-                      {location.name}
-                    </Text>
-                    <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                      {location.campusArea}, {sessionCount} upcoming{' '}
-                      {sessionCount === 1 ? 'session' : 'sessions'}
-                      {aggregate ? `, ${aggregate.averageStars} stars` : ''}
-                    </Text>
+                  ref={(node) => {
+                    if (node) {
+                      locationRowRefs.current.set(location.locationId, node);
+                    } else {
+                      locationRowRefs.current.delete(location.locationId);
+                    }
+                  }}>
+                  <View
+                    style={[
+                      styles.locationListItem,
+                      {
+                        backgroundColor: isSelected ? palette.surfaceMuted : palette.background,
+                        borderBottomColor: isSelected ? 'transparent' : palette.border,
+                      },
+                    ]}>
+                    <View style={styles.locationListCopy}>
+                      <View style={styles.locationNameRow}>
+                        <Text
+                          style={[TypeScale.bodyStrong, styles.locationNameText, { color: palette.text }]}>
+                          {location.name}
+                        </Text>
+                        {/* Your own rating, called out separately from the
+                            crowd average — otherwise there's nothing on the row
+                            that distinguishes a spot you've rated from one you
+                            haven't. */}
+                        {ownStars !== undefined ? (
+                          <View
+                            style={[styles.ratedBadge, { backgroundColor: palette.surfaceMuted }]}>
+                            <IconSymbol
+                              color={colorScheme === 'dark' ? Brand.starDark : Brand.star}
+                              name="star.fill"
+                              size={11}
+                            />
+                            <Text style={[TypeScale.micro, { color: palette.text }]}>
+                              You rated {ownStars}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      {/* One line, always. The long form wrapped to three lines
+                          and left "stars" hanging on its own. */}
+                      <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+                        {[
+                          location.campusArea,
+                          `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`,
+                          aggregate ? `★ ${aggregate.averageStars}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </Text>
+                    </View>
+                    <View style={styles.locationListActions}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityState={{ expanded: isExpanded }}
+                        onPress={() => toggleLocationDetails(location.locationId)}
+                        style={({ pressed }) => [
+                          styles.locationListButton,
+                          pressed && styles.pressed,
+                        ]}>
+                        <Text style={[TypeScale.label, { color: palette.tint }]}>Details</Text>
+                        <MaterialIcons
+                          color={palette.tint}
+                          name={isExpanded ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
+                          size={20}
+                        />
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                          ownStars !== undefined
+                            ? `Edit your ${ownStars} star rating for ${location.name}`
+                            : `Rate ${location.name}`
+                        }
+                        onPress={() => rateLocation(location)}
+                        style={({ pressed }) => [
+                          styles.locationListButton,
+                          pressed && styles.pressed,
+                        ]}>
+                        <Text style={[TypeScale.label, { color: palette.tint }]}>
+                          {ownStars !== undefined ? 'Edit' : 'Rate'}
+                        </Text>
+                      </Pressable>
+                    </View>
                   </View>
-                  <View style={styles.locationListActions}>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: isSelected }}
-                      onPress={() => selectLocation(location.locationId)}
-                      style={({ pressed }) => [
-                        styles.locationListButton,
-                        pressed && styles.pressed,
-                      ]}>
-                      <Text style={[TypeScale.label, { color: palette.tint }]}>Details</Text>
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={() => rateLocation(location)}
-                      style={({ pressed }) => [
-                        styles.locationListButton,
-                        pressed && styles.pressed,
-                      ]}>
-                      <Text style={[TypeScale.label, { color: palette.tint }]}>Rate</Text>
-                    </Pressable>
-                  </View>
+                  {/* Details expand under the spot they belong to, so the row you
+                      tapped stays on screen next to its own information. */}
+                  {isExpanded ? renderLocationDetails() : null}
                 </View>
               );
             })}
           </View>
 
-          {selectedLocation ? (
-            <View
-              style={[
-                styles.locationSheet,
-                Elevation.e2,
-                { backgroundColor: palette.background, borderColor: palette.border },
-              ]}>
-              <View style={[styles.sheetHandle, { backgroundColor: palette.outline }]} />
-              <View style={styles.sheetHeadingRow}>
-                <View style={styles.locationHeading}>
-                  <Text style={[TypeScale.meta, { color: palette.icon }]}>
-                    {selectedLocation.campusArea}
-                  </Text>
-                  <Text style={[TypeScale.h2, { color: palette.text }]}>
-                    {selectedLocation.name}
-                  </Text>
-                  <Text style={[TypeScale.meta, { color: palette.icon }]}>
-                    {selectedSessions.length} upcoming{' '}
-                    {selectedSessions.length === 1 ? 'session' : 'sessions'}
-                    {selectedRating ? `, ${selectedRating.averageStars} stars` : ''}
-                  </Text>
-                </View>
-                <Pressable
-                  accessibilityLabel={`Get directions to ${selectedLocation.name}`}
-                  accessibilityRole="link"
-                  onPress={() => openDirections(selectedLocation)}
-                  style={({ pressed }) => [
-                    styles.directionsButton,
-                    { backgroundColor: palette.tint },
-                    pressed && styles.pressed,
-                  ]}>
-                  <MaterialIcons color="#FFFFFF" name="directions" size={18} />
-                  <Text style={[TypeScale.label, { color: '#FFFFFF' }]}>Directions</Text>
-                </Pressable>
-              </View>
-
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => rateLocation(selectedLocation)}
-                style={({ pressed }) => [styles.rateLink, pressed && styles.pressed]}>
-                <MaterialIcons color={palette.tint} name="star-rate" size={18} />
-                <Text style={[TypeScale.label, { color: palette.tint }]}>Rate this spot</Text>
-              </Pressable>
-
-              <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={2}>
-                {selectedLocation.notes}
-              </Text>
-
-              <View style={styles.tagRow}>
-                {getLocationTags(selectedLocation).slice(0, 3).map((tag) => (
-                  <View
-                    key={tag}
-                    style={[styles.tag, { backgroundColor: palette.surfaceMuted }]}>
-                    <Text style={[TypeScale.caption, { color: palette.icon }]}>#{tag}</Text>
-                  </View>
-                ))}
-              </View>
-
-              {selectedSessions.length > 0 ? (
-                <View style={[styles.sessionList, { borderTopColor: palette.border }]}>
-                  {selectedSessions.slice(0, 3).map((session) => {
-                    const live = isLive(session, Date.now());
-                    const participantCount = Array.isArray(session.participantIds)
-                      ? session.participantIds.length
-                      : 0;
-
-                    return (
-                      <Pressable
-                        accessibilityRole="button"
-                        key={session.sessionId}
-                        onPress={() => router.push(`/session/${session.sessionId}`)}
-                      style={({ pressed }) => [
-                          styles.sessionRow,
-                          { borderBottomColor: palette.border },
-                          pressed && styles.pressed,
-                        ]}>
-                        <CourseChip code={session.classId} size="sm" />
-                        <View style={styles.sessionCopy}>
-                          <Text
-                            numberOfLines={1}
-                            style={[TypeScale.bodyStrong, { color: palette.text }]}>
-                            {session.title}
-                          </Text>
-                          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                            {formatSessionTime(session)}, {participantCount} going
-                          </Text>
-                        </View>
-                        {live ? (
-                          <Text style={[TypeScale.meta, { color: palette.tint }]}>● Live</Text>
-                        ) : (
-                          <MaterialIcons color={palette.icon} name="chevron-right" size={20} />
-                        )}
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              ) : (
-                <View style={[styles.noSessions, { borderColor: palette.border }]}>
-                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
-                    No sessions here yet
-                  </Text>
-                  <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                    Create one for classmates to join.
-                  </Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() =>
-                      router.push({
-                        pathname: '/create-session',
-                        params: { locationId: selectedLocation.locationId },
-                      })
-                    }
-                    style={({ pressed }) => [styles.hostLink, pressed && styles.pressed]}>
-                    <Text style={[TypeScale.label, { color: palette.tint }]}>Host one here →</Text>
-                  </Pressable>
-                </View>
-              )}
-            </View>
-          ) : null}
           </View>
         ) : !isLoading ? (
           <EmptyState
@@ -808,6 +1079,8 @@ export default function StudyLocationsScreen() {
       </View>
       </ScreenTransition>
     </ScrollView>
+
+    <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
 
     <Sheet
       visible={filtersOpen}
@@ -948,6 +1221,23 @@ const styles = StyleSheet.create({
     minHeight: 72,
     padding: Space.md,
   },
+  locationNameRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  locationNameText: {
+    flexShrink: 1,
+  },
+  ratedBadge: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    flexDirection: 'row',
+    gap: Space.xs,
+    paddingHorizontal: Space.sm,
+    paddingVertical: 2,
+  },
   locationListCopy: {
     flex: 1,
     gap: 2,
@@ -958,48 +1248,22 @@ const styles = StyleSheet.create({
   },
   locationListButton: {
     alignItems: 'center',
+    flexDirection: 'row',
     justifyContent: 'center',
     minHeight: 44,
     paddingHorizontal: Space.sm,
   },
-  locationSheet: {
-    borderRadius: Radius.xxl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+  // Inline expansion under the selected row — a recessed surface rather than a
+  // floating sheet, so it reads as part of the list.
+  locationDetails: {
     gap: Space.md,
-    padding: Space.lg,
-    zIndex: 5,
+    paddingBottom: Space.lg,
+    paddingHorizontal: Space.md + 2,
+    paddingTop: Space.xs,
   },
-  sheetHandle: {
-    alignSelf: 'center',
-    borderRadius: Radius.pill,
-    height: 5,
-    marginBottom: Space.xs,
-    width: 48,
-  },
-  sheetHeadingRow: {
-    alignItems: 'center',
+  detailsActions: {
     flexDirection: 'row',
-    gap: Space.md,
-    justifyContent: 'space-between',
-  },
-  locationHeading: {
-    flex: 1,
-    gap: 2,
-  },
-  directionsButton: {
-    alignItems: 'center',
-    borderRadius: Radius.md,
-    flexDirection: 'row',
-    gap: Space.xs,
-    minHeight: 42,
-    paddingHorizontal: Space.md,
-  },
-  rateLink: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    gap: Space.xs,
-    paddingVertical: Space.xs,
+    gap: Space.sm,
   },
   tagRow: {
     flexDirection: 'row',
@@ -1027,13 +1291,14 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   noSessions: {
-    borderTopWidth: StyleSheet.hairlineWidth * 2,
-    gap: 2,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: Space.sm,
+    justifyContent: 'space-between',
     paddingTop: Space.md,
   },
   hostLink: {
-    alignSelf: 'flex-start',
-    marginTop: Space.sm,
     paddingVertical: Space.xs,
   },
   pressed: {

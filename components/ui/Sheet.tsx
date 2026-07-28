@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react';
 import {
+  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -12,6 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { useOverlayEntrance } from '@/components/ui/overlay-motion';
 import { Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
@@ -52,10 +54,11 @@ export function Sheet({
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const { panelStyle, scrimStyle } = useOverlayEntrance(visible);
 
   return (
     <Modal
-      animationType="fade"
+      animationType="none"
       onDismiss={onDismissed}
       onRequestClose={onClose}
       statusBarTranslucent
@@ -64,19 +67,21 @@ export function Sheet({
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.overlay}>
-        {/* Declared first so it sits behind the panel: taps outside land on the
-            scrim, taps inside it do not. */}
+        <Animated.View style={[StyleSheet.absoluteFill, styles.scrim, scrimStyle]} />
+        {/* Declared before the panel so it sits behind it: taps outside land on
+            the scrim, taps inside it do not. */}
         <Pressable
           accessibilityLabel={`Close ${title.toLowerCase()}`}
           accessibilityRole="button"
           onPress={onClose}
           style={StyleSheet.absoluteFill}
         />
-        <View
+        <Animated.View
           accessibilityViewIsModal
           style={[
             styles.panel,
             Elevation.e3,
+            panelStyle,
             {
               backgroundColor: palette.background,
               borderColor: palette.border,
@@ -136,7 +141,7 @@ export function Sheet({
               {footer}
             </View>
           ) : null}
-        </View>
+        </Animated.View>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -144,9 +149,11 @@ export function Sheet({
 
 const styles = StyleSheet.create({
   overlay: {
-    backgroundColor: 'rgba(18, 24, 21, 0.22)',
     flex: 1,
     justifyContent: 'flex-start',
+  },
+  scrim: {
+    backgroundColor: 'rgba(18, 24, 21, 0.28)',
   },
   panel: {
     borderRadius: Radius.xl,

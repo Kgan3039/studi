@@ -11,7 +11,6 @@ import { useCallback, useEffect, useState } from 'react';
 import 'react-native-reanimated';
 
 import { StudiLaunchIntro } from '@/components/studi-launch-intro';
-import { HeaderCloseButton } from '@/components/ui/HeaderCloseButton';
 import { Colors, FontFamily } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initAnalytics, track } from '@/lib/analytics';
@@ -217,28 +216,34 @@ function RootLayout() {
           <Stack.Screen
             name="create-session"
             options={{
-              title: 'New session',
-              presentation: 'modal',
-              headerLeft: () => <HeaderCloseButton />,
+              headerShown: false,
+              presentation: 'transparentModal',
+              animation: 'fade',
             }}
           />
           <Stack.Screen name="conversation/[conversationId]" options={{ title: 'Conversation' }} />
+          {/* Reporting is a pop-up, not a destination: it fades in over the
+              screen like every other overlay (docs/design-system.md §
+              Overlays) and draws its own panel and close control. */}
           <Stack.Screen
             name="report-user"
             options={{
-              title: 'Report user',
-              presentation: 'modal',
-              headerLeft: () => <HeaderCloseButton />,
+              headerShown: false,
+              presentation: 'transparentModal',
+              animation: 'fade',
             }}
           />
           <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />
           <Stack.Screen name="session-chat/[sessionId]" options={{ title: 'Session Chat' }} />
+          {/* Same overlay treatment as report-user: a pop-up fades over the
+              screen, not a page that slides up (docs/design-system.md §
+              Overlays). */}
           <Stack.Screen
             name="rate-location"
             options={{
-              title: 'Rate this spot',
-              presentation: 'modal',
-              headerLeft: () => <HeaderCloseButton />,
+              headerShown: false,
+              presentation: 'transparentModal',
+              animation: 'fade',
             }}
           />
           <Stack.Screen name="settings" options={{ title: 'Settings' }} />

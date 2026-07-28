@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Elevation, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
@@ -52,17 +52,62 @@ export function SuccessToast({
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const entry = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    entry.stopAnimation();
+
+    if (!toast) {
+      entry.setValue(0);
+      return;
+    }
+
+    if (reduceMotion) {
+      entry.setValue(1);
+      return;
+    }
+
+    entry.setValue(0);
+    const animation = Animated.timing(entry, {
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
+      toValue: 1,
+      useNativeDriver: true,
+    });
+    animation.start();
+
+    return () => animation.stop();
+  }, [entry, reduceMotion, toast]);
 
   if (!toast) {
     return null;
   }
 
   return (
-    <View
+    <Animated.View
       pointerEvents="none"
       style={[
         styles.wrap,
-        { bottom: Math.max(insets.bottom, Space.lg) + bottomOffset },
+        {
+          bottom: Math.max(insets.bottom, Space.lg) + bottomOffset,
+          opacity: entry,
+          transform: [
+            {
+              translateY: entry.interpolate({
+                inputRange: [0, 1],
+                outputRange: [12, 0],
+              }),
+            },
+          ],
+        },
       ]}>
       <View
         style={[
@@ -84,7 +129,7 @@ export function SuccessToast({
           ) : null}
         </View>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 

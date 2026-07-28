@@ -17,6 +17,10 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Sheet } from '@/components/ui/Sheet';
 import { FilterChip } from '@/components/ui/FilterChip';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import {
+  PullToRefreshIndicator,
+  usePullToRefreshDistance,
+} from '@/components/ui/PullToRefreshIndicator';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
@@ -55,6 +59,7 @@ export default function SessionsScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const { onPullScroll, pullDistance } = usePullToRefreshDistance();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profileClasses, setProfileClasses] = useState<string[]>([]);
   const [showAllClasses, setShowAllClasses] = useState(false);
@@ -353,9 +358,17 @@ export default function SessionsScreen() {
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
       <ScrollView
+        onScroll={onPullScroll}
+        scrollEventThrottle={16}
         style={styles.screen}
         refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={palette.tint} />
+          <RefreshControl
+            colors={['transparent']}
+            progressBackgroundColor="transparent"
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor="transparent"
+          />
         }
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
       <ScreenHeader
@@ -551,6 +564,7 @@ export default function SessionsScreen() {
         ) : null}
       </Sheet>
 
+      <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
       <SuccessToast toast={toast} />
     </View>
   );

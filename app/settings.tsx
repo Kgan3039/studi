@@ -2,7 +2,6 @@ import { type Href, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
-    Modal,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -14,6 +13,7 @@ import {
 
 import { ExternalLink } from '@/components/external-link';
 import { ActionRow } from '@/components/ui/ActionRow';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Button } from '@/components/ui/Button';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
@@ -364,58 +364,40 @@ export default function SettingsScreen() {
       </View>
       </ScreenTransition>
 
-      <Modal
-        animationType="fade"
-        onRequestClose={closeDeleteReauthModal}
-        transparent
-        visible={showDeleteReauthModal}>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalCard, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-            <Text style={[TypeScale.heading, { color: palette.text }]}>Confirm with password</Text>
-            <Text style={[TypeScale.body, { color: palette.icon }]}>
-              For security, please re-enter your password for {deleteReauthEmail || 'your account'}.
-            </Text>
-            <View>
-              <TextInput
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!isReauthenticatingDelete}
-                onChangeText={setDeleteReauthPassword}
-                placeholder="Password"
-                placeholderTextColor={placeholderColor}
-                secureTextEntry={!isDeletePasswordVisible}
-                style={[styles.input, styles.secureInput, inputColors]}
-                value={deleteReauthPassword}
-              />
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={isDeletePasswordVisible ? 'Hide password' : 'Show password'}
-                hitSlop={8}
-                onPress={() => setIsDeletePasswordVisible((visible) => !visible)}
-                style={styles.secureToggle}>
-                <IconSymbol
-                  name={isDeletePasswordVisible ? 'eye.slash' : 'eye'}
-                  size={20}
-                  color={palette.icon}
-                />
-              </Pressable>
-            </View>
-            <View style={styles.modalActions}>
-              <Button
-                label="Cancel"
-                variant="secondary"
-                disabled={isReauthenticatingDelete}
-                onPress={closeDeleteReauthModal}
-              />
-              <Button
-                label="Delete account"
-                loading={isReauthenticatingDelete}
-                onPress={handleDeleteWithReauthPassword}
-              />
-            </View>
-          </View>
+      <ConfirmDialog
+        visible={showDeleteReauthModal}
+        title="Confirm with password"
+        body={`For security, re-enter your password for ${deleteReauthEmail || 'your account'}.`}
+        confirmLabel="Delete account"
+        loading={isReauthenticatingDelete}
+        onConfirm={handleDeleteWithReauthPassword}
+        onCancel={closeDeleteReauthModal}>
+        <View style={styles.secureField}>
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!isReauthenticatingDelete}
+            onChangeText={setDeleteReauthPassword}
+            placeholder="Password"
+            placeholderTextColor={placeholderColor}
+            secureTextEntry={!isDeletePasswordVisible}
+            style={[styles.input, styles.secureInput, inputColors]}
+            value={deleteReauthPassword}
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={isDeletePasswordVisible ? 'Hide password' : 'Show password'}
+            hitSlop={8}
+            onPress={() => setIsDeletePasswordVisible((visible) => !visible)}
+            style={styles.secureToggle}>
+            <IconSymbol
+              name={isDeletePasswordVisible ? 'eye.slash' : 'eye'}
+              size={20}
+              color={palette.icon}
+            />
+          </Pressable>
         </View>
-      </Modal>
+      </ConfirmDialog>
     </ScrollView>
   );
 }
@@ -466,6 +448,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.lg,
     paddingVertical: Space.md,
   },
+  secureField: {
+    marginTop: Space.xs,
+  },
   secureInput: {
     paddingRight: Space.lg + 28,
   },
@@ -477,25 +462,5 @@ const styles = StyleSheet.create({
     right: Space.md,
     top: 0,
     width: 28,
-  },
-  modalBackdrop: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    flex: 1,
-    justifyContent: 'center',
-    padding: Space.lg + 4,
-  },
-  modalCard: {
-    borderRadius: Radius.card,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    gap: Space.md,
-    maxWidth: 420,
-    padding: Space.lg + 4,
-    width: '100%',
-  },
-  modalActions: {
-    flexDirection: 'row',
-    gap: Space.sm + 2,
-    justifyContent: 'flex-end',
   },
 });

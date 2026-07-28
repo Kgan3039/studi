@@ -34,6 +34,10 @@ const MAPPING = {
   'gearshape.fill': 'settings',
   'star.fill': 'star',
   'person.badge.plus': 'person-add-alt-1',
+  // Paired with person.badge.plus — same silhouette, minus badge — so every
+  // add/remove-buddy control shares one glyph family instead of switching
+  // shape between a plus badge, a crossed-out avatar, and a checkmark.
+  'person.badge.minus': 'person-remove-alt-1',
   'square.and.pencil': 'edit',
   'checkmark.circle.fill': 'check-circle',
   xmark: 'close',
@@ -59,6 +63,7 @@ const MAPPING = {
   'eye.slash': 'visibility-off',
   magnifyingglass: 'search',
   'xmark.circle.fill': 'cancel',
+  tag: 'sell',
 } as IconMapping;
 
 /**

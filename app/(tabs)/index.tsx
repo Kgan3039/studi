@@ -18,6 +18,10 @@ import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { IconButton } from '@/components/ui/IconButton';
+import {
+  PullToRefreshIndicator,
+  usePullToRefreshDistance,
+} from '@/components/ui/PullToRefreshIndicator';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SectionHeader } from '@/components/ui/SectionHeader';
@@ -338,6 +342,7 @@ export default function HomeScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const { onPullScroll, pullDistance } = usePullToRefreshDistance();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [sessions, setSessions] = useState<TodaySession[]>([]);
@@ -641,12 +646,16 @@ export default function HomeScreen() {
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
       <ScrollView
+        onScroll={onPullScroll}
+        scrollEventThrottle={16}
         style={styles.screen}
         refreshControl={
           <RefreshControl
+            colors={['transparent']}
+            progressBackgroundColor="transparent"
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
-            tintColor={palette.icon}
+            tintColor="transparent"
           />
         }
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
@@ -797,12 +806,13 @@ export default function HomeScreen() {
             </View>
           ) : (
             <Text style={[TypeScale.body, { color: palette.icon }]}>
-              No buddies yet. Add classmates to study together.
+              No buddies yet.
             </Text>
           )}
         </View>
         </ScreenTransition>
       </ScrollView>
+      <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
       <SuccessToast toast={toast} />
     </View>
   );

@@ -7,12 +7,14 @@ import type { User } from 'firebase/auth';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
+  blockUser,
   ConversationQuotaError,
   getOrCreateDirectConversation,
   getUserProfile,
@@ -21,6 +23,7 @@ import {
 import {
   acceptFriendRequest,
   cancelFriendRequest,
+  declineFriendRequest,
   getFriendStatus,
   isBlockedEitherDirection,
   removeFriend,
@@ -43,6 +46,9 @@ export default function PublicProfileScreen() {
   const [myClasses, setMyClasses] = useState<string[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [status, setStatus] = useState<FriendStatus>('none');
+  const [confirmAdd, setConfirmAdd] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmBlock, setConfirmBlock] = useState(false);
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [actionPending, setActionPending] = useState(false);
   const [openingChat, setOpeningChat] = useState(false);
@@ -109,27 +115,64 @@ export default function PublicProfileScreen() {
   function handleFriendAction() {
     if (!currentUser || !userId) return;
 
+    // A pending request in either direction has its own resolution — you can
+    // never "add" someone you already have a relationship with. Adding and
+    // removing both confirm first; cancelling a request you just sent is the
+    // one reversal that doesn't need to ask again.
     if (status === 'none') {
-      runAction(async () => {
-        await sendFriendRequest(currentUser.uid, userId);
-        track('friend_request_sent', { source: 'profile' });
-      }, 'outgoing');
+      setConfirmAdd(true);
     } else if (status === 'outgoing') {
       runAction(async () => {
         await cancelFriendRequest(currentUser.uid, userId);
         track('friend_request_cancelled');
       }, 'none');
-    } else if (status === 'incoming') {
-      runAction(async () => {
-        await acceptFriendRequest(currentUser.uid, userId);
-        track('friend_request_accepted');
-      }, 'friends');
     } else if (status === 'friends') {
-      runAction(async () => {
-        await removeFriend(currentUser.uid, userId);
-        track('friend_removed');
-      }, 'none');
+      setConfirmRemove(true);
     }
+  }
+
+  function handleConfirmAdd() {
+    if (!currentUser || !userId) return;
+    runAction(async () => {
+      await sendFriendRequest(currentUser.uid, userId);
+      track('friend_request_sent', { source: 'profile' });
+      setConfirmAdd(false);
+    }, 'outgoing');
+  }
+
+  function handleAcceptRequest() {
+    if (!currentUser || !userId) return;
+    runAction(async () => {
+      await acceptFriendRequest(currentUser.uid, userId);
+      track('friend_request_accepted');
+    }, 'friends');
+  }
+
+  function handleIgnoreRequest() {
+    if (!currentUser || !userId) return;
+    runAction(async () => {
+      await declineFriendRequest(currentUser.uid, userId);
+      track('friend_request_declined');
+    }, 'none');
+  }
+
+  function handleConfirmRemove() {
+    if (!currentUser || !userId) return;
+    runAction(async () => {
+      await removeFriend(currentUser.uid, userId);
+      track('friend_removed');
+      setConfirmRemove(false);
+    }, 'none');
+  }
+
+  function handleConfirmBlock() {
+    if (!currentUser || !userId) return;
+    runAction(async () => {
+      await blockUser(currentUser.uid, userId);
+      track('user_blocked', { context: 'profile' });
+      setConfirmBlock(false);
+      router.back();
+    }, 'none');
   }
 
   async function handleMessage() {
@@ -162,9 +205,9 @@ export default function PublicProfileScreen() {
   const friendActionLabel: Record<FriendStatus, string> = {
     self: '',
     none: 'Add study buddy',
-    outgoing: 'Requested',
-    incoming: 'Accept request',
-    friends: 'Study buddies',
+    outgoing: 'Requested, tap to cancel',
+    incoming: '',
+    friends: 'Study buddies, tap to remove',
   };
 
   if (loadState === 'loading') {
@@ -240,14 +283,68 @@ export default function PublicProfileScreen() {
             loading={openingChat}
             onPress={handleMessage}
           />
-          <Button
-            icon={status === 'friends' ? 'checkmark.circle.fill' : 'person.badge.plus'}
-            label={friendActionLabel[status]}
-            variant="secondary"
-            fullWidth
-            loading={actionPending}
-            onPress={handleFriendAction}
-          />
+          {/* An incoming request is answered, not mirrored — offering "Add"
+              here would create a second request pointing the other way. */}
+          {status === 'incoming' ? (
+            <View style={styles.requestRow}>
+              <Button
+                label="Accept"
+                fullWidth
+                loading={actionPending}
+                onPress={handleAcceptRequest}
+                style={styles.requestAction}
+              />
+              <Button
+                label="Ignore"
+                variant="secondary"
+                fullWidth
+                disabled={actionPending}
+                onPress={handleIgnoreRequest}
+                style={styles.requestAction}
+              />
+            </View>
+          ) : (
+            <Button
+              icon={
+                status === 'friends' || status === 'outgoing'
+                  ? 'person.badge.minus'
+                  : 'person.badge.plus'
+              }
+              label={friendActionLabel[status]}
+              variant="secondary"
+              fullWidth
+              loading={actionPending}
+              onPress={handleFriendAction}
+            />
+          )}
+
+          {/* Match the conversation header's familiar safety icons, but keep
+              text labels here because a profile has room for explicit actions. */}
+          <View style={styles.safetyActions}>
+            <Button
+              icon="exclamationmark.triangle"
+              label="Report"
+              onPress={() =>
+                router.push({
+                  pathname: '/report-user',
+                  params: {
+                    reportedUserId: userId,
+                    reportedUserName: name,
+                    context: 'profile',
+                  },
+                })
+              }
+              style={styles.safetyAction}
+              variant="secondary"
+            />
+            <Button
+              icon="nosign"
+              label="Block"
+              onPress={() => setConfirmBlock(true)}
+              style={styles.safetyAction}
+              variant="secondary"
+            />
+          </View>
         </View>
       ) : (
         <Text style={[TypeScale.caption, styles.selfNote, { color: palette.icon }]}>
@@ -268,6 +365,36 @@ export default function PublicProfileScreen() {
         </View>
       ) : null}
       </ScreenTransition>
+
+      <ConfirmDialog
+        visible={confirmAdd}
+        title={`Send ${name} a study buddy request?`}
+        body="They'll see your request and can accept or ignore it."
+        confirmLabel="Send request"
+        loading={actionPending}
+        onConfirm={handleConfirmAdd}
+        onCancel={() => setConfirmAdd(false)}
+      />
+
+      <ConfirmDialog
+        visible={confirmRemove}
+        title={`Remove ${name}?`}
+        body="You'll both stop being study buddies. You can send a new request later."
+        confirmLabel="Remove"
+        loading={actionPending}
+        onConfirm={handleConfirmRemove}
+        onCancel={() => setConfirmRemove(false)}
+      />
+
+      <ConfirmDialog
+        visible={confirmBlock}
+        title={`Block ${name}?`}
+        body="They won't be able to message you or see you in sessions, and any buddy request between you is removed."
+        confirmLabel="Block"
+        loading={actionPending}
+        onConfirm={handleConfirmBlock}
+        onCancel={() => setConfirmBlock(false)}
+      />
     </ScrollView>
   );
 }
@@ -301,6 +428,21 @@ const styles = StyleSheet.create({
   },
   actions: {
     gap: Space.sm,
+  },
+  requestRow: {
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  requestAction: {
+    flex: 1,
+  },
+  safetyActions: {
+    flexDirection: 'row',
+    gap: Space.sm,
+    marginTop: Space.xs,
+  },
+  safetyAction: {
+    flex: 1,
   },
   selfNote: {
     textAlign: 'center',
