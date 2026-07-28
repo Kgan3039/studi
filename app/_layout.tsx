@@ -223,12 +223,15 @@ function RootLayout() {
             }}
           />
           <Stack.Screen name="conversation/[conversationId]" options={{ title: 'Conversation' }} />
+          {/* Reporting is a pop-up, not a destination: it fades in over the
+              screen like every other overlay (docs/design-system.md §
+              Overlays) and draws its own panel and close control. */}
           <Stack.Screen
             name="report-user"
             options={{
-              title: 'Report user',
-              presentation: 'modal',
-              headerLeft: () => <HeaderCloseButton />,
+              headerShown: false,
+              presentation: 'transparentModal',
+              animation: 'fade',
             }}
           />
           <Stack.Screen name="session/[sessionId]" options={{ title: 'Session Details' }} />

@@ -3,6 +3,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,12 +16,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { FilterChip } from '@/components/ui/FilterChip';
-import { ScreenTransition } from '@/components/ui/ScreenTransition';
-import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { Brand, Colors, Elevation, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
-import { reportUser } from '@/lib/firestore';
+import { blockUser, reportUser } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
 const REPORT_REASONS = ['Spam', 'Harassment', 'Unsafe behavior', 'Impersonation', 'Other'];
@@ -61,8 +62,22 @@ export default function ReportUserScreen() {
       setIsSubmitting(true);
       await reportUser(currentUser.uid, reportedUserId, selectedReason, details, context || 'general');
       track('report_submitted', { reason: selectedReason, context: context || 'general' });
+
+      // Reporting someone always blocks them too: nobody wants to keep hearing
+      // from a person they just reported while the review is pending.
+      try {
+        await blockUser(currentUser.uid, reportedUserId);
+        track('user_blocked', { context: 'report' });
+      } catch {
+        // The report is filed either way — a failed block must not look like a
+        // failed report.
+      }
+
       setConfirmSubmit(false);
-      Alert.alert('Report submitted', 'Thanks for flagging this. Our team will review it.');
+      Alert.alert(
+        'Report sent',
+        `Thanks for flagging this. ${reportedUserName || 'This student'} has been blocked while our team reviews it.`
+      );
       router.back();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to submit report right now.';
@@ -75,23 +90,50 @@ export default function ReportUserScreen() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
-      style={[styles.screen, { backgroundColor: palette.background }]}>
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        style={styles.screen}
-        contentContainerStyle={[
-          styles.content,
-          { paddingBottom: insets.bottom + Space.xxl, paddingTop: Space.lg },
+      style={styles.overlay}>
+      <Pressable
+        accessibilityLabel="Close report"
+        accessibilityRole="button"
+        onPress={() => router.back()}
+        style={StyleSheet.absoluteFill}
+      />
+      <View
+        accessibilityViewIsModal
+        style={[
+          styles.panel,
+          Elevation.e3,
+          {
+            backgroundColor: palette.background,
+            borderColor: palette.border,
+            marginTop: insets.top + Space.md,
+          },
         ]}>
-        <ScreenTransition style={styles.transition}>
-        <View style={styles.header}>
-          <Text style={[styles.headerTitle, { color: palette.text }]}>Help keep Studi safe</Text>
-          <Text style={[TypeScale.body, { color: palette.icon }]}>
-            Tell us what happened. Reports are private and reviewed by the Studi team.
-          </Text>
+        <View style={[styles.panelHeader, { borderBottomColor: palette.border }]}>
+          <View style={styles.panelHeaderCopy}>
+            <Text style={[TypeScale.h2, { color: palette.text }]}>Report</Text>
+            <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+              Private, and reviewed by our team
+            </Text>
+          </View>
+          <Pressable
+            accessibilityLabel="Close"
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={() => router.back()}
+            style={({ pressed }) => [
+              styles.closeButton,
+              { backgroundColor: palette.surfaceMuted, opacity: pressed ? 0.6 : 1 },
+            ]}>
+            <IconSymbol name="xmark" size={17} color={palette.text} />
+          </Pressable>
         </View>
 
+        <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: Math.max(insets.bottom, Space.lg) },
+        ]}>
         <View style={styles.form}>
           <View style={styles.fieldGroup}>
             <Text style={[TypeScale.label, { color: palette.icon }]}>Reporting</Text>
@@ -147,16 +189,16 @@ export default function ReportUserScreen() {
             size="lg"
           />
         </View>
-        </ScreenTransition>
-      </ScrollView>
+        </ScrollView>
+      </View>
 
       <ConfirmDialog
         visible={confirmSubmit}
-        title="Send this report?"
-        body={`We'll review your ${selectedReason.toLowerCase()} report about ${
-          reportedUserName || 'this student'
-        }. They won't be told who reported them.`}
-        confirmLabel="Send report"
+        title="Report and block?"
+        body={`${
+          reportedUserName || 'This student'
+        } will be blocked and our team will review your report. They won't be told who reported them.`}
+        confirmLabel="Report and block"
         loading={isSubmitting}
         onConfirm={handleSubmitReport}
         onCancel={() => setConfirmSubmit(false)}
@@ -166,22 +208,43 @@ export default function ReportUserScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: {
+  overlay: {
+    backgroundColor: 'rgba(18, 24, 21, 0.32)',
     flex: 1,
+    justifyContent: 'flex-start',
+  },
+  panel: {
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    marginHorizontal: Space.md,
+    maxHeight: '88%',
+    overflow: 'hidden',
+  },
+  panelHeader: {
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+    paddingBottom: Space.md,
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
+  },
+  panelHeaderCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  closeButton: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
   },
   content: {
-    padding: Space.lg + 4,
-  },
-  transition: {
-    gap: Space.xl,
-  },
-  header: {
-    gap: Space.xs,
-  },
-  headerTitle: {
-    fontFamily: FontFamily.serifItalic,
-    fontSize: 24,
-    lineHeight: 29,
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
   },
   form: {
     gap: Space.lg,

@@ -71,13 +71,16 @@ export function ConfirmDialog({
               label={cancelLabel}
               variant="secondary"
               onPress={onCancel}
-              style={styles.action}
+              style={styles.cancelAction}
             />
+            {/* The confirm label names the action, so it gets the room it needs
+                and cancel takes only what it uses — splitting the row evenly
+                truncated labels like "Report and block". */}
             <Button
               label={confirmLabel}
               loading={loading}
               onPress={onConfirm}
-              style={styles.action}
+              style={styles.confirmAction}
             />
           </View>
         </View>
@@ -107,7 +110,10 @@ const styles = StyleSheet.create({
     gap: Space.sm,
     marginTop: Space.md,
   },
-  action: {
+  cancelAction: {
+    flexShrink: 0,
+  },
+  confirmAction: {
     flex: 1,
   },
 });
