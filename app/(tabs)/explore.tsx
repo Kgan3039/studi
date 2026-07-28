@@ -435,9 +435,6 @@ export default function StudyLocationsScreen() {
           (getTimestampMillis(second.startTime) ?? Number.MAX_SAFE_INTEGER)
       )
     : [];
-  const selectedRating = selectedLocation
-    ? ratingAggregates.get(selectedLocation.locationId)
-    : undefined;
 
   async function handleRefresh() {
     setIsRefreshing(true);
@@ -494,24 +491,16 @@ export default function StudyLocationsScreen() {
     const tags = getLocationTags(selectedLocation).slice(0, 3);
 
     return (
-      <View
-        style={[
-          styles.locationDetails,
-          { backgroundColor: palette.surfaceMuted, borderColor: palette.border },
-        ]}>
-        <View style={styles.detailsHeader}>
-          <View style={styles.detailsHeading}>
-            <Text style={[TypeScale.meta, { color: palette.icon }]}>
-              {selectedLocation.campusArea}
-              {selectedRating ? ` · ★ ${selectedRating.averageStars}` : ''}
-            </Text>
-            {selectedLocation.notes ? (
-              <Text style={[TypeScale.body, { color: palette.text }]}>
-                {selectedLocation.notes}
-              </Text>
-            ) : null}
-          </View>
-        </View>
+      // No card here: this already sits inside the spots list, and a bordered
+      // panel inside a bordered list is the card-in-card the anti-slop rules
+      // reject. An indent plus the row's own tint is enough to show it belongs
+      // to the spot above it.
+      <View style={[styles.locationDetails, { backgroundColor: palette.surfaceMuted }]}>
+        {selectedLocation.notes ? (
+          <Text style={[TypeScale.body, { color: palette.text }]}>
+            {selectedLocation.notes}
+          </Text>
+        ) : null}
 
         {tags.length > 0 ? (
           <View style={styles.tagRow}>
@@ -762,10 +751,16 @@ export default function StudyLocationsScreen() {
                     <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
                       {location.name}
                     </Text>
-                    <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                      {location.campusArea}, {sessionCount} upcoming{' '}
-                      {sessionCount === 1 ? 'session' : 'sessions'}
-                      {aggregate ? `, ${aggregate.averageStars} stars` : ''}
+                    {/* One line, always. The long form wrapped to three lines
+                        and left "stars" hanging on its own. */}
+                    <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+                      {[
+                        location.campusArea,
+                        `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`,
+                        aggregate ? `★ ${aggregate.averageStars}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </Text>
                   </View>
                   <View style={styles.locationListActions}>
@@ -969,20 +964,10 @@ const styles = StyleSheet.create({
   // Inline expansion under the selected row — a recessed surface rather than a
   // floating sheet, so it reads as part of the list.
   locationDetails: {
-    borderRadius: Radius.lg,
-    borderWidth: 1,
     gap: Space.md,
-    marginBottom: Space.md,
-    padding: Space.lg,
-  },
-  detailsHeader: {
-    flexDirection: 'row',
-    gap: Space.md,
-    justifyContent: 'space-between',
-  },
-  detailsHeading: {
-    flex: 1,
-    gap: Space.xs,
+    paddingBottom: Space.lg,
+    paddingHorizontal: Space.md + 2,
+    paddingTop: Space.xs,
   },
   detailsActions: {
     flexDirection: 'row',
