@@ -29,6 +29,7 @@ import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   cancelSession,
+  ConversationQuotaError,
   getBlockedUserIds,
   getOrCreateDirectConversation,
   getSessionById,
@@ -42,6 +43,10 @@ import {
   type StudySessionListItem,
 } from '@/lib/firestore';
 import { getStudyLocationDisplayName } from '@/lib/catalog';
+import {
+    confirmBlockedJoinWithAlert,
+    requestGuardedSessionJoin,
+} from '@/lib/guarded-session-join';
 import { FirebaseError } from 'firebase/app';
 import type { User } from 'firebase/auth';
 import type { Timestamp } from 'firebase/firestore';
@@ -87,9 +92,13 @@ export default function SessionDetailScreen() {
       return;
     }
 
+    // Display-only: this drives which attendees are hidden from the Going
+    // list. The join decision never reads it — requestGuardedSessionJoin
+    // re-fetches at tap time — so a failure here must not be written down as
+    // an authoritative "nobody is blocked". Keep whatever we last knew.
     getBlockedUserIds(currentUser.uid)
       .then(setBlockedUserIds)
-      .catch(() => setBlockedUserIds([]));
+      .catch(() => {});
   }, [currentUser]);
 
   const loadSession = useCallback(async () => {
@@ -178,8 +187,36 @@ export default function SessionDetailScreen() {
       return;
     }
 
+    // Blocked attendees are hidden from the Going list, so this check is the
+    // only way a user finds out before committing. The guard re-reads the
+    // roster and the block list here rather than trusting screen state, and
+    // with nobody blocked in the room it passes straight to performJoin().
+    // isJoining covers the whole guarded attempt, including the dialog, so the
+    // button is inert while it is open.
     try {
       setIsJoining(true);
+      await requestGuardedSessionJoin({
+        sessionId,
+        userId: currentUser.uid,
+        ...(session ? { classId: session.classId } : {}),
+        confirm: confirmBlockedJoinWithAlert,
+        onVerificationError: (message) => {
+          setStatus(message);
+          Alert.alert('Unable to Join', message);
+        },
+        join: performJoin,
+      });
+    } finally {
+      setIsJoining(false);
+    }
+  }
+
+  async function performJoin() {
+    if (!sessionId || !currentUser) {
+      return;
+    }
+
+    try {
       const result = await joinSession(sessionId, currentUser.uid);
       await loadSession();
 
@@ -211,8 +248,6 @@ export default function SessionDetailScreen() {
       const message = error instanceof Error ? error.message : 'Unable to join this session.';
       setStatus(message);
       Alert.alert('Join Session Error', message);
-    } finally {
-      setIsJoining(false);
     }
   }
 
@@ -306,8 +341,17 @@ export default function SessionDetailScreen() {
         },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to open chat right now.';
-      Alert.alert('Chat Error', message);
+      // Only the quota error carries approved user-facing copy. Everything else
+      // — permission-denied, network, internal Firebase errors — collapses to
+      // one fixed string, matching app/user/[userId].tsx: a raw error.message
+      // could leak internals, and a distinguishable failure would hint at
+      // whether the host has blocked you.
+      Alert.alert(
+        'Chat Error',
+        error instanceof ConversationQuotaError
+          ? error.message
+          : 'Unable to open chat right now.'
+      );
     } finally {
       setIsOpeningHostChat(false);
     }

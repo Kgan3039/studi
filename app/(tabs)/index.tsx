@@ -48,6 +48,10 @@ import {
   getStudyLocationDisplayName,
 } from '@/lib/catalog';
 import { getFriendsPage, type FriendListItem } from '@/lib/friends';
+import {
+  confirmBlockedJoinWithAlert,
+  requestGuardedSessionJoin,
+} from '@/lib/guarded-session-join';
 import type { User } from 'firebase/auth';
 
 type TodaySession = StudySession & { locationName: string };
@@ -527,8 +531,29 @@ export default function HomeScreen() {
       return;
     }
 
+    // Same safety check as every other join surface; the guard re-reads the
+    // roster and block list at tap time and only then calls performJoin.
     try {
       setJoiningHero(true);
+      await requestGuardedSessionJoin({
+        sessionId: hero.sessionId,
+        userId: currentUser.uid,
+        classId: hero.classId,
+        confirm: confirmBlockedJoinWithAlert,
+        onVerificationError: (message) => Alert.alert('Unable to Join', message),
+        join: performJoin,
+      });
+    } finally {
+      setJoiningHero(false);
+    }
+  }
+
+  async function performJoin() {
+    if (!currentUser || !hero) {
+      return;
+    }
+
+    try {
       const result = await joinSession(hero.sessionId, currentUser.uid);
       await loadSessions();
 
@@ -551,8 +576,6 @@ export default function HomeScreen() {
       const message =
         error instanceof Error ? error.message : 'Unable to join this session right now.';
       Alert.alert('Join Session Error', message);
-    } finally {
-      setJoiningHero(false);
     }
   }
 

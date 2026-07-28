@@ -22,11 +22,15 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 | `session_created` | `createSession()` succeeds | `classId`, `hoursUntilStart`, `capacity` |
 | `session_joined` | `joinSession()` performs a real join | `classId`, `participantCountAfter` |
 | `session_join_blocked_full` | Join attempt lost the race for the last seat (SessionFullError) | `classId` |
+| `blocked_session_warning_shown` | Join tapped on a session already containing someone the user has blocked, on any of the three join surfaces. Once per guarded attempt, however many blocked participants are present; repeat taps while one attempt is in flight are dropped. | `sessionId`, `blockedCount` (count only, never uids), `classId` |
+| `blocked_session_join_anyway` | "Join Anyway" chosen on that warning; the ordinary join then runs | `sessionId`, `blockedCount`, `classId` |
+| `blocked_session_cancel` | Warning dismissed via Cancel (or an Android dialog dismiss); no join attempt. **Never** fired when the roster or block list could not be verified — that path emits nothing at all, so `shown - join_anyway - cancel` is a real "asked but never answered" count, not a bucket of read failures. | `sessionId`, `blockedCount`, `classId` |
 | `session_viewed` | Session detail opened | `classId`, `isHost` |
 | `session_left` | `leaveSession()` succeeds | `classId` |
 | `map_directions_opened` | Directions tapped from the study map | `locationId` |
 | `uw_map_opened` | UW layers tapped from the study map | — |
-| `conversation_started` | New conversation doc created | — |
+| `conversation_started` | `getOrCreateDirectConversation()` commits a NEW conversation. Never fires when an existing thread is reopened. | `quota_written` (`true` on any client that writes the quota counter; absent on pre-quota builds) |
+| `conversation_quota_blocked` | The new-conversation quota is spent, so the transaction is refused client-side and no conversation is created. Fires once per refused attempt, outside the transaction callback so retries never inflate it. | — |
 | `message_sent` | `sendDirectMessage()` succeeds | `length` (number, not content) |
 | `session_chat_opened` | Session chat screen gains focus (once per focus) | `classId`, `source` (`session_detail` \| `auto_join` \| `deeplink`) |
 | `group_message_sent` | `sendSessionMessage()` succeeds | `length` (number, not content) |
@@ -43,6 +47,23 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 
 **Never** put message text, emails, names, or any PII in properties. uid is the identity
 key (PostHog `identify`), traits limited to `classCount`.
+
+### Conversation-quota rollout query
+
+`quota_written` exists for exactly one purpose: proving client adoption before the
+new-conversation quota starts being enforced. Full context in
+`docs/conversation-quota-rollout.md`.
+
+- **Adoption (the Phase 2 gate)** — `conversation_started` where `quota_written = true`,
+  ÷ all `conversation_started`, over a rolling 48h with ≥20 events in the denominator.
+  Must be **100%**. The property is absent (not `false`) on pre-quota builds, so anything
+  under 100% is a still-installed client that Phase 2 would break.
+- **Cap sanity** — count of `conversation_quota_blocked` over the same window. Must be ~0.
+  A non-trivial count means real users hit the cap and it should be retuned *before*
+  enforcement turns a client-side soft stop into a hard server denial.
+
+Both are pre-enforcement signals. Once Phase 2 ships, a spent quota is denied by rules and
+`conversation_quota_blocked` becomes an ordinary abuse/cap-tuning metric instead of a gate.
 
 ## Derived metrics (the resume numbers)
 
