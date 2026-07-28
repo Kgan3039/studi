@@ -774,7 +774,7 @@ export default function HomeScreen() {
             </View>
           ) : (
             <Text style={[TypeScale.body, { color: palette.icon }]}>
-              No buddies yet. Add classmates to study together.
+              No buddies yet.
             </Text>
           )}
         </View>

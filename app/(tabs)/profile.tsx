@@ -57,7 +57,12 @@ const SAVED_LOCATIONS_SHOWN = 3;
 
 type ProfileStat = { value: string; label: string };
 
-type SavedLocation = { locationId: string; name: string; rating: number | null };
+type SavedLocation = {
+  locationId: string;
+  name: string;
+  campusArea: string;
+  rating: number | null;
+};
 
 // Last-saved values, kept to compute the profile_updated fieldsChanged count
 // (a number, never the values — docs/metrics.md).
@@ -378,6 +383,7 @@ export default function ProfileScreen() {
       .map((location) => ({
         locationId: location.locationId,
         name: location.name,
+        campusArea: location.campusArea,
         rating: ratingAggregates.get(location.locationId)?.averageStars ?? null,
       }))
       .sort((first, second) => (second.rating ?? -1) - (first.rating ?? -1))
@@ -749,12 +755,26 @@ export default function ProfileScreen() {
                   { borderBottomColor: palette.border, opacity: pressed ? 0.55 : 1 },
                   pressed ? styles.pressedRow : null,
                 ]}>
-                <Text style={[TypeScale.bodyStrong, styles.locationName, { color: palette.text }]} numberOfLines={1}>
-                  {location.name}
-                </Text>
-                <Text style={[TypeScale.label, { color: palette.icon }]}>
-                  {location.rating != null ? `★ ${location.rating.toFixed(1)}` : 'New'}
-                </Text>
+                <View style={styles.locationCopy}>
+                  <Text
+                    style={[TypeScale.bodyStrong, { color: palette.text }]}
+                    numberOfLines={1}>
+                    {location.name}
+                  </Text>
+                  <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
+                    {location.campusArea}
+                  </Text>
+                </View>
+                {location.rating != null ? (
+                  <View style={[styles.ratingPill, { backgroundColor: palette.surfaceMuted }]}>
+                    <IconSymbol name="star.fill" size={12} color={palette.warning} />
+                    <Text style={[TypeScale.label, { color: palette.text }]}>
+                      {location.rating.toFixed(1)}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={[TypeScale.caption, { color: palette.icon }]}>Not rated</Text>
+                )}
                 <IconSymbol name="chevron.right" size={18} color={palette.icon} />
               </Pressable>
             ))}
@@ -890,8 +910,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.md + 2,
     paddingVertical: Space.sm,
   },
-  locationName: {
-    flexShrink: 1,
+  locationCopy: {
+    flex: 1,
+    gap: 1,
+    minWidth: 0,
+  },
+  ratingPill: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    flexDirection: 'row',
+    gap: Space.xs,
+    paddingHorizontal: Space.sm + 2,
+    paddingVertical: Space.xs,
   },
   card: {
     borderRadius: Radius.card,
