@@ -2,6 +2,7 @@ import { type Href, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
+    Linking,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -27,6 +28,7 @@ import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
+import { CONTACT_EMAIL_SUBJECT, openContactEmail } from '@/lib/contact-email';
 import {
     DEFAULT_NOTIFICATION_PREFS,
     getNotificationPrefs,
@@ -77,10 +79,6 @@ const NOTIFICATION_ROWS: {
     icon: 'person.2.fill',
   },
 ];
-
-function buildMailtoHref(email: string, subject: string) {
-  return `mailto:${email}?subject=${encodeURIComponent(subject)}` as Href & string;
-}
 
 export default function SettingsScreen() {
   const colorScheme = useColorScheme() ?? 'light';
@@ -156,6 +154,21 @@ export default function SettingsScreen() {
         "That preference didn't save. Check your connection and try again."
       );
     }
+  }
+
+  // Contact does not use <ExternalLink>: mailto: falls into that component's
+  // unguarded Linking.openURL() branch, whose rejection on a device with no
+  // mail client escaped as an uncaught error. openContactEmail() always
+  // resolves; the extra .catch() keeps even an unexpected throw from the Alert
+  // itself off the unhandled-rejection path.
+  function handleContactPress() {
+    openContactEmail({
+      email: STUDI_CONTACT_EMAIL,
+      subject: CONTACT_EMAIL_SUBJECT,
+      canOpenURL: (url) => Linking.canOpenURL(url),
+      openURL: (url) => Linking.openURL(url),
+      alert: (title, message) => Alert.alert(title, message),
+    }).catch(() => {});
   }
 
   async function handleSignOut() {
@@ -328,14 +341,13 @@ export default function SettingsScreen() {
           <ExternalLink href={STUDI_SUPPORT_URL as Href & string} asChild>
             <ActionRow icon="questionmark.circle.fill" label="Support" />
           </ExternalLink>
-          <ExternalLink href={buildMailtoHref(STUDI_CONTACT_EMAIL, 'Studi Contact')} asChild>
-            <ActionRow
-              divided={false}
-              icon="envelope.fill"
-              label="Contact"
-              value={STUDI_CONTACT_EMAIL}
-            />
-          </ExternalLink>
+          <ActionRow
+            divided={false}
+            icon="envelope.fill"
+            label="Contact"
+            onPress={handleContactPress}
+            value={STUDI_CONTACT_EMAIL}
+          />
         </View>
       </View>
 
