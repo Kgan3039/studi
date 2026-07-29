@@ -51,11 +51,13 @@ function pressLink(href, overrides = {}) {
     isWeb: overrides.isWeb ?? false,
     preventDefault: overrides.preventDefault ?? (() => { prevented += 1; }),
     canOpenURL:
-      overrides.canOpenURL ??
-      (async (url) => {
-        checked.push(url);
-        return overrides.canOpen ?? true;
-      }),
+      overrides.checkCapability === false
+        ? undefined
+        : (overrides.canOpenURL ??
+          (async (url) => {
+            checked.push(url);
+            return overrides.canOpen ?? true;
+          })),
     openURL:
       overrides.openURL ??
       (async (url) => {
@@ -88,6 +90,19 @@ describe('external link — mailto branch', () => {
     assert.equal(link.prevented(), 1);
   });
 
+  it('opens mailto directly when Android omits the capability check', async () => {
+    const link = pressLink(SUPPORT_MAILTO, {
+      canOpen: false,
+      checkCapability: false,
+    });
+    const result = await link.promise;
+
+    assert.equal(result.status, 'opened');
+    assert.deepEqual(link.checked, []);
+    assert.deepEqual(link.opened, [SUPPORT_MAILTO]);
+    assert.deepEqual(link.alerts, []);
+  });
+
   it('shows the Email unavailable fallback when no email app exists', async () => {
     const link = pressLink(SUPPORT_MAILTO, { canOpen: false });
     const result = await link.promise;
@@ -105,6 +120,24 @@ describe('external link — mailto branch', () => {
     });
 
     assert.equal((await link.promise).status, 'failed');
+    assert.deepEqual(link.alerts, [EMAIL_FAILED_ALERT]);
+  });
+
+  it('guards a rejected Android direct open without running a capability check', async () => {
+    let capabilityChecks = 0;
+    const link = pressLink(SUPPORT_MAILTO, {
+      checkCapability: false,
+      canOpenURL: async () => {
+        capabilityChecks += 1;
+        return true;
+      },
+      openURL: async () => {
+        throw new Error('no activity found to handle intent');
+      },
+    });
+
+    assert.equal((await link.promise).status, 'failed');
+    assert.equal(capabilityChecks, 0);
     assert.deepEqual(link.alerts, [EMAIL_FAILED_ALERT]);
   });
 
@@ -268,6 +301,13 @@ describe('external link wiring', () => {
   it('routes the component through the hardened handler', () => {
     assert.match(component, /handleExternalLinkPress\(/);
     assert.match(component, /\.catch\(\(\) => \{\}\)/);
+  });
+
+  it('skips the mailto capability check only on Android', () => {
+    assert.match(
+      component,
+      /Platform\.OS === 'android'\s*\?\s*undefined\s*:\s*\(url\) => Linking\.canOpenURL\(url\)/
+    );
   });
 
   it('no longer awaits Linking.openURL or openBrowserAsync unguarded', () => {

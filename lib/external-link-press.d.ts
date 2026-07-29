@@ -21,7 +21,8 @@ export declare function handleExternalLinkPress(input: {
   /** process.env.EXPO_OS === 'web' at the call site. */
   isWeb: boolean;
   preventDefault: () => void;
-  canOpenURL: (url: string) => Promise<boolean> | boolean;
+  /** Omitted on Android, where mailto links are opened directly. */
+  canOpenURL?: (url: string) => Promise<boolean> | boolean;
   openURL: (url: string) => Promise<unknown> | unknown;
   openBrowser: (url: string) => Promise<unknown> | unknown;
   alert: (title: string, message: string) => void;

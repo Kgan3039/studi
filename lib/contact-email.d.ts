@@ -14,14 +14,14 @@ export declare function failedMessage(email: string): string;
 
 /**
  * - `opened` — openURL() resolved
- * - `unavailable` — canOpenURL() answered false; openURL() never ran
+ * - `unavailable` — an available canOpenURL() answered false; openURL() never ran
  * - `failed` — canOpenURL() or openURL() threw
  */
 export type ContactEmailStatus = 'opened' | 'unavailable' | 'failed';
 
 export type ContactEmailResult = {
   status: ContactEmailStatus;
-  /** The mailto: URL that was checked, for logging and assertions. */
+  /** The mailto: URL handled by the operation, for logging and assertions. */
   url: string;
 };
 
@@ -35,7 +35,8 @@ export type ContactEmailTarget =
   | { url?: never; email: string; subject?: string };
 
 export type ContactEmailPorts = {
-  canOpenURL: (url: string) => Promise<boolean> | boolean;
+  /** Omitted on Android, where package visibility can make the check unreliable. */
+  canOpenURL?: (url: string) => Promise<boolean> | boolean;
   openURL: (url: string) => Promise<unknown> | unknown;
   alert: (title: string, message: string) => void;
 };

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
     Linking,
+    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -156,16 +157,17 @@ export default function SettingsScreen() {
     }
   }
 
-  // Contact does not use <ExternalLink>: mailto: falls into that component's
-  // unguarded Linking.openURL() branch, whose rejection on a device with no
-  // mail client escaped as an uncaught error. openContactEmail() always
-  // resolves; the extra .catch() keeps even an unexpected throw from the Alert
-  // itself off the unhandled-rejection path.
+  // Contact intentionally remains an ActionRow with its own handler while
+  // sharing the same openContactEmail() core used by ExternalLink. Keeping the
+  // adapter separate preserves its intentionally different platform behavior,
+  // particularly on web. The defensive .catch() only prevents an unhandled
+  // rejection if the adapter itself unexpectedly throws.
   function handleContactPress() {
     openContactEmail({
       email: STUDI_CONTACT_EMAIL,
       subject: CONTACT_EMAIL_SUBJECT,
-      canOpenURL: (url) => Linking.canOpenURL(url),
+      canOpenURL:
+        Platform.OS === 'android' ? undefined : (url) => Linking.canOpenURL(url),
       openURL: (url) => Linking.openURL(url),
       alert: (title, message) => Alert.alert(title, message),
     }).catch(() => {});

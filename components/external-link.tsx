@@ -1,7 +1,7 @@
 import { Href, Link } from 'expo-router';
 import { openBrowserAsync, WebBrowserPresentationStyle } from 'expo-web-browser';
 import { type ComponentProps } from 'react';
-import { Alert, Linking } from 'react-native';
+import { Alert, Linking, Platform } from 'react-native';
 
 import { handleExternalLinkPress } from '@/lib/external-link-press';
 
@@ -22,7 +22,8 @@ export function ExternalLink({ href, ...rest }: Props) {
           href,
           isWeb: process.env.EXPO_OS === 'web',
           preventDefault: () => event.preventDefault(),
-          canOpenURL: (url) => Linking.canOpenURL(url),
+          canOpenURL:
+            Platform.OS === 'android' ? undefined : (url) => Linking.canOpenURL(url),
           openURL: (url) => Linking.openURL(url),
           openBrowser: (url) =>
             openBrowserAsync(url, {

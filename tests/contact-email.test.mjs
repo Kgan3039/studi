@@ -2,8 +2,7 @@
 // Run: npm run test:contact  (plain mocha — no emulator needed)
 //
 // Covers the guarded Contact action in lib/contact-email.js, plus a
-// source-level check that Settings actually routes the Contact row through it
-// rather than back through <ExternalLink>'s unguarded Linking.openURL().
+// source-level check that Settings actually routes the Contact row through it.
 //
 // This repo has no jest or react-test-renderer harness, so the decision core
 // takes canOpenURL/openURL/alert through injection and is exercised directly
@@ -35,7 +34,7 @@ const EXPECTED_URL = 'mailto:isp.studi@gmail.com?subject=Studi%20Contact';
 
 // Stands in for the screen: records alerts instead of rendering them, and lets
 // each test decide how canOpenURL/openURL behave (answer, resolve, or throw).
-function run({ canOpen = true, openURL, canOpenURL } = {}) {
+function run({ canOpen = true, checkCapability = true, openURL, canOpenURL } = {}) {
   const alerts = [];
   const opened = [];
   const checked = [];
@@ -43,12 +42,13 @@ function run({ canOpen = true, openURL, canOpenURL } = {}) {
   const promise = openContactEmail({
     email: EMAIL,
     subject: CONTACT_EMAIL_SUBJECT,
-    canOpenURL:
-      canOpenURL ??
-      (async (url) => {
-        checked.push(url);
-        return canOpen;
-      }),
+    canOpenURL: checkCapability
+      ? (canOpenURL ??
+        (async (url) => {
+          checked.push(url);
+          return canOpen;
+        }))
+      : undefined,
     openURL:
       openURL ??
       (async (url) => {
@@ -86,6 +86,19 @@ describe('openContactEmail', () => {
     assert.deepEqual(alerts, []);
   });
 
+  it('opens directly when the platform omits the capability check', async () => {
+    const { promise, alerts, opened, checked } = run({
+      canOpen: false,
+      checkCapability: false,
+    });
+    const result = await promise;
+
+    assert.deepEqual(checked, []);
+    assert.deepEqual(opened, [EXPECTED_URL]);
+    assert.equal(result.status, 'opened');
+    assert.deepEqual(alerts, []);
+  });
+
   it('explains and never calls openURL when no mail app can handle mailto', async () => {
     const { promise, alerts, opened } = run({ canOpen: false });
     const result = await promise;
@@ -110,6 +123,29 @@ describe('openContactEmail', () => {
     const result = await promise;
 
     assert.equal(result.status, 'failed');
+    assert.deepEqual(alerts, [
+      {
+        title: 'Unable to open email',
+        message: 'Please contact us at isp.studi@gmail.com.',
+      },
+    ]);
+  });
+
+  it('uses the existing failure fallback when an Android direct open rejects', async () => {
+    let capabilityChecks = 0;
+    const { promise, alerts } = run({
+      checkCapability: false,
+      canOpenURL: async () => {
+        capabilityChecks += 1;
+        return true;
+      },
+      openURL: async () => {
+        throw new Error('no activity found to handle intent');
+      },
+    });
+
+    assert.equal((await promise).status, 'failed');
+    assert.equal(capabilityChecks, 0);
     assert.deepEqual(alerts, [
       {
         title: 'Unable to open email',
@@ -157,12 +193,13 @@ describe('openContactEmail', () => {
       const paths = [
         run({ canOpen: true }),
         run({ canOpen: false }),
+        run({ checkCapability: false }),
         run({ canOpen: true, openURL: async () => { throw new Error('boom'); } }),
         run({ canOpenURL: async () => { throw new Error('boom'); } }),
       ];
 
       const statuses = await Promise.all(paths.map((path) => path.promise.then((r) => r.status)));
-      assert.deepEqual(statuses, ['opened', 'unavailable', 'failed', 'failed']);
+      assert.deepEqual(statuses, ['opened', 'unavailable', 'opened', 'failed', 'failed']);
 
       // Give the loop a turn so any stray rejection would have surfaced.
       await new Promise((resolve) => setImmediate(resolve));
@@ -271,9 +308,15 @@ describe('settings contact row wiring', () => {
     assert.match(source, /onPress=\{handleContactPress\}/);
   });
 
+  it('skips the mailto capability check only on Android', () => {
+    assert.match(
+      source,
+      /Platform\.OS === 'android'\s*\?\s*undefined\s*:\s*\(url\) => Linking\.canOpenURL\(url\)/
+    );
+  });
+
   // A mailto: string literal here would mean the row builds its own href
-  // again, which is how it ended up back on the unguarded path. Prose
-  // mentioning mailto: in a comment is fine; a quoted one is not.
+  // again. Prose mentioning mailto: in a comment is fine; a quoted one is not.
   it('no longer builds a bare mailto href for the row', () => {
     assert.doesNotMatch(source, /['"`]mailto:/);
   });
