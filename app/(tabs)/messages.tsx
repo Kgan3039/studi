@@ -21,7 +21,9 @@ import { subscribeToAuthState } from '@/lib/auth';
 import {
   getBlockedUserIds,
   subscribeToUserConversations,
+  subscribeToUserGroupChats,
   type ConversationListItem,
+  type GroupChatListItem,
 } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
@@ -48,6 +50,7 @@ export default function MessagesScreen() {
   const { onPullScroll, pullDistance } = usePullToRefreshDistance();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
+  const [groupChats, setGroupChats] = useState<GroupChatListItem[]>([]);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -125,6 +128,25 @@ export default function MessagesScreen() {
     return unsubscribe;
   }, [currentUser, refreshNonce]);
 
+  useEffect(() => {
+    if (!currentUser) {
+      setGroupChats([]);
+      return;
+    }
+
+    const unsubscribe = subscribeToUserGroupChats(
+      currentUser.uid,
+      (loadedGroupChats) => {
+        setGroupChats(loadedGroupChats);
+      },
+      (error) => {
+        setErrorMessage(error.message);
+      }
+    );
+
+    return unsubscribe;
+  }, [currentUser]);
+
   function handleRefresh() {
     if (!currentUser) {
       return;
@@ -133,6 +155,28 @@ export default function MessagesScreen() {
     setIsRefreshing(true);
     setRefreshNonce((value) => value + 1);
   }
+
+  const allChats = useMemo(() => {
+    return [
+      ...conversations.map((conversation) => ({
+        type: "dm" as const,
+        id: conversation.conversationId,
+        name: conversation.otherParticipant?.displayName || "Student",
+        preview: conversation.lastMessagePreview || "Say hi before you arrive.",
+        timestamp: conversation.lastMessageAt || conversation.updatedAt,
+        conversation,
+      })),
+
+      ...groupChats.map((groupChat) => ({
+        type: "group" as const,
+        id: groupChat.sessionId,
+        name: groupChat.title,
+        preview: groupChat.lastMessagePreview,
+        timestamp: groupChat.lastMessageAt,
+        groupChat,
+      })),
+    ];
+  }, [conversations, groupChats]);
 
   // Board MessagesListScreen has a "Search messages" field. Conversations are
   // already loaded by the subscription, so this filters them client-side —
@@ -173,7 +217,7 @@ export default function MessagesScreen() {
         <ScreenHeader showNotifications title="Messages" />
 
         <ScreenTransition style={styles.transition}>
-          {conversations.length > 0 ? (
+          {allChats.length > 0 ? (
             <SearchBar
               accessibilityLabel="Search messages"
               clearAccessibilityLabel="Clear message search"
@@ -190,28 +234,45 @@ export default function MessagesScreen() {
           ) : conversations.length > 0 ? (
             visibleConversations.length > 0 ? (
               <View>
-                {visibleConversations.map((conversation, index) => {
-                  const otherName = conversation.otherParticipant?.displayName || 'Student';
-                  const isBlocked = !!conversation.otherParticipant?.uid &&
-                    blockedUserIds.includes(conversation.otherParticipant.uid);
+                {allChats.map((chat, index) => {
+                  const otherName = chat.name;
+
+                  const otherUserId =
+                    chat.type === "dm"
+                      ? chat.conversation.otherParticipant?.uid ?? ""
+                      : "";
+
+                  const isBlocked =
+                    !!otherUserId && blockedUserIds.includes(otherUserId);
 
                   return (
                     <Pressable
-                      key={conversation.conversationId}
+                      key={chat.id}
                       accessibilityLabel={
-                        isBlocked ? `Conversation with ${otherName}, blocked` : `Conversation with ${otherName}`
+                        isBlocked
+                          ? `Conversation with ${otherName}, blocked`
+                          : `Conversation with ${otherName}`
                       }
                       accessibilityRole="button"
-                      onPress={() =>
-                        router.push({
-                          pathname: '/conversation/[conversationId]',
-                          params: {
-                            conversationId: conversation.conversationId,
-                            otherUserId: conversation.otherParticipant?.uid ?? '',
-                            otherUserName: otherName,
-                          },
-                        })
-                      }
+                      onPress={() => {
+                        if (chat.type === "dm") {
+                          router.push({
+                            pathname: "/conversation/[conversationId]",
+                            params: {
+                              conversationId: chat.id,
+                              otherUserId,
+                              otherUserName: otherName,
+                            },
+                          });
+                        } else {
+                          router.push({
+                            pathname: "/session-chat/[sessionId]",
+                            params: {
+                              sessionId: chat.id,
+                            },
+                          });
+                        }
+                      }}
                       style={({ pressed }) => [
                         styles.threadRow,
                         index > 0 && {
@@ -219,8 +280,10 @@ export default function MessagesScreen() {
                           borderTopWidth: StyleSheet.hairlineWidth,
                         },
                         { opacity: pressed ? 0.7 : 1 },
-                      ]}>
+                      ]}
+                    >
                       <Avatar name={otherName} size="md" />
+
                       <View style={styles.threadBody}>
                         <View style={styles.threadHeader}>
                           <Text
@@ -229,35 +292,37 @@ export default function MessagesScreen() {
                               styles.threadName,
                               { color: palette.primaryText },
                             ]}
-                            numberOfLines={1}>
+                            numberOfLines={1}
+                          >
                             {otherName}
                           </Text>
+
                           <Text
-                            // Metadata is capped so a scaled timestamp cannot eat
-                            // the row and starve the name at accessibility sizes.
                             maxFontSizeMultiplier={1.6}
                             style={[
                               TypeScale.meta,
                               styles.threadTimestamp,
                               { color: palette.secondaryText },
                             ]}
-                            numberOfLines={1}>
-                            {formatTimestamp(
-                              conversation.lastMessageAt || conversation.updatedAt
-                            )}
+                            numberOfLines={1}
+                          >
+                            {formatTimestamp(chat.timestamp)}
                           </Text>
                         </View>
+
                         <View style={styles.threadPreview}>
                           {isBlocked ? (
                             <IconSymbol color={palette.tint} name="nosign" size={15} />
                           ) : null}
+
                           <Text
                             style={[
                               TypeScale.body,
                               { color: isBlocked ? palette.tint : palette.secondaryText },
                             ]}
-                            numberOfLines={1}>
-                            {isBlocked ? 'Blocked' : conversation.lastMessagePreview || 'Say hi before you arrive.'}
+                            numberOfLines={1}
+                          >
+                            {isBlocked ? "Blocked" : chat.preview}
                           </Text>
                         </View>
                       </View>

@@ -18,20 +18,20 @@ import {
   setDoc,
   startAfter,
   Timestamp,
-  type QueryConstraint,
-  type QueryDocumentSnapshot,
   updateDoc,
   where,
   writeBatch,
+  type QueryConstraint,
+  type QueryDocumentSnapshot,
 } from "firebase/firestore";
 
 import { FirebaseError } from "firebase/app";
 
+import { sanitizeLocationRatingTags } from "@/data/location-rating-options";
 import {
   UW_STUDY_LOCATION_COORDINATE_OVERRIDES,
   UW_STUDY_LOCATIONS,
 } from "@/data/uw-study-locations";
-import { sanitizeLocationRatingTags } from "@/data/location-rating-options";
 import { findStudyLocationById, formatStudyLocationLabel } from "@/lib/catalog";
 import { db } from "../firebaseConfig";
 import { track } from "./analytics";
@@ -213,6 +213,13 @@ export type SessionMessage = {
 
 export type ConversationListItem = DirectConversation & {
   otherParticipant: UserProfile | null;
+};
+
+export type GroupChatListItem = {
+  sessionId: string;
+  title: string;
+  lastMessagePreview: string;
+  lastMessageAt?: unknown;
 };
 
 export type UserBlock = {
@@ -1596,6 +1603,39 @@ export function subscribeToUserConversations(
         // never reaches onSnapshot's own error channel.
         onError?.(error instanceof Error ? error : new Error(String(error)));
       }
+    },
+    onError
+  );
+}
+
+export function subscribeToUserGroupChats(
+  userId: string,
+  listener: (groupChats: GroupChatListItem[]) => void,
+  onError?: (error: Error) => void
+) {
+  const sessionsQuery = query(
+    collection(db, COLLECTIONS.sessions),
+    where("participantIds", "array-contains", userId)
+  );
+
+  return onSnapshot(
+    sessionsQuery,
+    (snapshot) => {
+      const groupChats = snapshot.docs.map((sessionDoc) => {
+        const data = sessionDoc.data();
+
+        return {
+          sessionId: sessionDoc.id,
+          title: typeof data.title === "string" ? data.title : "Study Session",
+          lastMessagePreview:
+            typeof data.lastMessagePreview === "string"
+              ? data.lastMessagePreview
+              : "No messages yet.",
+          lastMessageAt: data.lastMessageAt,
+        };
+      });
+
+      listener(groupChats);
     },
     onError
   );
