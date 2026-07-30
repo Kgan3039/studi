@@ -1370,6 +1370,79 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
       senderId: BOB, text: 'i left but…', createdAt: serverTimestamp(),
     }));
   });
+
+  it('stops all sends after the two-hour post-session grace period', async () => {
+    await seedChatSession('expired', {
+      endTime: Timestamp.fromMillis(Date.now() - 2 * 60 * 60 * 1000 - 5_000),
+    });
+    await assertFails(createSessionChatMessage(ctx(ALICE), ALICE, 'expired', 'm1', {
+      senderId: ALICE,
+      text: 'too late',
+      createdAt: serverTimestamp(),
+    }));
+  });
+
+  it('only keepers retain read access after the grace period', async () => {
+    await seedChatSession('expired', {
+      endTime: Timestamp.fromMillis(Date.now() - 2 * 60 * 60 * 1000 - 5_000),
+    });
+    await seed('sessions/expired/messages/m1', {
+      senderId: ALICE,
+      text: 'saved history',
+      createdAt: Timestamp.now(),
+    });
+    await seed(`users/${ALICE}/keptSessionChats/expired`, {
+      sessionId: 'expired',
+      keptAt: Timestamp.now(),
+    });
+
+    await assertSucceeds(getDoc(doc(ctx(ALICE), 'sessions', 'expired', 'messages', 'm1')));
+    await assertFails(getDoc(doc(ctx(BOB), 'sessions', 'expired', 'messages', 'm1')));
+  });
+});
+
+describe('kept session chats (users/{uid}/keptSessionChats)', () => {
+  it('lets a participant keep history during the two-hour grace period', async () => {
+    await seed('sessions/grace', validSession(ALICE, {
+      participantIds: [ALICE, BOB],
+      endTime: Timestamp.fromMillis(Date.now() - 60 * 60 * 1000),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    }));
+
+    await assertSucceeds(setDoc(doc(ctx(BOB), 'users', BOB, 'keptSessionChats', 'grace'), {
+      sessionId: 'grace',
+      keptAt: serverTimestamp(),
+    }));
+  });
+
+  it('rejects outsiders, cross-user writes, and keeps after the deadline', async () => {
+    await seed('sessions/grace', validSession(ALICE, {
+      participantIds: [ALICE, BOB],
+      endTime: Timestamp.fromMillis(Date.now() - 60 * 60 * 1000),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    }));
+    await seed('sessions/expired', validSession(ALICE, {
+      participantIds: [ALICE, BOB],
+      endTime: Timestamp.fromMillis(Date.now() - 3 * 60 * 60 * 1000),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    }));
+
+    await assertFails(setDoc(doc(ctx(MALLORY), 'users', MALLORY, 'keptSessionChats', 'grace'), {
+      sessionId: 'grace',
+      keptAt: serverTimestamp(),
+    }));
+    await assertFails(setDoc(doc(ctx(ALICE), 'users', BOB, 'keptSessionChats', 'grace'), {
+      sessionId: 'grace',
+      keptAt: serverTimestamp(),
+    }));
+    await assertFails(setDoc(doc(ctx(BOB), 'users', BOB, 'keptSessionChats', 'expired'), {
+      sessionId: 'expired',
+      keptAt: serverTimestamp(),
+    }));
+  });
 });
 
 describe('chat read markers (users/{uid}/reads)', () => {

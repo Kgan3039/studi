@@ -2,6 +2,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -26,10 +27,14 @@ import {
   getProfilesByIds,
   getSessionById,
   isGroupChatAvailable,
+  keepSessionChat,
   markSessionChatRead,
   MAX_GROUP_CHAT_PARTICIPANTS,
+  SESSION_CHAT_GRACE_PERIOD_MS,
   sendSessionMessage,
+  subscribeToKeptSessionChats,
   subscribeToSessionMessages,
+  type KeptSessionChat,
   type SessionMessage,
   type StudySessionListItem,
   type UserProfile,
@@ -95,6 +100,14 @@ function formatTimestamp(value: unknown) {
   });
 }
 
+function formatCountdown(remainingMs: number) {
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
 export default function SessionChatScreen() {
   const router = useRouter();
   const { sessionId, source } = useLocalSearchParams<{ sessionId?: string; source?: string }>();
@@ -118,6 +131,10 @@ export default function SessionChatScreen() {
   const [threadError, setThreadError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [focusNonce, setFocusNonce] = useState(0);
+  const [keptSessionChats, setKeptSessionChats] = useState<Map<string, KeptSessionChat>>(new Map());
+  const [isKeepStateLoading, setIsKeepStateLoading] = useState(true);
+  const [isKeeping, setIsKeeping] = useState(false);
+  const [nowMs, setNowMs] = useState(Date.now());
   // Cursor/hasMore for paging backwards; starts from the live window's edge.
   const cursorRef = useRef<QueryDocumentSnapshot | null>(null);
   const [hasEarlier, setHasEarlier] = useState(false);
@@ -146,6 +163,31 @@ export default function SessionChatScreen() {
       .then(setBlockedUserIds)
       .catch(() => setBlockedUserIds([]));
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setKeptSessionChats(new Map());
+      setIsKeepStateLoading(false);
+      return;
+    }
+
+    setIsKeepStateLoading(true);
+    const unsubscribe = subscribeToKeptSessionChats(
+      currentUser.uid,
+      (loadedChats) => {
+        setKeptSessionChats(loadedChats);
+        setIsKeepStateLoading(false);
+      },
+      () => setIsKeepStateLoading(false)
+    );
+
+    return unsubscribe;
+  }, [currentUser]);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -193,12 +235,17 @@ export default function SessionChatScreen() {
 
   const isParticipant =
     !!currentUser && !!session && session.participantIds.includes(currentUser.uid);
-  // Two read-only states (rules deny new sends in both; history stays
-  // readable): cancelled sessions, and oversized legacy sessions past the
-  // group-chat fanout ceiling.
+  // Read-only states are enforced again by rules: cancellation, oversized
+  // legacy sessions, and every session after its two-hour grace period.
   const isCancelled = session?.status === 'cancelled';
   const isOversized = !!session && !isGroupChatAvailable(session);
-  const isReadOnly = isCancelled || isOversized;
+  const sessionEndMs = session?.endTime.toMillis() ?? Number.POSITIVE_INFINITY;
+  const graceDeadlineMs = sessionEndMs + SESSION_CHAT_GRACE_PERIOD_MS;
+  const hasSessionEnded = nowMs >= sessionEndMs;
+  const hasGraceExpired = nowMs >= graceDeadlineMs;
+  const isKept = !!sessionId && keptSessionChats.has(sessionId);
+  const isReadOnly = isCancelled || isOversized || hasGraceExpired;
+  const canReadHistory = !hasGraceExpired || isKept;
 
   const markRead = useCallback(
     (newestMessageId: string | null) => {
@@ -220,7 +267,7 @@ export default function SessionChatScreen() {
   // Live window over the newest page. Local optimistic sends surface here
   // immediately (pending: true) and settle in place on ack.
   useEffect(() => {
-    if (!currentUser || !sessionId || !isParticipant) {
+    if (!currentUser || !sessionId || !isParticipant || !canReadHistory || isKeepStateLoading) {
       return;
     }
 
@@ -256,7 +303,15 @@ export default function SessionChatScreen() {
     );
 
     return unsubscribe;
-  }, [currentUser, sessionId, isParticipant, retryNonce, markRead]);
+  }, [
+    currentUser,
+    sessionId,
+    isParticipant,
+    canReadHistory,
+    isKeepStateLoading,
+    retryNonce,
+    markRead,
+  ]);
 
   // Resolve display names for senders no longer in the attendee list
   // (people who left the session but whose messages remain).
@@ -408,6 +463,33 @@ export default function SessionChatScreen() {
     }
   }
 
+  async function handleKeep() {
+    if (
+      !currentUser ||
+      !sessionId ||
+      isKept ||
+      isKeeping ||
+      !hasSessionEnded ||
+      hasGraceExpired
+    ) {
+      return;
+    }
+
+    try {
+      setIsKeeping(true);
+      await keepSessionChat(currentUser.uid, sessionId);
+      setKeptSessionChats((current) => {
+        const next = new Map(current);
+        next.set(sessionId, { sessionId, keptAt: Date.now() });
+        return next;
+      });
+    } catch {
+      Alert.alert("Couldn't keep chat", "Please try again before the countdown ends.");
+    } finally {
+      setIsKeeping(false);
+    }
+  }
+
   const participantCount = session?.participantIds.length ?? 0;
   const senderName = useCallback(
     (uid: string) => profilesById.get(uid)?.displayName.trim() || 'Student',
@@ -456,6 +538,28 @@ export default function SessionChatScreen() {
     );
   }
 
+  if (hasGraceExpired && isKeepStateLoading) {
+    return (
+      <View style={[styles.centered, { backgroundColor: palette.background }]}>
+        <ActivityIndicator color={palette.tint} />
+      </View>
+    );
+  }
+
+  if (hasGraceExpired && !isKept) {
+    return (
+      <View style={[styles.screen, { backgroundColor: palette.background }]}>
+        <EmptyState
+          icon="chat"
+          headline="Chat expired"
+          body="The two-hour window ended and this chat wasn't kept."
+          actionLabel="Back to messages"
+          onAction={() => router.replace('/messages')}
+        />
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -481,10 +585,50 @@ export default function SessionChatScreen() {
         />
       </View>
 
+      {hasSessionEnded && !hasGraceExpired ? (
+        <View
+          style={[
+            styles.graceNotice,
+            { backgroundColor: palette.surfaceMuted, borderBottomColor: palette.border },
+          ]}>
+          <View style={styles.graceText}>
+            <Text style={[TypeScale.label, { color: palette.text }]}>Keep chat history?</Text>
+            <Text
+              accessibilityLabel={`${formatCountdown(graceDeadlineMs - nowMs)} remaining`}
+              style={[TypeScale.caption, { color: palette.icon }]}>
+              Closes in {formatCountdown(graceDeadlineMs - nowMs)}
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={isKept ? 'Chat history kept' : 'Keep chat history'}
+            disabled={isKept || isKeeping}
+            onPress={handleKeep}
+            style={({ pressed }) => [
+              styles.keepButton,
+              {
+                backgroundColor: isKept ? palette.surface : palette.tint,
+                borderColor: isKept ? palette.border : palette.tint,
+                opacity: pressed ? 0.75 : 1,
+              },
+            ]}>
+            {isKeeping ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={[TypeScale.label, { color: isKept ? palette.text : '#FFFFFF' }]}>
+                {isKept ? 'Kept' : 'Keep'}
+              </Text>
+            )}
+          </Pressable>
+        </View>
+      ) : null}
+
       {isReadOnly ? (
         <View style={[styles.readOnlyNotice, { backgroundColor: palette.surfaceMuted }]}>
           <Text style={[TypeScale.caption, styles.readOnlyText, { color: palette.icon }]}>
-            {isCancelled
+            {hasGraceExpired
+              ? 'This session ended. You kept this read-only chat history.'
+              : isCancelled
               ? 'This session was cancelled. Chat history is still available.'
               : `Group chat is unavailable for sessions with more than ${MAX_GROUP_CHAT_PARTICIPANTS} people.`}
           </Text>
@@ -617,7 +761,9 @@ export default function SessionChatScreen() {
             multiline
             onChangeText={setDraft}
             placeholder={
-              isCancelled
+              hasGraceExpired
+                ? 'This chat is now read-only.'
+                : isCancelled
                 ? 'This session was cancelled.'
                 : isOversized
                   ? 'Chat is unavailable for this session.'
@@ -678,6 +824,28 @@ const styles = StyleSheet.create({
   },
   readOnlyText: {
     textAlign: 'center',
+  },
+  graceNotice: {
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: Space.md,
+    justifyContent: 'space-between',
+    paddingHorizontal: Space.lg + 4,
+    paddingVertical: Space.sm,
+  },
+  graceText: {
+    flex: 1,
+    gap: 1,
+  },
+  keepButton: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    justifyContent: 'center',
+    minHeight: 36,
+    minWidth: 72,
+    paddingHorizontal: Space.md,
   },
   thread: {
     flex: 1,

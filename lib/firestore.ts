@@ -216,10 +216,16 @@ export type ConversationListItem = DirectConversation & {
 };
 
 export type GroupChatListItem = {
+  endTime: Timestamp;
   sessionId: string;
   title: string;
   lastMessagePreview: string;
   lastMessageAt?: unknown;
+};
+
+export type KeptSessionChat = {
+  keptAt?: unknown;
+  sessionId: string;
 };
 
 export type HiddenChat = {
@@ -1402,6 +1408,7 @@ export function subscribeToConversationMessages(
 // ---------------------------------------------------------------------------
 
 export const SESSION_MESSAGES_PAGE_SIZE = 30;
+export const SESSION_CHAT_GRACE_PERIOD_MS = 2 * 60 * 60 * 1000;
 
 /** Group-chat fanout ceiling, judged on the ACTUAL participant count (the
  *  optional capacity field can be absent on legacy sessions). Mirrors
@@ -1629,8 +1636,10 @@ export function subscribeToUserGroupChats(
     (snapshot) => {
       const groupChats = snapshot.docs.map((sessionDoc) => {
         const data = sessionDoc.data();
+        const endTime = normalizeSessionTimestamp(data.endTime);
 
         return {
+          endTime: endTime ?? Timestamp.fromMillis(0),
           sessionId: sessionDoc.id,
           title: typeof data.title === "string" ? data.title : "Study Session",
           lastMessagePreview:
@@ -1645,6 +1654,35 @@ export function subscribeToUserGroupChats(
     },
     onError
   );
+}
+
+export function subscribeToKeptSessionChats(
+  userId: string,
+  listener: (keptChats: Map<string, KeptSessionChat>) => void,
+  onError?: (error: Error) => void
+) {
+  return onSnapshot(
+    collection(db, COLLECTIONS.users, userId, "keptSessionChats"),
+    (snapshot) => {
+      const keptChats = new Map<string, KeptSessionChat>();
+      snapshot.docs.forEach((keptChatDoc) => {
+        const data = keptChatDoc.data({ serverTimestamps: "estimate" });
+        keptChats.set(keptChatDoc.id, {
+          sessionId: keptChatDoc.id,
+          keptAt: data.keptAt,
+        });
+      });
+      listener(keptChats);
+    },
+    onError
+  );
+}
+
+export async function keepSessionChat(userId: string, sessionId: string) {
+  await setDoc(doc(db, COLLECTIONS.users, userId, "keptSessionChats", sessionId), {
+    sessionId,
+    keptAt: serverTimestamp(),
+  } satisfies KeptSessionChat);
 }
 
 /**

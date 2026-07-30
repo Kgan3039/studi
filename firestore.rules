@@ -375,6 +375,26 @@ service cloud.firestore {
           && (isOwnHiddenSession() || isOwnHiddenConversation());
         allow delete: if false; // account deletion recursive-deletes the user tree
       }
+
+      // A participant may preserve an ended session chat during its two-hour
+      // grace period. After the deadline this owner-only marker is what keeps
+      // the shared, immutable history readable and visible in their inbox.
+      match /keptSessionChats/{sessionId} {
+        function keptSession() {
+          return get(/databases/$(database)/documents/sessions/$(sessionId)).data;
+        }
+
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && exists(/databases/$(database)/documents/sessions/$(sessionId))
+          && request.auth.uid in keptSession().participantIds
+          && request.time >= keptSession().endTime
+          && request.time < keptSession().endTime + duration.value(2, 'h')
+          && incoming().keys().hasOnly(['sessionId', 'keptAt'])
+          && incoming().sessionId == sessionId
+          && incoming().keptAt == request.time;
+        allow update, delete: if false;
+      }
     }
 
     // ------------------------------------------------------------------
@@ -580,11 +600,18 @@ service cloud.firestore {
         }
 
         allow read: if isVerifiedUwUser()
-          && request.auth.uid in parentSession().participantIds;
+          && request.auth.uid in parentSession().participantIds
+          && (
+            request.time < parentSession().endTime + duration.value(2, 'h')
+            || exists(
+              /databases/$(database)/documents/users/$(request.auth.uid)/keptSessionChats/$(sessionId)
+            )
+          );
         allow create: if isVerifiedUwUser()
           && request.auth.uid == incoming().senderId
           && parentSession().status in ['open', 'full']
           && request.auth.uid in parentSession().participantIds
+          && request.time < parentSession().endTime + duration.value(2, 'h')
           && parentSession().participantIds.size() <= 20
           && incoming().keys().hasOnly(['senderId', 'text', 'createdAt'])
           && incoming().text is string

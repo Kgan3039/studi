@@ -22,12 +22,15 @@ import { subscribeToAuthState } from '@/lib/auth';
 import {
   getBlockedUserIds,
   removeChatFromUserHistory,
+  SESSION_CHAT_GRACE_PERIOD_MS,
   subscribeToHiddenChats,
+  subscribeToKeptSessionChats,
   subscribeToUserConversations,
   subscribeToUserGroupChats,
   type ConversationListItem,
   type GroupChatListItem,
   type HiddenChat,
+  type KeptSessionChat,
 } from '@/lib/firestore';
 import { Timestamp } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
@@ -65,14 +68,17 @@ export default function MessagesScreen() {
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [groupChats, setGroupChats] = useState<GroupChatListItem[]>([]);
   const [hiddenChats, setHiddenChats] = useState<Map<string, HiddenChat>>(new Map());
+  const [keptSessionChats, setKeptSessionChats] = useState<Map<string, KeptSessionChat>>(new Map());
   const [pendingRemovalKeys, setPendingRemovalKeys] = useState<Set<string>>(new Set());
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [isKeptChatsLoading, setIsKeptChatsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [nowMs, setNowMs] = useState(Date.now());
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -165,6 +171,50 @@ export default function MessagesScreen() {
 
   useEffect(() => {
     if (!currentUser) {
+      setKeptSessionChats(new Map());
+      setIsKeptChatsLoading(false);
+      return;
+    }
+
+    setIsKeptChatsLoading(true);
+    const unsubscribe = subscribeToKeptSessionChats(
+      currentUser.uid,
+      (loadedChats) => {
+        setKeptSessionChats(loadedChats);
+        setIsKeptChatsLoading(false);
+      },
+      (error) => {
+        setErrorMessage(error.message);
+        setIsKeptChatsLoading(false);
+      }
+    );
+
+    return unsubscribe;
+  }, [currentUser]);
+
+  // No Firestore document changes at the grace-period deadline, so schedule a
+  // local refresh for the nearest one. This removes non-kept rows promptly
+  // without keeping a permanent interval running on the Messages tab.
+  useEffect(() => {
+    const nextDeadline = groupChats
+      .filter((chat) => !keptSessionChats.has(chat.sessionId))
+      .map((chat) => chat.endTime.toMillis() + SESSION_CHAT_GRACE_PERIOD_MS)
+      .filter((deadline) => deadline > nowMs)
+      .sort((first, second) => first - second)[0];
+
+    if (!nextDeadline) {
+      return;
+    }
+
+    const timeout = setTimeout(
+      () => setNowMs(Date.now()),
+      Math.min(nextDeadline - Date.now() + 100, 2_147_483_647)
+    );
+    return () => clearTimeout(timeout);
+  }, [groupChats, keptSessionChats, nowMs]);
+
+  useEffect(() => {
+    if (!currentUser) {
       setHiddenChats(new Map());
       setPendingRemovalKeys(new Set());
       setIsHistoryLoading(false);
@@ -219,6 +269,14 @@ export default function MessagesScreen() {
 
     return chats
       .filter((chat) => {
+        if (
+          chat.type === "group" &&
+          nowMs >= chat.groupChat.endTime.toMillis() + SESSION_CHAT_GRACE_PERIOD_MS &&
+          !keptSessionChats.has(chat.id)
+        ) {
+          return false;
+        }
+
         const key = chatHistoryKey(chat.type, chat.id);
         if (pendingRemovalKeys.has(key)) {
           return false;
@@ -229,12 +287,24 @@ export default function MessagesScreen() {
           return true;
         }
 
+        const keptChat = chat.type === "group" ? keptSessionChats.get(chat.id) : undefined;
+        if (keptChat && timestampMillis(keptChat.keptAt) > timestampMillis(hiddenChat.removedAt)) {
+          return true;
+        }
+
         return timestampMillis(chat.timestamp) > timestampMillis(hiddenChat.removedAt);
       })
       .sort((firstChat, secondChat) =>
         timestampMillis(secondChat.timestamp) - timestampMillis(firstChat.timestamp)
       );
-  }, [conversations, groupChats, hiddenChats, pendingRemovalKeys]);
+  }, [
+    conversations,
+    groupChats,
+    hiddenChats,
+    keptSessionChats,
+    nowMs,
+    pendingRemovalKeys,
+  ]);
 
   // Board MessagesListScreen has a "Search messages" field. Conversations are
   // already loaded by the subscription, so this filters them client-side —
@@ -313,7 +383,7 @@ export default function MessagesScreen() {
             />
           ) : null}
 
-          {isLoading || isHistoryLoading ? (
+          {isLoading || isHistoryLoading || isKeptChatsLoading ? (
             <LoadingState title="Loading conversations" />
           ) : errorMessage ? (
             <ErrorState body={errorMessage} onRetry={handleRefresh} />
@@ -342,6 +412,7 @@ export default function MessagesScreen() {
                           onPress={() => void handleRemoveChat(chat.type, chat.id)}
                           style={({ pressed }) => [
                             styles.removeAction,
+                            { backgroundColor: palette.destructive },
                             { opacity: pressed ? 0.75 : 1 },
                           ]}
                         >
@@ -503,7 +574,6 @@ const styles = StyleSheet.create({
   },
   removeAction: {
     alignItems: 'center',
-    backgroundColor: '#C93C37',
     justifyContent: 'center',
     minWidth: 92,
     paddingHorizontal: Space.md,
