@@ -436,6 +436,61 @@ describe('users', () => {
   });
 });
 
+describe('personal hidden chat history', () => {
+  beforeEach(async () => {
+    await seed(`users/${ALICE}`, { displayName: 'Alice', classes: [] });
+    await seed(`users/${BOB}`, { displayName: 'Bob', classes: [] });
+    await seed(`conversations/${convoId(ALICE, BOB)}`, {
+      ...validConversation(ALICE, BOB),
+      lastMessageAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    await seed('sessions/sharedSession', {
+      ...validSession(ALICE),
+      participantIds: [ALICE, BOB],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+  });
+
+  it('lets an owner hide their own DM and group chat', async () => {
+    const db = ctx(ALICE);
+    await assertSucceeds(setDoc(doc(db, 'users', ALICE, 'hiddenChats', `dm__${convoId(ALICE, BOB)}`), {
+      chatType: 'dm',
+      threadId: convoId(ALICE, BOB),
+      removedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(setDoc(doc(db, 'users', ALICE, 'hiddenChats', 'group__sharedSession'), {
+      chatType: 'group',
+      threadId: 'sharedSession',
+      removedAt: serverTimestamp(),
+    }));
+  });
+
+  it('cannot hide a chat for another user or a chat they do not belong to', async () => {
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', BOB, 'hiddenChats', `dm__${convoId(ALICE, BOB)}`),
+      { chatType: 'dm', threadId: convoId(ALICE, BOB), removedAt: serverTimestamp() }
+    ));
+    await assertFails(setDoc(
+      doc(ctx(MALLORY), 'users', MALLORY, 'hiddenChats', `dm__${convoId(ALICE, BOB)}`),
+      { chatType: 'dm', threadId: convoId(ALICE, BOB), removedAt: serverTimestamp() }
+    ));
+  });
+
+  it('rejects forged timestamps and mismatched document ids', async () => {
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', ALICE, 'hiddenChats', 'wrong-id'),
+      { chatType: 'group', threadId: 'sharedSession', removedAt: serverTimestamp() }
+    ));
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', ALICE, 'hiddenChats', 'group__sharedSession'),
+      { chatType: 'group', threadId: 'sharedSession', removedAt: Timestamp.fromMillis(0) }
+    ));
+  });
+});
+
 // --------------------------------------------------------- user settings
 describe('user settings (users/{uid}/private/settings)', () => {
   const settingsRef = (db, uid) => doc(db, 'users', uid, 'private', 'settings');

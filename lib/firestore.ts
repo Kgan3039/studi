@@ -222,6 +222,12 @@ export type GroupChatListItem = {
   lastMessageAt?: unknown;
 };
 
+export type HiddenChat = {
+  chatType: "dm" | "group";
+  removedAt?: unknown;
+  threadId: string;
+};
+
 export type UserBlock = {
   blockedUserId: string;
   blockerUserId: string;
@@ -1639,6 +1645,53 @@ export function subscribeToUserGroupChats(
     },
     onError
   );
+}
+
+/**
+ * Personal inbox removals. The shared conversation/session and its messages
+ * are deliberately left untouched. A thread becomes visible again when its
+ * lastMessageAt is newer than removedAt.
+ */
+export function subscribeToHiddenChats(
+  userId: string,
+  listener: (hiddenChats: Map<string, HiddenChat>) => void,
+  onError?: (error: Error) => void
+) {
+  return onSnapshot(
+    collection(db, COLLECTIONS.users, userId, "hiddenChats"),
+    (snapshot) => {
+      const hiddenChats = new Map<string, HiddenChat>();
+
+      snapshot.docs.forEach((hiddenChatDoc) => {
+        const data = hiddenChatDoc.data({ serverTimestamps: "estimate" });
+        if (
+          (data.chatType === "dm" || data.chatType === "group") &&
+          typeof data.threadId === "string"
+        ) {
+          hiddenChats.set(`${data.chatType}:${data.threadId}`, {
+            chatType: data.chatType,
+            threadId: data.threadId,
+            removedAt: data.removedAt,
+          });
+        }
+      });
+
+      listener(hiddenChats);
+    },
+    onError
+  );
+}
+
+export async function removeChatFromUserHistory(
+  userId: string,
+  chatType: HiddenChat["chatType"],
+  threadId: string
+) {
+  await setDoc(doc(db, COLLECTIONS.users, userId, "hiddenChats", `${chatType}__${threadId}`), {
+    chatType,
+    threadId,
+    removedAt: serverTimestamp(),
+  } satisfies HiddenChat);
 }
 
 export async function blockUser(blockerUserId: string, blockedUserId: string) {

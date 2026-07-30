@@ -344,6 +344,37 @@ service cloud.firestore {
           && (isOwnSessionThread() || isOwnConversationThread());
         allow delete: if false; // account deletion recursive-deletes the user tree
       }
+
+      // Personal inbox history. Removing a row only records an owner-scoped
+      // timestamp; it never mutates the shared DM/session or its messages.
+      // The client shows the thread again after a newer message arrives.
+      match /hiddenChats/{hiddenChatId} {
+        function isOwnHiddenSession() {
+          return incoming().chatType == 'group'
+            && exists(/databases/$(database)/documents/sessions/$(incoming().threadId))
+            && request.auth.uid in
+               get(/databases/$(database)/documents/sessions/$(incoming().threadId)).data.participantIds;
+        }
+
+        function isOwnHiddenConversation() {
+          return incoming().chatType == 'dm'
+            && exists(/databases/$(database)/documents/conversations/$(incoming().threadId))
+            && request.auth.uid in
+               get(/databases/$(database)/documents/conversations/$(incoming().threadId)).data.participantIds;
+        }
+
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && hiddenChatId == incoming().chatType + '__' + incoming().threadId
+          && incoming().keys().hasOnly(['chatType', 'threadId', 'removedAt'])
+          && incoming().chatType in ['dm', 'group']
+          && incoming().threadId is string
+          && incoming().threadId.size() >= 1
+          && incoming().threadId.size() <= 300
+          && incoming().removedAt == request.time
+          && (isOwnHiddenSession() || isOwnHiddenConversation());
+        allow delete: if false; // account deletion recursive-deletes the user tree
+      }
     }
 
     // ------------------------------------------------------------------
