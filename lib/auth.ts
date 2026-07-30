@@ -1,7 +1,7 @@
 import {
   createUserWithEmailAndPassword,
   EmailAuthProvider,
-  onAuthStateChanged,
+  onIdTokenChanged,
   reauthenticateWithCredential,
   sendEmailVerification,
   sendPasswordResetEmail,
@@ -197,7 +197,10 @@ export async function requestPasswordReset(email: string) {
 }
 
 export function subscribeToAuthState(listener: (user: User | null) => void) {
-  return onAuthStateChanged(auth, listener);
+  // Email verification changes the ID token without changing the user's UID.
+  // onAuthStateChanged intentionally ignores that case, while
+  // onIdTokenChanged updates the route gate as soon as verification is known.
+  return onIdTokenChanged(auth, listener);
 }
 
 /**
