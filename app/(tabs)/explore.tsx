@@ -27,6 +27,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CampusMap } from '@/components/campus-map';
 import type { MapSessionTiming } from '@/components/campus-map.types';
+import {
+  CatalogRequestButton,
+  CatalogRequestSheet,
+} from '@/components/ui/CatalogRequestSheet';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Button } from '@/components/ui/Button';
@@ -221,6 +225,7 @@ export default function StudyLocationsScreen() {
   const [activityFilters, setActivityFilters] = useState<ActivityFilter[]>([]);
   const [atmosphereFilters, setAtmosphereFilters] = useState<LocationAtmosphereFilter[]>([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [requestSheetOpen, setRequestSheetOpen] = useState(false);
   const activeFilterCount = activityFilters.length + atmosphereFilters.length;
 
   function toggleActivityFilter(id: ActivityFilter) {
@@ -894,6 +899,10 @@ export default function StudyLocationsScreen() {
             value={searchQuery}
           />
         </View>
+        <CatalogRequestButton
+          type="location"
+          onPress={() => setRequestSheetOpen(true)}
+        />
         <Pressable
           accessibilityLabel={
             activeFilterCount > 0 ? `Filters, ${activeFilterCount} applied` : 'Filters'
@@ -1069,10 +1078,16 @@ export default function StudyLocationsScreen() {
         ) : !isLoading ? (
           <EmptyState
             icon="spot"
-            headline="No study spots found"
-            body="Try another search or clear the current filters."
-            actionLabel="Clear filters"
-            onAction={clearFilters}
+            headline={searchQuery.trim() ? 'No study spots found' : 'No study spots available'}
+            body={
+              searchQuery.trim()
+                ? 'We may be missing this spot. Send us a request and we’ll review it.'
+                : 'Try clearing the current filters.'
+            }
+            actionLabel={searchQuery.trim() ? 'Request this spot' : 'Clear filters'}
+            onAction={() =>
+              searchQuery.trim() ? setRequestSheetOpen(true) : clearFilters()
+            }
             style={styles.noPinsState}
           />
         ) : null}
@@ -1081,6 +1096,14 @@ export default function StudyLocationsScreen() {
     </ScrollView>
 
     <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
+
+    <CatalogRequestSheet
+      initialQuery={searchQuery}
+      onClose={() => setRequestSheetOpen(false)}
+      source="explore-location"
+      type="location"
+      visible={requestSheetOpen}
+    />
 
     <Sheet
       visible={filtersOpen}

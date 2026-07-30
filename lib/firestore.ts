@@ -36,6 +36,7 @@ import { findStudyLocationById, formatStudyLocationLabel } from "@/lib/catalog";
 import { db } from "../firebaseConfig";
 import { track } from "./analytics";
 export const COLLECTIONS = {
+  catalogRequests: "catalogRequests",
   conversations: "conversations",
   friendRequests: "friendRequests",
   friendships: "friendships",
@@ -49,6 +50,7 @@ export const COLLECTIONS = {
 } as const;
 
 type RateLimitedAction =
+  | "catalogRequest"
   | "createConversation"
   | "createSession"
   | "friendRequest"
@@ -1653,6 +1655,43 @@ export async function reportUser(
     createdAt: serverTimestamp(),
   });
   stageRateLimit(batch, reporterUserId, "reportUser");
+  await batch.commit();
+}
+
+export type CatalogRequestType = "course" | "location";
+
+export type CatalogRequestInput = {
+  details: string;
+  name: string;
+  searchQuery: string;
+  source: string;
+  type: CatalogRequestType;
+};
+
+/** Write-only suggestions for missing courses and campus study spots. */
+export async function submitCatalogRequest(userId: string, input: CatalogRequestInput) {
+  const name = input.name.trim().slice(0, 120);
+  const details = input.details.trim().slice(0, 500);
+  const searchQuery = input.searchQuery.trim().slice(0, 120);
+  const source = input.source.trim().slice(0, 40);
+
+  if (!userId || !name || !["course", "location"].includes(input.type)) {
+    throw new Error("Add a name before submitting your request.");
+  }
+
+  const batch = writeBatch(db);
+  const requestRef = doc(collection(db, COLLECTIONS.catalogRequests));
+
+  batch.set(requestRef, {
+    requesterUserId: userId,
+    type: input.type,
+    name,
+    searchQuery,
+    details,
+    source,
+    createdAt: serverTimestamp(),
+  });
+  stageRateLimit(batch, userId, "catalogRequest");
   await batch.commit();
 }
 

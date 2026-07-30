@@ -76,7 +76,7 @@ service cloud.firestore {
     }
 
     function isKnownRateLimitedAction(action) {
-      return action in ['sendMessage', 'createSession', 'reportUser', 'locationRating',
+      return action in ['sendMessage', 'createSession', 'reportUser', 'catalogRequest', 'locationRating',
                         'friendRequest', 'createConversation'];
     }
 
@@ -170,6 +170,8 @@ service cloud.firestore {
           || (action == 'createSession'
             && previousUpdatedAt <= request.time - duration.value(60, 's'))
           || (action == 'reportUser'
+            && previousUpdatedAt <= request.time - duration.value(10, 'm'))
+          || (action == 'catalogRequest'
             && previousUpdatedAt <= request.time - duration.value(10, 'm'))
           || (action == 'locationRating'
             && previousUpdatedAt <= request.time - duration.value(10, 's'))
@@ -804,6 +806,35 @@ service cloud.firestore {
         && incoming().context.size() <= 40
         && incoming().createdAt == request.time
         && hasFreshRateLimit(request.auth.uid, 'reportUser');
+      allow read, update, delete: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // Catalog requests — write-only suggestions for missing courses/spots.
+    // The admin console or Admin SDK is the only review surface.
+    // ------------------------------------------------------------------
+
+    match /catalogRequests/{requestId} {
+      allow create: if isVerifiedUwUser()
+        && incoming().keys().hasOnly([
+             'requesterUserId', 'type', 'name', 'searchQuery', 'building',
+             'details', 'source', 'createdAt'
+           ])
+        && incoming().requesterUserId == request.auth.uid
+        && incoming().type in ['course', 'location']
+        && incoming().name is string
+        && incoming().name.size() >= 2
+        && incoming().name.size() <= 120
+        && incoming().searchQuery is string
+        && incoming().searchQuery.size() <= 120
+        && (!('building' in incoming())
+          || (incoming().building is string && incoming().building.size() <= 120))
+        && incoming().details is string
+        && incoming().details.size() <= 500
+        && incoming().source is string
+        && incoming().source.size() <= 40
+        && incoming().createdAt == request.time
+        && hasFreshRateLimit(request.auth.uid, 'catalogRequest');
       allow read, update, delete: if false;
     }
 

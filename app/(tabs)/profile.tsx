@@ -14,6 +14,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
+import {
+  CatalogRequestButton,
+  CatalogRequestSheet,
+} from '@/components/ui/CatalogRequestSheet';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import {
@@ -126,6 +130,7 @@ export default function ProfileScreen() {
     Map<string, LocationRatingAggregate>
   >(() => new Map());
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [requestSheetOpen, setRequestSheetOpen] = useState(false);
   const [nameStatus, setNameStatus] = useState('Save your name so Studi looks more personal.');
   const [classesStatus, setClassesStatus] = useState('Update the classes you take.');
   const courseResults = useMemo(() => {
@@ -144,6 +149,13 @@ export default function ProfileScreen() {
       ),
     []
   );
+
+  function openCourseRequest() {
+    // The class editor is already a modal sheet. Close it before presenting
+    // the request sheet so Android never has to stack two native modals.
+    setIsEditing(false);
+    setRequestSheetOpen(true);
+  }
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -677,15 +689,21 @@ export default function ProfileScreen() {
         footer={
           <Button label="Save classes" fullWidth loading={isSaving} onPress={handleSaveClasses} />
         }>
-          <TextInput
-            autoCapitalize="characters"
-            editable={!isSaving}
-            onChangeText={setCourseQuery}
-            placeholder={`Search ${UW_COURSE_COUNT.toLocaleString()} UW courses`}
-            placeholderTextColor={placeholderColor}
-            style={[styles.input, inputColors]}
-            value={courseQuery}
-          />
+          <View style={styles.classSearchRow}>
+            <TextInput
+              autoCapitalize="characters"
+              editable={!isSaving}
+              onChangeText={setCourseQuery}
+              placeholder={`Search ${UW_COURSE_COUNT.toLocaleString()} UW courses`}
+              placeholderTextColor={placeholderColor}
+              style={[styles.input, styles.classSearchField, inputColors]}
+              value={courseQuery}
+            />
+            <CatalogRequestButton
+              type="course"
+              onPress={openCourseRequest}
+            />
+          </View>
           {courseQuery.trim().length >= 2 ? (
             <View style={styles.searchResults}>
               {courseResults.length > 0 ? (
@@ -712,9 +730,18 @@ export default function ProfileScreen() {
                   </Pressable>
                 ))
               ) : (
-                <Text style={[TypeScale.caption, { color: palette.icon }]}>
-                  No courses matched that search yet.
-                </Text>
+                <View style={styles.noResultsBlock}>
+                  <Text style={[TypeScale.caption, styles.noResultsText, { color: palette.icon }]}>
+                    No courses matched that search yet.
+                  </Text>
+                  <Button
+                    icon="plus.circle.fill"
+                    label="Request this course"
+                    onPress={openCourseRequest}
+                    size="sm"
+                    variant="secondary"
+                  />
+                </View>
               )}
             </View>
           ) : null}
@@ -746,6 +773,14 @@ export default function ProfileScreen() {
             </View>
           ) : null}
       </Sheet>
+
+      <CatalogRequestSheet
+        initialQuery={courseQuery}
+        onClose={() => setRequestSheetOpen(false)}
+        source="profile-classes"
+        type="course"
+        visible={requestSheetOpen}
+      />
 
       {/* Top-rated campus locations. */}
       <View style={styles.section}>
@@ -990,8 +1025,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.lg,
     paddingVertical: Space.md,
   },
+  classSearchRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  classSearchField: {
+    flex: 1,
+  },
   searchResults: {
     gap: Space.sm + 2,
+  },
+  noResultsBlock: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.md,
+  },
+  noResultsText: {
+    flex: 1,
   },
   searchResultCard: {
     borderRadius: Radius.chip + 4,

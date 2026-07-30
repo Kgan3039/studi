@@ -152,6 +152,12 @@ function createReportWithRateLimit(db, uid, reportId, report) {
   return batch.commit();
 }
 
+function createCatalogRequestWithRateLimit(db, uid, requestId, request) {
+  const batch = batchWithRateLimit(db, uid, 'catalogRequest');
+  batch.set(doc(db, 'catalogRequests', requestId), request);
+  return batch.commit();
+}
+
 function setRatingWithRateLimit(db, uid, ratingId, rating) {
   const batch = batchWithRateLimit(db, uid, 'locationRating');
   batch.set(doc(db, 'locationRatings', ratingId), rating);
@@ -1881,6 +1887,54 @@ describe('reports (immutable, write-only)', () => {
       { ...valid(ALICE), details: 'x'.repeat(1001) }));
     await assertFails(createReportWithRateLimit(ctx(BOB), BOB, 'r5',
       { ...valid(BOB), reportedUserId: BOB }));
+  });
+});
+
+// ----------------------------------------------------- catalog requests
+describe('catalog requests (write-only)', () => {
+  const valid = (requester, overrides = {}) => ({
+    requesterUserId: requester,
+    type: 'course',
+    name: 'COMPSCI 999',
+    searchQuery: 'COMPSCI 999',
+    details: 'A course missing from the catalog.',
+    source: 'onboarding-classes',
+    createdAt: serverTimestamp(),
+    ...overrides,
+  });
+
+  it('verified students can create a request, but clients cannot review it', async () => {
+    await assertSucceeds(
+      createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr1', valid(ALICE))
+    );
+    await assertFails(getDoc(doc(ctx(ALICE), 'catalogRequests', 'cr1')));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'catalogRequests', 'cr1'), {
+      details: 'edited',
+    }));
+    await assertFails(deleteDoc(doc(ctx(ALICE), 'catalogRequests', 'cr1')));
+  });
+
+  it('catalog requests are throttled per user', async () => {
+    await seed(`rateLimits/${ALICE}/actions/catalogRequest`, { updatedAt: Timestamp.now() });
+    await assertFails(
+      createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr2', valid(ALICE))
+    );
+  });
+
+  it('rejects spoofed users, invalid types, and oversized names', async () => {
+    await assertFails(
+      createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr3', valid(BOB))
+    );
+    await assertFails(
+      createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr4', valid(ALICE, {
+        type: 'building',
+      }))
+    );
+    await assertFails(
+      createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr5', valid(ALICE, {
+        name: 'x'.repeat(121),
+      }))
+    );
   });
 });
 

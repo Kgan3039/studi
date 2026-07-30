@@ -12,6 +12,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CourseChip } from '@/components/ui/CourseChip';
 import { Button } from '@/components/ui/Button';
+import {
+  CatalogRequestButton,
+  CatalogRequestSheet,
+} from '@/components/ui/CatalogRequestSheet';
 import { Input } from '@/components/ui/Input';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { StepDots } from '@/components/ui/StepDots';
@@ -32,6 +36,7 @@ export default function OnboardingClassesScreen() {
   const [courseQuery, setCourseQuery] = useState('');
   const [classes, setClasses] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [requestSheetOpen, setRequestSheetOpen] = useState(false);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -136,14 +141,20 @@ export default function OnboardingClassesScreen() {
           We’ll only show sessions for your classes.
         </Text>
 
-        <Input
-          autoCapitalize="characters"
-          editable={!isSaving}
-          onChangeText={setCourseQuery}
-          placeholder="Search by course code or title…"
-          value={courseQuery}
-          containerStyle={styles.search}
-        />
+        <View style={styles.searchRow}>
+          <Input
+            autoCapitalize="characters"
+            containerStyle={styles.searchField}
+            editable={!isSaving}
+            onChangeText={setCourseQuery}
+            placeholder="Search by course code or title…"
+            value={courseQuery}
+          />
+          <CatalogRequestButton
+            type="course"
+            onPress={() => setRequestSheetOpen(true)}
+          />
+        </View>
 
         {courseResults.length > 0 ? (
           <View style={styles.rows}>
@@ -174,9 +185,18 @@ export default function OnboardingClassesScreen() {
             ))}
           </View>
         ) : courseQuery.trim().length >= 2 ? (
-          <Text style={[TypeScale.body, styles.noResults, { color: palette.icon }]}>
-            No courses matched that search yet.
-          </Text>
+          <View style={styles.noResultsBlock}>
+            <Text style={[TypeScale.body, styles.noResults, { color: palette.icon }]}>
+              No courses matched that search yet.
+            </Text>
+            <Button
+              icon="plus.circle.fill"
+              label="Request this course"
+              onPress={() => setRequestSheetOpen(true)}
+              size="sm"
+              variant="secondary"
+            />
+          </View>
         ) : null}
 
         {classes.length > 0 ? (
@@ -235,6 +255,13 @@ export default function OnboardingClassesScreen() {
           onPress={handleContinue}
         />
       </View>
+      <CatalogRequestSheet
+        initialQuery={courseQuery}
+        onClose={() => setRequestSheetOpen(false)}
+        source="onboarding-classes"
+        type="course"
+        visible={requestSheetOpen}
+      />
     </View>
   );
 }
@@ -268,6 +295,16 @@ const styles = StyleSheet.create({
   },
   search: {
     marginTop: Space.xl,
+  },
+  searchRow: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    gap: Space.sm,
+    marginTop: Space.xl,
+  },
+  searchField: {
+    flex: 1,
+    marginTop: 0,
   },
   rows: {
     gap: Space.sm,
@@ -305,6 +342,12 @@ const styles = StyleSheet.create({
     borderWidth: 0,
   },
   noResults: {
+    flex: 1,
+  },
+  noResultsBlock: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.md,
     marginTop: Space.md,
   },
   selectedBlock: {
