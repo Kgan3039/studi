@@ -1,11 +1,13 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { IconButton } from '@/components/ui/IconButton';
 import { LoadingState } from '@/components/ui/LoadingState';
 import {
   PullToRefreshIndicator,
@@ -19,10 +21,25 @@ import { Colors, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
+  confirmChatRemoval,
+  showChatRemovalFailure,
+} from '@/lib/confirm-chat-removal';
+import {
+  areMessageSourcesLoaded,
+  dedupeMessageRows,
+  isMessageRowVisible,
+} from '@/lib/message-history';
+import {
   getBlockedUserIds,
+  removeSessionChatFromUserHistory,
+  subscribeToHiddenChats,
   subscribeToUserConversations,
+  subscribeToUserGroupChats,
   type ConversationListItem,
+  type GroupChatListItem,
+  type HiddenChat,
 } from '@/lib/firestore';
+import { Timestamp } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 
 function formatTimestamp(value: unknown) {
@@ -40,6 +57,14 @@ function formatTimestamp(value: unknown) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function sessionChatHistoryKey(sessionId: string) {
+  return `group:${sessionId}`;
+}
+
+function timestampMillis(value: unknown) {
+  return value instanceof Timestamp ? value.toMillis() : 0;
+}
+
 export default function MessagesScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
@@ -48,11 +73,17 @@ export default function MessagesScreen() {
   const { onPullScroll, pullDistance } = usePullToRefreshDistance();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
+  const [groupChats, setGroupChats] = useState<GroupChatListItem[]>([]);
+  const [hiddenChats, setHiddenChats] = useState<Map<string, HiddenChat>>(new Map());
+  const [pendingRemovalKeys, setPendingRemovalKeys] = useState<Set<string>>(new Set());
+  const pendingRemovalKeysRef = useRef(new Set<string>());
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isDmLoading, setIsDmLoading] = useState(true);
+  const [isGroupLoading, setIsGroupLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
+  const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [hasLoadError, setHasLoadError] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
@@ -97,33 +128,89 @@ export default function MessagesScreen() {
   useEffect(() => {
     if (!currentUser) {
       setConversations([]);
-      setErrorMessage('');
-      setIsLoading(false);
+      setHasLoadError(false);
+      setIsDmLoading(false);
       setIsRefreshing(false);
       return;
     }
 
-    setIsLoading(true);
-    setErrorMessage('');
+    setIsDmLoading(true);
     const unsubscribe = subscribeToUserConversations(
       currentUser.uid,
       (loadedConversations) => {
         setConversations(loadedConversations);
-        setErrorMessage('');
-        setIsLoading(false);
-        setIsRefreshing(false);
+        setIsDmLoading(false);
       },
       // Listener failures (rules, offline, profile hydration) used to leave the
       // spinner up forever; surface them so pull-to-refresh can retry.
-      (error) => {
-        setErrorMessage(error.message);
-        setIsLoading(false);
-        setIsRefreshing(false);
+      () => {
+        setHasLoadError(true);
+        setIsDmLoading(false);
       }
     );
 
     return unsubscribe;
   }, [currentUser, refreshNonce]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setGroupChats([]);
+      setIsGroupLoading(false);
+      return;
+    }
+
+    setIsGroupLoading(true);
+    const unsubscribe = subscribeToUserGroupChats(
+      currentUser.uid,
+      (loadedGroupChats) => {
+        setGroupChats(loadedGroupChats);
+        setIsGroupLoading(false);
+      },
+      () => {
+        setHasLoadError(true);
+        setIsGroupLoading(false);
+      }
+    );
+
+    return unsubscribe;
+  }, [currentUser, refreshNonce]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setHiddenChats(new Map());
+      setPendingRemovalKeys(new Set());
+      pendingRemovalKeysRef.current.clear();
+      setIsHistoryLoading(false);
+      return;
+    }
+
+    setIsHistoryLoading(true);
+    const unsubscribe = subscribeToHiddenChats(
+      currentUser.uid,
+      (loadedHiddenChats) => {
+        setHiddenChats(loadedHiddenChats);
+        setIsHistoryLoading(false);
+      },
+      () => {
+        setHasLoadError(true);
+        setIsHistoryLoading(false);
+      }
+    );
+
+    return unsubscribe;
+  }, [currentUser, refreshNonce]);
+
+  const isAnyLoading = !areMessageSourcesLoaded({
+    dm: !isDmLoading,
+    group: !isGroupLoading,
+    hidden: !isHistoryLoading,
+  });
+
+  useEffect(() => {
+    if (isRefreshing && !isAnyLoading) {
+      setIsRefreshing(false);
+    }
+  }, [isAnyLoading, isRefreshing]);
 
   function handleRefresh() {
     if (!currentUser) {
@@ -131,28 +218,130 @@ export default function MessagesScreen() {
     }
 
     setIsRefreshing(true);
+    setHasLoadError(false);
+    setIsDmLoading(true);
+    setIsGroupLoading(true);
+    setIsHistoryLoading(true);
     setRefreshNonce((value) => value + 1);
   }
+
+  const allChats = useMemo(() => {
+    const chats = [
+      ...conversations.map((conversation) => ({
+        type: "dm" as const,
+        id: conversation.conversationId,
+        name: conversation.otherParticipant?.displayName || "Student",
+        preview: conversation.lastMessagePreview || "Say hi before you arrive.",
+        timestamp: conversation.lastMessageAt || conversation.updatedAt,
+        conversation,
+      })),
+
+      ...groupChats.map((groupChat) => ({
+        type: "group" as const,
+        id: groupChat.sessionId,
+        name: groupChat.title,
+        preview: "Session chat",
+        timestamp: groupChat.lastMessageAt,
+        groupChat,
+      })),
+    ];
+
+    return dedupeMessageRows(chats)
+      .filter((chat) => {
+        if (chat.type === "dm") {
+          return true;
+        }
+
+        const key = sessionChatHistoryKey(chat.id);
+        // Session-chat removal is persistent. New messages do not silently
+        // override an explicit owner-scoped hidden marker.
+        return isMessageRowVisible({
+          type: chat.type,
+          isHidden: hiddenChats.has(key),
+          isPendingRemoval: pendingRemovalKeys.has(key),
+        });
+      })
+      .sort((firstChat, secondChat) =>
+        timestampMillis(secondChat.timestamp) - timestampMillis(firstChat.timestamp)
+      );
+  }, [
+    conversations,
+    groupChats,
+    hiddenChats,
+    pendingRemovalKeys,
+  ]);
 
   // Board MessagesListScreen has a "Search messages" field. Conversations are
   // already loaded by the subscription, so this filters them client-side —
   // no extra reads, no backend search.
-  const visibleConversations = useMemo(() => {
+  const visibleChats = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
 
     if (!query) {
-      return conversations;
+      return allChats;
     }
 
-    return conversations.filter((conversation) => {
-      const name = conversation.otherParticipant?.displayName?.toLowerCase() ?? '';
-      const preview = conversation.lastMessagePreview?.toLowerCase() ?? '';
-      return name.includes(query) || preview.includes(query);
+    return allChats.filter((chat) => {
+      return chat.name.toLowerCase().includes(query) || chat.preview.toLowerCase().includes(query);
     });
-  }, [conversations, searchQuery]);
+  }, [allChats, searchQuery]);
+
+  async function handleRemoveSessionChat(sessionId: string) {
+    if (!currentUser) {
+      return;
+    }
+
+    const key = sessionChatHistoryKey(sessionId);
+    if (pendingRemovalKeysRef.current.has(key)) {
+      return;
+    }
+    pendingRemovalKeysRef.current.add(key);
+    setPendingRemovalKeys((current) => new Set(current).add(key));
+
+    try {
+      await removeSessionChatFromUserHistory(currentUser.uid, sessionId);
+      setHiddenChats((current) => {
+        const next = new Map(current);
+        next.set(key, { chatType: "group", threadId: sessionId, removedAt: Timestamp.now() });
+        return next;
+      });
+      setPendingRemovalKeys((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+    } catch {
+      setPendingRemovalKeys((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+      await showChatRemovalFailure({
+        platform: Platform.OS,
+        showNativeAlert: Alert.alert,
+        showWebAlert: (message) => {
+          if (typeof window !== "undefined") {
+            window.alert(message);
+          }
+        },
+      });
+    } finally {
+      pendingRemovalKeysRef.current.delete(key);
+    }
+  }
+
+  function confirmRemoveSessionChat(sessionId: string) {
+    confirmChatRemoval({
+      platform: Platform.OS,
+      showNativeAlert: Alert.alert,
+      showWebConfirm: (message) =>
+        typeof window !== "undefined" && window.confirm(message),
+      onConfirm: () => void handleRemoveSessionChat(sessionId),
+    });
+  }
 
   return (
-    <View style={[styles.screen, { backgroundColor: palette.background }]}>
+    <GestureHandlerRootView style={[styles.screen, { backgroundColor: palette.background }]}>
       <ScrollView
         onScroll={onPullScroll}
         scrollEventThrottle={16}
@@ -173,7 +362,7 @@ export default function MessagesScreen() {
         <ScreenHeader showNotifications title="Messages" />
 
         <ScreenTransition style={styles.transition}>
-          {conversations.length > 0 ? (
+          {allChats.length > 0 ? (
             <SearchBar
               accessibilityLabel="Search messages"
               clearAccessibilityLabel="Clear message search"
@@ -183,44 +372,28 @@ export default function MessagesScreen() {
             />
           ) : null}
 
-          {isLoading ? (
+          {isAnyLoading ? (
             <LoadingState title="Loading conversations" />
-          ) : errorMessage ? (
-            <ErrorState body={errorMessage} onRetry={handleRefresh} />
-          ) : conversations.length > 0 ? (
-            visibleConversations.length > 0 ? (
+          ) : hasLoadError ? (
+            <ErrorState body="We couldn't load your conversations." onRetry={handleRefresh} />
+          ) : allChats.length > 0 ? (
+            visibleChats.length > 0 ? (
               <View>
-                {visibleConversations.map((conversation, index) => {
-                  const otherName = conversation.otherParticipant?.displayName || 'Student';
-                  const isBlocked = !!conversation.otherParticipant?.uid &&
-                    blockedUserIds.includes(conversation.otherParticipant.uid);
+                {visibleChats.map((chat, index) => {
+                  const otherName = chat.name;
 
-                  return (
-                    <Pressable
-                      key={conversation.conversationId}
-                      accessibilityLabel={
-                        isBlocked ? `Conversation with ${otherName}, blocked` : `Conversation with ${otherName}`
-                      }
-                      accessibilityRole="button"
-                      onPress={() =>
-                        router.push({
-                          pathname: '/conversation/[conversationId]',
-                          params: {
-                            conversationId: conversation.conversationId,
-                            otherUserId: conversation.otherParticipant?.uid ?? '',
-                            otherUserName: otherName,
-                          },
-                        })
-                      }
-                      style={({ pressed }) => [
-                        styles.threadRow,
-                        index > 0 && {
-                          borderTopColor: palette.border,
-                          borderTopWidth: StyleSheet.hairlineWidth,
-                        },
-                        { opacity: pressed ? 0.7 : 1 },
-                      ]}>
+                  const otherUserId =
+                    chat.type === "dm"
+                      ? chat.conversation.otherParticipant?.uid ?? ""
+                      : "";
+
+                  const isBlocked =
+                    !!otherUserId && blockedUserIds.includes(otherUserId);
+
+                  const rowContents = (
+                    <>
                       <Avatar name={otherName} size="md" />
+
                       <View style={styles.threadBody}>
                         <View style={styles.threadHeader}>
                           <Text
@@ -232,9 +405,8 @@ export default function MessagesScreen() {
                             numberOfLines={1}>
                             {otherName}
                           </Text>
+
                           <Text
-                            // Metadata is capped so a scaled timestamp cannot eat
-                            // the row and starve the name at accessibility sizes.
                             maxFontSizeMultiplier={1.6}
                             style={[
                               TypeScale.meta,
@@ -242,26 +414,118 @@ export default function MessagesScreen() {
                               { color: palette.secondaryText },
                             ]}
                             numberOfLines={1}>
-                            {formatTimestamp(
-                              conversation.lastMessageAt || conversation.updatedAt
-                            )}
+                            {formatTimestamp(chat.timestamp)}
                           </Text>
                         </View>
+
                         <View style={styles.threadPreview}>
                           {isBlocked ? (
                             <IconSymbol color={palette.tint} name="nosign" size={15} />
                           ) : null}
+
                           <Text
                             style={[
                               TypeScale.body,
                               { color: isBlocked ? palette.tint : palette.secondaryText },
                             ]}
                             numberOfLines={1}>
-                            {isBlocked ? 'Blocked' : conversation.lastMessagePreview || 'Say hi before you arrive.'}
+                            {isBlocked ? "Blocked" : chat.preview}
                           </Text>
                         </View>
                       </View>
-                    </Pressable>
+                    </>
+                  );
+
+                  if (chat.type === "dm") {
+                    return (
+                      <Pressable
+                        key={`dm:${chat.id}`}
+                        accessibilityLabel={
+                          isBlocked
+                            ? `Conversation with ${otherName}, blocked`
+                            : `Conversation with ${otherName}`
+                        }
+                        accessibilityRole="button"
+                        onPress={() =>
+                          router.push({
+                            pathname: "/conversation/[conversationId]",
+                            params: {
+                              conversationId: chat.id,
+                              otherUserId,
+                              otherUserName: otherName,
+                            },
+                          })
+                        }
+                        style={({ pressed }) => [
+                          styles.threadRow,
+                          index > 0 && {
+                            borderTopColor: palette.border,
+                            borderTopWidth: StyleSheet.hairlineWidth,
+                          },
+                          { opacity: pressed ? 0.7 : 1 },
+                        ]}>
+                        {rowContents}
+                      </Pressable>
+                    );
+                  }
+
+                  const removalKey = sessionChatHistoryKey(chat.id);
+                  const isRemoving = pendingRemovalKeys.has(removalKey);
+
+                  return (
+                    <Swipeable
+                      key={`group:${chat.id}`}
+                      overshootRight={false}
+                      renderRightActions={() => (
+                        <Pressable
+                          accessibilityLabel={`Remove ${otherName} from my Messages`}
+                          accessibilityRole="button"
+                          disabled={isRemoving}
+                          onPress={() => confirmRemoveSessionChat(chat.id)}
+                          style={({ pressed }) => [
+                            styles.removeAction,
+                            { backgroundColor: palette.destructive },
+                            { opacity: pressed ? 0.75 : 1 },
+                          ]}
+                        >
+                          <IconSymbol color="#FFFFFF" name="trash" size={21} />
+                          <Text style={styles.removeActionText}>Remove</Text>
+                        </Pressable>
+                      )}
+                      rightThreshold={44}
+                    >
+                      <View
+                        style={[
+                          styles.rowShell,
+                          index > 0 && {
+                            borderTopColor: palette.border,
+                            borderTopWidth: StyleSheet.hairlineWidth,
+                          },
+                          { backgroundColor: palette.background },
+                        ]}>
+                        <Pressable
+                          accessibilityLabel={`Session chat for ${otherName}`}
+                          accessibilityRole="button"
+                          onPress={() =>
+                            router.push({
+                              pathname: "/session-chat/[sessionId]",
+                              params: { sessionId: chat.id },
+                            })
+                          }
+                          style={({ pressed }) => [
+                            styles.threadRow,
+                            { opacity: pressed ? 0.7 : 1 },
+                          ]}>
+                          {rowContents}
+                        </Pressable>
+                        <IconButton
+                          accessibilityLabel={`Remove ${otherName} from my Messages`}
+                          disabled={isRemoving}
+                          icon="trash"
+                          onPress={() => confirmRemoveSessionChat(chat.id)}
+                        />
+                      </View>
+                    </Swipeable>
                   );
                 })}
               </View>
@@ -286,7 +550,7 @@ export default function MessagesScreen() {
         </ScreenTransition>
       </ScrollView>
       <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
-    </View>
+    </GestureHandlerRootView>
   );
 }
 
@@ -306,6 +570,12 @@ const styles = StyleSheet.create({
     gap: Space.md,
     minHeight: 64,
     paddingVertical: Space.md,
+    flex: 1,
+    minWidth: 0,
+  },
+  rowShell: {
+    alignItems: 'center',
+    flexDirection: 'row',
   },
   threadBody: {
     flex: 1,
@@ -330,5 +600,16 @@ const styles = StyleSheet.create({
   },
   threadTimestamp: {
     flexShrink: 0,
+  },
+  removeAction: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 92,
+    paddingHorizontal: Space.md,
+  },
+  removeActionText: {
+    ...TypeScale.meta,
+    color: '#FFFFFF',
+    marginTop: Space.xs,
   },
 });

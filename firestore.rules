@@ -376,6 +376,33 @@ service cloud.firestore {
           && (isOwnSessionThread() || isOwnConversationThread());
         allow delete: if false; // account deletion recursive-deletes the user tree
       }
+
+      // Personal session-chat history. Removing a row only records an
+      // owner-scoped timestamp; it never mutates the shared session/messages.
+      // The marker remains until its owner explicitly restores the row.
+      match /hiddenChats/{hiddenChatId} {
+        function isOwnHiddenSession() {
+          return incoming().chatType == 'group'
+            && exists(/databases/$(database)/documents/sessions/$(incoming().threadId))
+            && request.auth.uid in
+               get(/databases/$(database)/documents/sessions/$(incoming().threadId)).data.participantIds;
+        }
+
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && hiddenChatId == incoming().chatType + '__' + incoming().threadId
+          && incoming().keys().hasOnly(['chatType', 'threadId', 'removedAt'])
+          && incoming().chatType == 'group'
+          && incoming().threadId is string
+          && incoming().threadId.size() >= 1
+          && incoming().threadId.size() <= 300
+          && incoming().removedAt == request.time
+          && isOwnHiddenSession();
+        // Deleting the owner's marker is the explicit restore operation. There
+        // is no restore UI in this beta; account deletion also removes the user
+        // tree recursively through the existing Admin path.
+        allow delete: if isOwner(userId);
+      }
     }
 
     // ------------------------------------------------------------------

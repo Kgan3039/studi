@@ -446,6 +446,168 @@ describe('users', () => {
   });
 });
 
+describe('personal hidden chat history', () => {
+  beforeEach(async () => {
+    await seed(`users/${ALICE}`, { displayName: 'Alice', classes: [] });
+    await seed(`users/${BOB}`, { displayName: 'Bob', classes: [] });
+    await seed(`conversations/${convoId(ALICE, BOB)}`, {
+      ...validConversation(ALICE, BOB),
+      lastMessageAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    await seed('sessions/sharedSession', {
+      ...validSession(ALICE),
+      participantIds: [ALICE, BOB],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+  });
+
+  it('lets an owner hide their own group chat', async () => {
+    const db = ctx(ALICE);
+    await assertSucceeds(setDoc(doc(db, 'users', ALICE, 'hiddenChats', 'group__sharedSession'), {
+      chatType: 'group',
+      threadId: 'sharedSession',
+      removedAt: serverTimestamp(),
+    }));
+  });
+
+  it('rejects DM hidden markers without changing direct-message access', async () => {
+    const db = ctx(ALICE);
+    await assertFails(setDoc(
+      doc(db, 'users', ALICE, 'hiddenChats', `dm__${convoId(ALICE, BOB)}`),
+      { chatType: 'dm', threadId: convoId(ALICE, BOB), removedAt: serverTimestamp() }
+    ));
+
+    await assertSucceeds(getDoc(doc(db, 'conversations', convoId(ALICE, BOB))));
+  });
+
+  it('cannot hide a session chat for another user or as a nonparticipant', async () => {
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', BOB, 'hiddenChats', 'group__sharedSession'),
+      { chatType: 'group', threadId: 'sharedSession', removedAt: serverTimestamp() }
+    ));
+    await assertFails(setDoc(
+      doc(ctx(MALLORY), 'users', MALLORY, 'hiddenChats', 'group__sharedSession'),
+      { chatType: 'group', threadId: 'sharedSession', removedAt: serverTimestamp() }
+    ));
+  });
+
+  it('rejects forged timestamps and mismatched document ids', async () => {
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', ALICE, 'hiddenChats', 'wrong-id'),
+      { chatType: 'group', threadId: 'sharedSession', removedAt: serverTimestamp() }
+    ));
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', ALICE, 'hiddenChats', 'group__sharedSession'),
+      { chatType: 'group', threadId: 'sharedSession', removedAt: Timestamp.fromMillis(0) }
+    ));
+  });
+
+  it('keeps markers private and lets only the owner restore one', async () => {
+    const hiddenRef = doc(
+      ctx(ALICE),
+      'users',
+      ALICE,
+      'hiddenChats',
+      'group__sharedSession'
+    );
+    await assertSucceeds(setDoc(hiddenRef, {
+      chatType: 'group',
+      threadId: 'sharedSession',
+      removedAt: serverTimestamp(),
+    }));
+
+    await assertFails(getDoc(doc(
+      ctx(BOB),
+      'users',
+      ALICE,
+      'hiddenChats',
+      'group__sharedSession'
+    )));
+    await assertFails(deleteDoc(doc(
+      ctx(BOB),
+      'users',
+      ALICE,
+      'hiddenChats',
+      'group__sharedSession'
+    )));
+    await assertFails(updateDoc(doc(
+      ctx(BOB),
+      'users',
+      ALICE,
+      'hiddenChats',
+      'group__sharedSession'
+    ), { removedAt: serverTimestamp() }));
+    await assertSucceeds(deleteDoc(hiddenRef));
+  });
+
+  it('rejects an atomic write that tries to change another user\'s hidden state', async () => {
+    const db = ctx(ALICE);
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'users', ALICE, 'hiddenChats', 'group__sharedSession'), {
+      chatType: 'group', threadId: 'sharedSession', removedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'users', BOB, 'hiddenChats', 'group__sharedSession'), {
+      chatType: 'group', threadId: 'sharedSession', removedAt: serverTimestamp(),
+    });
+
+    await assertFails(batch.commit());
+    const ownMarkerAfterFailure = await assertSucceeds(getDoc(doc(
+      db,
+      'users',
+      ALICE,
+      'hiddenChats',
+      'group__sharedSession'
+    )));
+    assert.equal(ownMarkerAfterFailure.exists(), false);
+  });
+
+  it('does not change session membership, messages, or access', async () => {
+    await seed('sessions/sharedSession/messages/message1', {
+      senderId: ALICE,
+      text: 'Meet by the windows',
+      createdAt: Timestamp.now(),
+    });
+    const db = ctx(BOB);
+    await assertSucceeds(setDoc(
+      doc(db, 'users', BOB, 'hiddenChats', 'group__sharedSession'),
+      { chatType: 'group', threadId: 'sharedSession', removedAt: serverTimestamp() }
+    ));
+
+    const sessionSnapshot = await assertSucceeds(
+      getDoc(doc(db, 'sessions', 'sharedSession'))
+    );
+    const messageSnapshot = await assertSucceeds(
+      getDoc(doc(db, 'sessions', 'sharedSession', 'messages', 'message1'))
+    );
+    assert.deepEqual(sessionSnapshot.data().participantIds, [ALICE, BOB]);
+    assert.equal(messageSnapshot.data().text, 'Meet by the windows');
+  });
+
+  it('does not grant a nonparticipant access when a marker is admin-seeded', async () => {
+    await seed('sessions/sharedSession/messages/message1', {
+      senderId: ALICE,
+      text: 'Participants only',
+      createdAt: Timestamp.now(),
+    });
+    await seed(`users/${MALLORY}/hiddenChats/group__sharedSession`, {
+      chatType: 'group',
+      threadId: 'sharedSession',
+      removedAt: Timestamp.now(),
+    });
+
+    await assertFails(getDoc(doc(
+      ctx(MALLORY),
+      'sessions',
+      'sharedSession',
+      'messages',
+      'message1'
+    )));
+  });
+});
+
 // --------------------------------------------------------- user settings
 describe('user settings (users/{uid}/private/settings)', () => {
   const settingsRef = (db, uid) => doc(db, 'users', uid, 'private', 'settings');

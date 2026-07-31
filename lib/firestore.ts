@@ -232,6 +232,18 @@ export type ConversationListItem = DirectConversation & {
   otherParticipant: UserProfile | null;
 };
 
+export type GroupChatListItem = {
+  sessionId: string;
+  title: string;
+  lastMessageAt: Timestamp;
+};
+
+export type HiddenChat = {
+  chatType: "group";
+  removedAt?: unknown;
+  threadId: string;
+};
+
 export type UserBlock = {
   blockedUserId: string;
   blockerUserId: string;
@@ -1616,6 +1628,108 @@ export function subscribeToUserConversations(
     },
     onError
   );
+}
+
+const GROUP_CHAT_LIST_LIMIT = 50;
+
+function mapGroupChatListItem(
+  sessionId: string,
+  data: Record<string, unknown>
+): GroupChatListItem | null {
+  const lastMessageAt = normalizeSessionTimestamp(data.lastMessageAt);
+  if (!lastMessageAt) {
+    return null;
+  }
+
+  return {
+    sessionId,
+    title: typeof data.title === "string" ? data.title : "Study Session",
+    lastMessageAt,
+  };
+}
+
+/**
+ * A bounded listener over the user's most recently active session chats.
+ * orderBy(lastMessageAt) excludes sessions with zero messages without reading
+ * message subcollections or exposing message text on the session document.
+ */
+export function subscribeToUserGroupChats(
+  userId: string,
+  listener: (groupChats: GroupChatListItem[]) => void,
+  onError?: (error: Error) => void
+) {
+  const groupChatsQuery = query(
+    collection(db, COLLECTIONS.sessions),
+    where("participantIds", "array-contains", userId),
+    orderBy("lastMessageAt", "desc"),
+    limit(GROUP_CHAT_LIST_LIMIT)
+  );
+
+  return onSnapshot(
+    groupChatsQuery,
+    (snapshot) => {
+      listener(
+        snapshot.docs
+          .map((sessionDoc) => mapGroupChatListItem(sessionDoc.id, sessionDoc.data()))
+          .filter((chat): chat is GroupChatListItem => !!chat)
+      );
+    },
+    onError
+  );
+}
+
+/**
+ * Personal session-chat removals. The shared session and its messages are
+ * deliberately left untouched. Removal is sticky until the owner explicitly
+ * deletes the marker.
+ */
+export function subscribeToHiddenChats(
+  userId: string,
+  listener: (hiddenChats: Map<string, HiddenChat>) => void,
+  onError?: (error: Error) => void
+) {
+  return onSnapshot(
+    query(
+      collection(db, COLLECTIONS.users, userId, "hiddenChats"),
+      where("chatType", "==", "group")
+    ),
+    (snapshot) => {
+      const hiddenChats = new Map<string, HiddenChat>();
+
+      snapshot.docs.forEach((hiddenChatDoc) => {
+        const data = hiddenChatDoc.data({ serverTimestamps: "estimate" });
+        if (
+          data.chatType === "group" &&
+          typeof data.threadId === "string"
+        ) {
+          hiddenChats.set(`${data.chatType}:${data.threadId}`, {
+            chatType: data.chatType,
+            threadId: data.threadId,
+            removedAt: data.removedAt,
+          });
+        }
+      });
+
+      listener(hiddenChats);
+    },
+    onError
+  );
+}
+
+export async function removeSessionChatFromUserHistory(
+  userId: string,
+  sessionId: string
+) {
+  const batch = writeBatch(db);
+  batch.set(doc(db, COLLECTIONS.users, userId, "hiddenChats", `group__${sessionId}`), {
+    chatType: "group",
+    threadId: sessionId,
+    removedAt: serverTimestamp(),
+  } satisfies HiddenChat);
+  batch.set(doc(db, COLLECTIONS.users, userId, "reads", sessionId), {
+    lastReadAt: serverTimestamp(),
+  });
+  await batch.commit();
 }
 
 export async function blockUser(blockerUserId: string, blockedUserId: string) {
