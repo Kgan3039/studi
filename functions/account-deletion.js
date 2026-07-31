@@ -238,6 +238,28 @@ function createAccountDeletionRunner({ db, auth, FieldValue }) {
         run: () => deleteQueryBatch(db.collection("locationRatings").where("userId", "==", uid)),
       },
       {
+        // Preserve the requested catalog item for review, but remove the
+        // account link. Deleting requesterUserId also removes each updated doc
+        // from this query, so every bounded page makes strict progress and a
+        // retry safely resumes from what remains.
+        name: "catalog-requests",
+        run: () =>
+          drainQuery(
+            db.collection("catalogRequests").where("requesterUserId", "==", uid),
+            async (docs) => {
+              const batch = db.batch();
+              docs.forEach((docSnap) =>
+                batch.update(docSnap.ref, {
+                  requesterUserId: FieldValue.delete(),
+                  anonymized: true,
+                  anonymizedAt: FieldValue.serverTimestamp(),
+                })
+              );
+              await batch.commit();
+            }
+          ),
+      },
+      {
         // Public doc + private, notifications, and reads subcollections.
         name: "user-tree",
         run: () => db.recursiveDelete(db.collection("users").doc(uid)),

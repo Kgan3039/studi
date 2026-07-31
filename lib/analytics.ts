@@ -84,6 +84,7 @@ export type AnalyticsEvent =
   | "session_chat_opened"
   | "group_message_sent"
   | "report_submitted"
+  | "catalog_request_submitted"
   | "user_blocked"
   | "friends_viewed"
   | "friend_request_sent"

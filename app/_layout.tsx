@@ -12,6 +12,7 @@ import 'react-native-reanimated';
 
 import { StudiLaunchIntro } from '@/components/studi-launch-intro';
 import { Colors, FontFamily } from '@/constants/theme';
+import { auth } from '@/firebaseConfig';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initAnalytics, track } from '@/lib/analytics';
 import { subscribeToAuthState, waitForAuthReady } from '@/lib/auth';
@@ -171,9 +172,15 @@ function RootLayout() {
 
     const leaf = segments[segments.length - 1] ?? '';
 
+    const currentUserIsVerified = auth.currentUser?.emailVerified === true;
+
     if (authState === 'signed-out' && !PUBLIC_LEAVES.has(leaf)) {
       router.replace('/welcome');
-    } else if (authState === 'unverified' && !UNVERIFIED_LEAVES.has(leaf)) {
+    } else if (
+      authState === 'unverified' &&
+      !currentUserIsVerified &&
+      !UNVERIFIED_LEAVES.has(leaf)
+    ) {
       router.replace('/verify-email');
     }
   }, [ready, authState, segments, router]);
@@ -185,7 +192,10 @@ function RootLayout() {
     return null;
   }
 
-  const isSignedIn = authState === 'signed-in';
+  // `auth.currentUser` is updated by user.reload() before React receives the
+  // ID-token listener callback. Include it here to prevent a one-click
+  // verification navigation from racing the async state update.
+  const isSignedIn = authState === 'signed-in' || auth.currentUser?.emailVerified === true;
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>

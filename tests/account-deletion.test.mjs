@@ -33,15 +33,19 @@ const EXPECTED_STEP_ORDER = [
   'friend-requests',
   'friendships',
   'location-ratings',
+  'catalog-requests',
   'user-tree',
 ];
 
 // Minimal fakes for the Firestore/Auth surface the runner touches. Queries
 // always come back empty (each cleanup step is exercised as a no-op pass);
 // a named collection can be made to throw to simulate a mid-run failure.
-function createFakes() {
+function createFakes({ catalogRequests = [] } = {}) {
   const ops = [];
   const jobWrites = [];
+  const storedCatalogRequests = new Map(
+    catalogRequests.map((request) => [request.id, { ...request }])
+  );
   let jobData = null;
   let authUserExists = true;
   // failures.collection: named query throws; failures.jobWriteStatus: the
@@ -65,7 +69,7 @@ function createFakes() {
     },
   };
 
-  function makeQuery(name) {
+  function makeQuery(name, field, value) {
     const query = {
       where: () => query,
       limit: () => query,
@@ -74,6 +78,14 @@ function createFakes() {
           const error = new Error(`${name} query failed`);
           error.code = 'unavailable';
           throw error;
+        }
+        if (name === 'catalogRequests') {
+          const docs = [...storedCatalogRequests.values()]
+            .filter((request) => request[field] === value)
+            .map((request) => ({
+              ref: { collection: name, id: request.id },
+            }));
+          return { empty: docs.length === 0, docs };
         }
         return { empty: true, docs: [] };
       },
@@ -85,14 +97,34 @@ function createFakes() {
     collection(name) {
       return {
         doc: () => (name === 'accountDeletionJobs' ? jobDoc : { path: `${name}/doc` }),
-        where: () => makeQuery(name),
+        where: (field, _operator, value) => makeQuery(name, field, value),
       };
     },
     collectionGroup(name) {
       return { where: () => makeQuery(`cg:${name}`) };
     },
     batch() {
-      return { update() {}, delete() {}, async commit() {} };
+      const updates = [];
+      return {
+        update(ref, fields) {
+          updates.push({ ref, fields });
+        },
+        delete() {},
+        async commit() {
+          for (const { ref, fields } of updates) {
+            if (ref.collection !== 'catalogRequests') continue;
+            const request = storedCatalogRequests.get(ref.id);
+            if (!request) continue;
+            Object.entries(fields).forEach(([key, value]) => {
+              if (value === 'delete-field') {
+                delete request[key];
+              } else {
+                request[key] = value;
+              }
+            });
+          }
+        },
+      };
     },
     async recursiveDelete() {
       ops.push('recursiveDelete');
@@ -126,12 +158,14 @@ function createFakes() {
     serverTimestamp: () => 'server-ts',
     increment: (n) => ({ increment: n }),
     arrayRemove: (v) => ({ arrayRemove: v }),
+    delete: () => 'delete-field',
   };
 
   return {
     ops,
     jobWrites,
     failures,
+    getCatalogRequests: () => [...storedCatalogRequests.values()],
     getJobData: () => jobData,
     runner: createAccountDeletionRunner({ db, auth, FieldValue }),
   };
@@ -226,6 +260,45 @@ describe('deletion runner (same code path as callable + ops script)', () => {
     assert.ok(deleteIndex > fakes.ops.indexOf('job:step:user-tree'));
     assert.equal(fakes.ops[fakes.ops.length - 1], 'job:complete');
     assert.equal(fakes.getJobData().status, 'complete');
+  });
+
+  it('anonymizes catalog requests so none remain linked to the deleted uid', async () => {
+    const fakes = createFakes({
+      catalogRequests: [
+        {
+          id: 'owned-request',
+          requesterUserId: UID,
+          type: 'location',
+          name: 'Science Hall',
+          details: 'Second floor',
+        },
+        {
+          id: 'other-request',
+          requesterUserId: 'bobUid',
+          type: 'course',
+          name: 'COMPSCI 999',
+          details: '',
+        },
+      ],
+    });
+
+    await fakes.runner.runCleanup(UID);
+
+    const requests = fakes.getCatalogRequests();
+    const owned = requests.find((request) => request.id === 'owned-request');
+    const other = requests.find((request) => request.id === 'other-request');
+
+    assert.equal(
+      requests.some((request) => request.requesterUserId === UID),
+      false
+    );
+    assert.equal('requesterUserId' in owned, false);
+    assert.equal(owned.anonymized, true);
+    assert.equal(owned.anonymizedAt, 'server-ts');
+    assert.equal(owned.name, 'Science Hall');
+    assert.equal(owned.details, 'Second floor');
+    assert.equal(other.requesterUserId, 'bobUid');
+    assert.equal(other.anonymized, undefined);
   });
 
   it('a failed step persists the failing phase and leaves the job resumable', async () => {
