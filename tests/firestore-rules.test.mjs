@@ -153,7 +153,11 @@ function createReportWithRateLimit(db, uid, reportId, report) {
 }
 
 function createCatalogRequestWithRateLimit(db, uid, requestId, request) {
-  const batch = batchWithRateLimit(db, uid, 'catalogRequest');
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'rateLimits', uid, 'actions', 'catalogRequest'), {
+    lastRequestId: requestId,
+    updatedAt: serverTimestamp(),
+  });
   batch.set(doc(db, 'catalogRequests', requestId), request);
   return batch.commit();
 }
@@ -1903,7 +1907,7 @@ describe('catalog requests (write-only)', () => {
     ...overrides,
   });
 
-  it('verified students can create a request, but clients cannot review it', async () => {
+  it('one request with its matching limiter update succeeds and remains write-only', async () => {
     await assertSucceeds(
       createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr1', valid(ALICE))
     );
@@ -1914,17 +1918,93 @@ describe('catalog requests (write-only)', () => {
     await assertFails(deleteDoc(doc(ctx(ALICE), 'catalogRequests', 'cr1')));
   });
 
-  it('catalog requests are throttled per user', async () => {
-    await seed(`rateLimits/${ALICE}/actions/catalogRequest`, { updatedAt: Timestamp.now() });
+  it('a second request inside ten minutes fails', async () => {
+    await seed(`rateLimits/${ALICE}/actions/catalogRequest`, {
+      lastRequestId: 'cr1',
+      updatedAt: Timestamp.now(),
+    });
     await assertFails(
       createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr2', valid(ALICE))
     );
   });
 
-  it('rejects spoofed users, invalid types, and oversized names', async () => {
+  it('two requests cannot share one limiter update in the same batch', async () => {
+    const db = ctx(ALICE);
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'rateLimits', ALICE, 'actions', 'catalogRequest'), {
+      lastRequestId: 'cr-batch-1',
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'catalogRequests', 'cr-batch-1'), valid(ALICE));
+    batch.set(doc(db, 'catalogRequests', 'cr-batch-2'), valid(ALICE));
+
+    await assertFails(batch.commit());
+  });
+
+  it('two concurrent independent batches allow exactly one request', async () => {
+    const attempts = [ctx(ALICE), ctx(ALICE)].map((db) => {
+      const requestRef = doc(collection(db, 'catalogRequests'));
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'rateLimits', ALICE, 'actions', 'catalogRequest'), {
+        lastRequestId: requestRef.id,
+        updatedAt: serverTimestamp(),
+      });
+      batch.set(requestRef, valid(ALICE));
+      return { requestId: requestRef.id, commit: batch.commit() };
+    });
+
+    const outcomes = await Promise.allSettled(attempts.map((attempt) => attempt.commit));
+    const successfulIndexes = outcomes
+      .map((outcome, index) => (outcome.status === 'fulfilled' ? index : -1))
+      .filter((index) => index >= 0);
+    const failedOutcomes = outcomes.filter((outcome) => outcome.status === 'rejected');
+
+    assert.equal(successfulIndexes.length, 1);
+    assert.equal(failedOutcomes.length, 1);
+
+    const successfulRequestId = attempts[successfulIndexes[0]].requestId;
+    await env.withSecurityRulesDisabled(async (context) => {
+      const adminDb = context.firestore();
+      const requestSnapshot = await getDocs(collection(adminDb, 'catalogRequests'));
+      const limiterSnapshot = await getDoc(
+        doc(adminDb, 'rateLimits', ALICE, 'actions', 'catalogRequest')
+      );
+
+      assert.equal(requestSnapshot.size, 1);
+      assert.equal(requestSnapshot.docs[0].id, successfulRequestId);
+      assert.equal(limiterSnapshot.data().lastRequestId, successfulRequestId);
+    });
+  });
+
+  it('a request id that does not match lastRequestId fails', async () => {
+    const db = ctx(ALICE);
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'rateLimits', ALICE, 'actions', 'catalogRequest'), {
+      lastRequestId: 'different-request',
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'catalogRequests', 'cr-mismatch'), valid(ALICE));
+
+    await assertFails(batch.commit());
+  });
+
+  it('rejects a forged requester uid', async () => {
     await assertFails(
       createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr3', valid(BOB))
     );
+  });
+
+  it('allows another request once the cooldown has elapsed', async () => {
+    await seed(`rateLimits/${ALICE}/actions/catalogRequest`, {
+      lastRequestId: 'old-request',
+      updatedAt: Timestamp.fromMillis(Date.now() - 11 * 60 * 1000),
+    });
+    await assertSucceeds(
+      createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr-after-cooldown', valid(ALICE))
+    );
+  });
+
+  it('rejects invalid types and oversized names', async () => {
     await assertFails(
       createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr4', valid(ALICE, {
         type: 'building',

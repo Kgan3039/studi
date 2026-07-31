@@ -14,6 +14,7 @@ import {
 
 import { auth } from "../firebaseConfig";
 import { identifyUser, resetAnalyticsIdentity, track } from "./analytics";
+import { subscribeToIdTokenState } from "./auth-listener";
 import { createOrUpdateUserProfile } from "./firestore";
 
 const UW_EMAIL_DOMAIN = "@wisc.edu";
@@ -197,17 +198,16 @@ export async function requestPasswordReset(email: string) {
 }
 
 export function subscribeToAuthState(listener: (user: User | null) => void) {
-  // Email verification changes the ID token without changing the user's UID.
-  // onAuthStateChanged intentionally ignores that case, while
-  // onIdTokenChanged updates the route gate as soon as verification is known.
-  return onIdTokenChanged(auth, listener);
+  // The ID-token listener updates route gates when verification claims change,
+  // even though the signed-in user's UID remains the same.
+  return subscribeToIdTokenState(auth, onIdTokenChanged, listener);
 }
 
 /**
  * Resolves once Firebase has finished restoring any persisted session.
- * Before this settles, onAuthStateChanged can emit null for a user who is
- * actually signed in (AsyncStorage restore is async) — route gates must not
- * treat that early null as signed-out.
+ * Before this settles, the ID-token listener can emit null while AsyncStorage
+ * restoration is still in flight, so route gates must not treat that early
+ * callback as a definitive sign-out.
  */
 export function waitForAuthReady() {
   return auth.authStateReady();

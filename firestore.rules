@@ -80,11 +80,14 @@ service cloud.firestore {
                         'friendRequest', 'createConversation'];
     }
 
-    // Two rate-limit shapes share the rateLimits/{uid}/actions/{action} path:
+    // Three rate-limit shapes share the rateLimits/{uid}/actions/{action} path:
     //
-    //  - INTERVAL (the original five actions): a single `updatedAt`, valid when
+    //  - INTERVAL: a single `updatedAt`, valid when
     //    enough time has passed since the last one. Bounds RATE, not total
     //    volume — at a 10s interval that is still ~8,600 writes/day.
+    //  - BOUND INTERVAL (catalogRequest): `updatedAt` plus the exact request
+    //    document id authorized by that limiter update. Binding the id prevents
+    //    one atomic limiter write from authorizing multiple request creates.
     //  - COUNTER (createConversation): a fixed 24h window with a hard cap.
     //    Unsolicited DM threads need total reach bounded, not just slowed, so
     //    an interval throttle is the wrong instrument (security audit H3).
@@ -94,6 +97,10 @@ service cloud.firestore {
     // counter shape.
     function isCounterRateLimitedAction(action) {
       return action == 'createConversation';
+    }
+
+    function isBoundIntervalRateLimitedAction(action) {
+      return action == 'catalogRequest';
     }
 
     // New conversation partners allowed per window. A conversation ID is the
@@ -152,7 +159,7 @@ service cloud.firestore {
         );
     }
 
-    // Unchanged behavior for the original five actions.
+    // Unchanged behavior for the original interval actions.
     function isValidIntervalRateLimitWrite(userId, action) {
       return incoming().keys().hasOnly(['updatedAt'])
         && incoming().updatedAt == request.time
@@ -171,12 +178,26 @@ service cloud.firestore {
             && previousUpdatedAt <= request.time - duration.value(60, 's'))
           || (action == 'reportUser'
             && previousUpdatedAt <= request.time - duration.value(10, 'm'))
-          || (action == 'catalogRequest'
-            && previousUpdatedAt <= request.time - duration.value(10, 'm'))
           || (action == 'locationRating'
             && previousUpdatedAt <= request.time - duration.value(10, 's'))
           || (action == 'friendRequest'
             && previousUpdatedAt <= request.time - duration.value(10, 's'))
+        );
+    }
+
+    function isValidBoundIntervalRateLimitWrite(userId, action) {
+      return action == 'catalogRequest'
+        && incoming().keys().hasOnly(['updatedAt', 'lastRequestId'])
+        && incoming().updatedAt == request.time
+        && incoming().lastRequestId is string
+        && incoming().lastRequestId.size() > 0
+        && incoming().lastRequestId.size() <= 128
+        && (
+          !exists(rateLimitRef(userId, action))
+          || (
+            resource.data.updatedAt is timestamp
+            && resource.data.updatedAt <= request.time - duration.value(10, 'm')
+          )
         );
     }
 
@@ -187,12 +208,21 @@ service cloud.firestore {
         && (
           isCounterRateLimitedAction(action)
             ? isValidQuotaCounterWrite(userId, action)
-            : isValidIntervalRateLimitWrite(userId, action)
+            : (
+              isBoundIntervalRateLimitedAction(action)
+                ? isValidBoundIntervalRateLimitWrite(userId, action)
+                : isValidIntervalRateLimitWrite(userId, action)
+            )
         );
     }
 
     function hasFreshRateLimit(userId, action) {
       return getAfter(rateLimitRef(userId, action)).data.updatedAt == request.time;
+    }
+
+    function hasFreshCatalogRequestRateLimit(userId, requestId) {
+      return getAfter(rateLimitRef(userId, 'catalogRequest')).data.updatedAt == request.time
+        && getAfter(rateLimitRef(userId, 'catalogRequest')).data.lastRequestId == requestId;
     }
 
     // ------------------------------------------------------------------
@@ -752,7 +782,8 @@ service cloud.firestore {
       // fully denied, including to their owner: their `updatedAt` would let a
       // caller predict exactly when a throttle lifts, and there is no reason
       // to hand that out for a read nothing needs.
-      allow read: if isOwner(userId) && isCounterRateLimitedAction(action);
+      allow read: if isOwner(userId)
+        && (isCounterRateLimitedAction(action) || isBoundIntervalRateLimitedAction(action));
       allow create, update: if isValidRateLimitWrite(userId, action);
       allow delete: if false;
     }
@@ -834,7 +865,7 @@ service cloud.firestore {
         && incoming().source is string
         && incoming().source.size() <= 40
         && incoming().createdAt == request.time
-        && hasFreshRateLimit(request.auth.uid, 'catalogRequest');
+        && hasFreshCatalogRequestRateLimit(request.auth.uid, requestId);
       allow read, update, delete: if false;
     }
 

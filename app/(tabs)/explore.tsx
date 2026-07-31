@@ -52,6 +52,7 @@ import {
 } from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
+import { shouldOfferLocationRequest } from '@/lib/catalog-request';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   getLocationRatingAggregates,
@@ -379,6 +380,37 @@ export default function StudyLocationsScreen() {
     return groupedSessions;
   }, [sessions]);
 
+  const locationSearchTextById = useMemo(
+    () =>
+      new Map(
+        locations.map((location) => {
+          const aggregate = ratingAggregates.get(location.locationId);
+          const locationSessions = sessionsByLocationId.get(location.locationId) ?? [];
+          const locationTags = getLocationTags(location);
+          const reviewTags = aggregate?.reviewTags ?? [];
+          const searchText = [
+            location.name,
+            location.building,
+            location.campusArea,
+            location.notes,
+            ...locationTags,
+            ...reviewTags,
+            ...locationSessions.flatMap((session) => [session.classId, session.title]),
+          ]
+            .join(' ')
+            .toLowerCase();
+
+          return [location.locationId, searchText] as const;
+        })
+      ),
+    [locations, ratingAggregates, sessionsByLocationId]
+  );
+
+  const shouldOfferRequest = useMemo(
+    () => shouldOfferLocationRequest(searchQuery, [...locationSearchTextById.values()]),
+    [locationSearchTextById, searchQuery]
+  );
+
   const filteredLocations = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
     const now = Date.now();
@@ -389,17 +421,7 @@ export default function StudyLocationsScreen() {
       const locationSessions = sessionsByLocationId.get(location.locationId) ?? [];
       const locationTags = getLocationTags(location);
       const reviewTags = aggregate?.reviewTags ?? [];
-      const searchText = [
-        location.name,
-        location.building,
-        location.campusArea,
-        location.notes,
-        ...locationTags,
-        ...reviewTags,
-        ...locationSessions.flatMap((session) => [session.classId, session.title]),
-      ]
-        .join(' ')
-        .toLowerCase();
+      const searchText = locationSearchTextById.get(location.locationId) ?? '';
 
       if (normalizedQuery && !searchText.includes(normalizedQuery)) {
         return false;
@@ -439,6 +461,7 @@ export default function StudyLocationsScreen() {
     activityFilters,
     atmosphereFilters,
     locations,
+    locationSearchTextById,
     profileClassSet,
     ratingAggregates,
     searchQuery,
@@ -1080,13 +1103,13 @@ export default function StudyLocationsScreen() {
             icon="spot"
             headline={searchQuery.trim() ? 'No study spots found' : 'No study spots available'}
             body={
-              searchQuery.trim()
+              shouldOfferRequest
                 ? 'We may be missing this spot. Send us a request and we’ll review it.'
                 : 'Try clearing the current filters.'
             }
-            actionLabel={searchQuery.trim() ? 'Request this spot' : 'Clear filters'}
+            actionLabel={shouldOfferRequest ? 'Request this spot' : 'Clear filters'}
             onAction={() =>
-              searchQuery.trim() ? setRequestSheetOpen(true) : clearFilters()
+              shouldOfferRequest ? setRequestSheetOpen(true) : clearFilters()
             }
             style={styles.noPinsState}
           />

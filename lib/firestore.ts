@@ -33,6 +33,10 @@ import {
 } from "@/data/uw-study-locations";
 import { sanitizeLocationRatingTags } from "@/data/location-rating-options";
 import { findStudyLocationById, formatStudyLocationLabel } from "@/lib/catalog";
+import {
+  CatalogRequestError,
+  isCatalogRequestCooldownActive,
+} from "@/lib/catalog-request";
 import { db } from "../firebaseConfig";
 import { track } from "./analytics";
 export const COLLECTIONS = {
@@ -69,6 +73,17 @@ export function stageRateLimit(
   action: RateLimitedAction
 ) {
   batch.set(rateLimitDoc(userId, action), { updatedAt: serverTimestamp() });
+}
+
+function stageCatalogRequestRateLimit(
+  batch: ReturnType<typeof writeBatch>,
+  userId: string,
+  requestId: string
+) {
+  batch.set(rateLimitDoc(userId, "catalogRequest"), {
+    lastRequestId: requestId,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 /**
@@ -1675,12 +1690,22 @@ export async function submitCatalogRequest(userId: string, input: CatalogRequest
   const searchQuery = input.searchQuery.trim().slice(0, 120);
   const source = input.source.trim().slice(0, 40);
 
-  if (!userId || !name || !["course", "location"].includes(input.type)) {
-    throw new Error("Add a name before submitting your request.");
+  if (!userId || name.length < 2 || !["course", "location"].includes(input.type)) {
+    throw new CatalogRequestError("catalog-request/invalid");
   }
 
   const batch = writeBatch(db);
   const requestRef = doc(collection(db, COLLECTIONS.catalogRequests));
+  const limiterRef = rateLimitDoc(userId, "catalogRequest");
+  const limiterSnapshot = await getDoc(limiterRef);
+  const limiterUpdatedAt = limiterSnapshot.data()?.updatedAt;
+
+  if (
+    limiterUpdatedAt instanceof Timestamp &&
+    isCatalogRequestCooldownActive(limiterUpdatedAt.toMillis())
+  ) {
+    throw new CatalogRequestError("catalog-request/cooldown");
+  }
 
   batch.set(requestRef, {
     requesterUserId: userId,
@@ -1691,8 +1716,28 @@ export async function submitCatalogRequest(userId: string, input: CatalogRequest
     source,
     createdAt: serverTimestamp(),
   });
-  stageRateLimit(batch, userId, "catalogRequest");
-  await batch.commit();
+  stageCatalogRequestRateLimit(batch, userId, requestRef.id);
+  try {
+    await batch.commit();
+  } catch (error) {
+    if (error instanceof FirebaseError && error.code === "permission-denied") {
+      try {
+        const latestLimiter = await getDoc(limiterRef);
+        const latestUpdatedAt = latestLimiter.data()?.updatedAt;
+        if (
+          latestUpdatedAt instanceof Timestamp &&
+          isCatalogRequestCooldownActive(latestUpdatedAt.toMillis())
+        ) {
+          throw new CatalogRequestError("catalog-request/cooldown");
+        }
+      } catch (cooldownCheckError) {
+        if (cooldownCheckError instanceof CatalogRequestError) {
+          throw cooldownCheckError;
+        }
+      }
+    }
+    throw error;
+  }
 }
 
 export async function submitLocationRating(

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
-import { FirebaseError } from 'firebase/app';
 
 import { Button } from '@/components/ui/Button';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -9,6 +8,7 @@ import { Sheet } from '@/components/ui/Sheet';
 import { Brand, Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
+import { catalogRequestErrorMessage } from '@/lib/catalog-request';
 import {
   submitCatalogRequest,
   type CatalogRequestType,
@@ -84,6 +84,12 @@ export function CatalogRequestSheet({
     setError('');
   }, [initialQuery, visible]);
 
+  function handleClose() {
+    if (!isSubmitting) {
+      onClose();
+    }
+  }
+
   async function handleSubmit() {
     const trimmedName = name.trim();
 
@@ -119,13 +125,7 @@ export function CatalogRequestSheet({
         `Thanks. We’ll review this ${isLocation ? 'study spot' : 'course'} and add it if it belongs in Studi.`
       );
     } catch (requestError) {
-      const message =
-        requestError instanceof FirebaseError && requestError.code === 'permission-denied'
-          ? 'You can submit only one course or study spot request every 10 minutes. Please try again later.'
-          : requestError instanceof Error
-            ? requestError.message
-            : 'Unable to submit your request right now.';
-      setError(message);
+      setError(catalogRequestErrorMessage(requestError));
     } finally {
       setIsSubmitting(false);
     }
@@ -134,7 +134,7 @@ export function CatalogRequestSheet({
   return (
     <Sheet
       visible={visible}
-      onClose={onClose}
+      onClose={handleClose}
       title={isLocation ? 'Suggest a study spot' : 'Suggest a course'}
       subtitle={
         isLocation
