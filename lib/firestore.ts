@@ -18,24 +18,29 @@ import {
   setDoc,
   startAfter,
   Timestamp,
+  type QueryConstraint,
+  type QueryDocumentSnapshot,
   updateDoc,
   where,
   writeBatch,
-  type QueryConstraint,
-  type QueryDocumentSnapshot,
 } from "firebase/firestore";
 
 import { FirebaseError } from "firebase/app";
 
-import { sanitizeLocationRatingTags } from "@/data/location-rating-options";
 import {
   UW_STUDY_LOCATION_COORDINATE_OVERRIDES,
   UW_STUDY_LOCATIONS,
 } from "@/data/uw-study-locations";
+import { sanitizeLocationRatingTags } from "@/data/location-rating-options";
 import { findStudyLocationById, formatStudyLocationLabel } from "@/lib/catalog";
+import {
+  CatalogRequestError,
+  isCatalogRequestCooldownActive,
+} from "@/lib/catalog-request";
 import { db } from "../firebaseConfig";
 import { track } from "./analytics";
 export const COLLECTIONS = {
+  catalogRequests: "catalogRequests",
   conversations: "conversations",
   friendRequests: "friendRequests",
   friendships: "friendships",
@@ -49,6 +54,7 @@ export const COLLECTIONS = {
 } as const;
 
 type RateLimitedAction =
+  | "catalogRequest"
   | "createConversation"
   | "createSession"
   | "friendRequest"
@@ -67,6 +73,17 @@ export function stageRateLimit(
   action: RateLimitedAction
 ) {
   batch.set(rateLimitDoc(userId, action), { updatedAt: serverTimestamp() });
+}
+
+function stageCatalogRequestRateLimit(
+  batch: ReturnType<typeof writeBatch>,
+  userId: string,
+  requestId: string
+) {
+  batch.set(rateLimitDoc(userId, "catalogRequest"), {
+    lastRequestId: requestId,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 /**
@@ -216,20 +233,13 @@ export type ConversationListItem = DirectConversation & {
 };
 
 export type GroupChatListItem = {
-  endTime: Timestamp;
   sessionId: string;
   title: string;
-  lastMessagePreview: string;
-  lastMessageAt?: unknown;
-};
-
-export type KeptSessionChat = {
-  keptAt?: unknown;
-  sessionId: string;
+  lastMessageAt: Timestamp;
 };
 
 export type HiddenChat = {
-  chatType: "dm" | "group";
+  chatType: "group";
   removedAt?: unknown;
   threadId: string;
 };
@@ -1408,7 +1418,6 @@ export function subscribeToConversationMessages(
 // ---------------------------------------------------------------------------
 
 export const SESSION_MESSAGES_PAGE_SIZE = 30;
-export const SESSION_CHAT_GRACE_PERIOD_MS = 2 * 60 * 60 * 1000;
 
 /** Group-chat fanout ceiling, judged on the ACTUAL participant count (the
  *  optional capacity field can be absent on legacy sessions). Mirrors
@@ -1621,74 +1630,58 @@ export function subscribeToUserConversations(
   );
 }
 
+const GROUP_CHAT_LIST_LIMIT = 50;
+
+function mapGroupChatListItem(
+  sessionId: string,
+  data: Record<string, unknown>
+): GroupChatListItem | null {
+  const lastMessageAt = normalizeSessionTimestamp(data.lastMessageAt);
+  if (!lastMessageAt) {
+    return null;
+  }
+
+  return {
+    sessionId,
+    title: typeof data.title === "string" ? data.title : "Study Session",
+    lastMessageAt,
+  };
+}
+
+/**
+ * A bounded listener over the user's most recently active session chats.
+ * orderBy(lastMessageAt) excludes sessions with zero messages without reading
+ * message subcollections or exposing message text on the session document.
+ */
 export function subscribeToUserGroupChats(
   userId: string,
   listener: (groupChats: GroupChatListItem[]) => void,
   onError?: (error: Error) => void
 ) {
-  const sessionsQuery = query(
+  const groupChatsQuery = query(
     collection(db, COLLECTIONS.sessions),
-    where("participantIds", "array-contains", userId)
+    where("participantIds", "array-contains", userId),
+    orderBy("lastMessageAt", "desc"),
+    limit(GROUP_CHAT_LIST_LIMIT)
   );
 
   return onSnapshot(
-    sessionsQuery,
+    groupChatsQuery,
     (snapshot) => {
-      const groupChats = snapshot.docs.map((sessionDoc) => {
-        const data = sessionDoc.data();
-        const endTime = normalizeSessionTimestamp(data.endTime);
-
-        return {
-          endTime: endTime ?? Timestamp.fromMillis(0),
-          sessionId: sessionDoc.id,
-          title: typeof data.title === "string" ? data.title : "Study Session",
-          lastMessagePreview:
-            typeof data.lastMessagePreview === "string"
-              ? data.lastMessagePreview
-              : "No messages yet.",
-          lastMessageAt: data.lastMessageAt,
-        };
-      });
-
-      listener(groupChats);
+      listener(
+        snapshot.docs
+          .map((sessionDoc) => mapGroupChatListItem(sessionDoc.id, sessionDoc.data()))
+          .filter((chat): chat is GroupChatListItem => !!chat)
+      );
     },
     onError
   );
-}
-
-export function subscribeToKeptSessionChats(
-  userId: string,
-  listener: (keptChats: Map<string, KeptSessionChat>) => void,
-  onError?: (error: Error) => void
-) {
-  return onSnapshot(
-    collection(db, COLLECTIONS.users, userId, "keptSessionChats"),
-    (snapshot) => {
-      const keptChats = new Map<string, KeptSessionChat>();
-      snapshot.docs.forEach((keptChatDoc) => {
-        const data = keptChatDoc.data({ serverTimestamps: "estimate" });
-        keptChats.set(keptChatDoc.id, {
-          sessionId: keptChatDoc.id,
-          keptAt: data.keptAt,
-        });
-      });
-      listener(keptChats);
-    },
-    onError
-  );
-}
-
-export async function keepSessionChat(userId: string, sessionId: string) {
-  await setDoc(doc(db, COLLECTIONS.users, userId, "keptSessionChats", sessionId), {
-    sessionId,
-    keptAt: serverTimestamp(),
-  } satisfies KeptSessionChat);
 }
 
 /**
- * Personal inbox removals. The shared conversation/session and its messages
- * are deliberately left untouched. A thread becomes visible again when its
- * lastMessageAt is newer than removedAt.
+ * Personal session-chat removals. The shared session and its messages are
+ * deliberately left untouched. Removal is sticky until the owner explicitly
+ * deletes the marker.
  */
 export function subscribeToHiddenChats(
   userId: string,
@@ -1696,14 +1689,17 @@ export function subscribeToHiddenChats(
   onError?: (error: Error) => void
 ) {
   return onSnapshot(
-    collection(db, COLLECTIONS.users, userId, "hiddenChats"),
+    query(
+      collection(db, COLLECTIONS.users, userId, "hiddenChats"),
+      where("chatType", "==", "group")
+    ),
     (snapshot) => {
       const hiddenChats = new Map<string, HiddenChat>();
 
       snapshot.docs.forEach((hiddenChatDoc) => {
         const data = hiddenChatDoc.data({ serverTimestamps: "estimate" });
         if (
-          (data.chatType === "dm" || data.chatType === "group") &&
+          data.chatType === "group" &&
           typeof data.threadId === "string"
         ) {
           hiddenChats.set(`${data.chatType}:${data.threadId}`, {
@@ -1720,16 +1716,20 @@ export function subscribeToHiddenChats(
   );
 }
 
-export async function removeChatFromUserHistory(
+export async function removeSessionChatFromUserHistory(
   userId: string,
-  chatType: HiddenChat["chatType"],
-  threadId: string
+  sessionId: string
 ) {
-  await setDoc(doc(db, COLLECTIONS.users, userId, "hiddenChats", `${chatType}__${threadId}`), {
-    chatType,
-    threadId,
+  const batch = writeBatch(db);
+  batch.set(doc(db, COLLECTIONS.users, userId, "hiddenChats", `group__${sessionId}`), {
+    chatType: "group",
+    threadId: sessionId,
     removedAt: serverTimestamp(),
   } satisfies HiddenChat);
+  batch.set(doc(db, COLLECTIONS.users, userId, "reads", sessionId), {
+    lastReadAt: serverTimestamp(),
+  });
+  await batch.commit();
 }
 
 export async function blockUser(blockerUserId: string, blockedUserId: string) {
@@ -1785,6 +1785,73 @@ export async function reportUser(
   });
   stageRateLimit(batch, reporterUserId, "reportUser");
   await batch.commit();
+}
+
+export type CatalogRequestType = "course" | "location";
+
+export type CatalogRequestInput = {
+  details: string;
+  name: string;
+  searchQuery: string;
+  source: string;
+  type: CatalogRequestType;
+};
+
+/** Write-only suggestions for missing courses and campus study spots. */
+export async function submitCatalogRequest(userId: string, input: CatalogRequestInput) {
+  const name = input.name.trim().slice(0, 120);
+  const details = input.details.trim().slice(0, 500);
+  const searchQuery = input.searchQuery.trim().slice(0, 120);
+  const source = input.source.trim().slice(0, 40);
+
+  if (!userId || name.length < 2 || !["course", "location"].includes(input.type)) {
+    throw new CatalogRequestError("catalog-request/invalid");
+  }
+
+  const batch = writeBatch(db);
+  const requestRef = doc(collection(db, COLLECTIONS.catalogRequests));
+  const limiterRef = rateLimitDoc(userId, "catalogRequest");
+  const limiterSnapshot = await getDoc(limiterRef);
+  const limiterUpdatedAt = limiterSnapshot.data()?.updatedAt;
+
+  if (
+    limiterUpdatedAt instanceof Timestamp &&
+    isCatalogRequestCooldownActive(limiterUpdatedAt.toMillis())
+  ) {
+    throw new CatalogRequestError("catalog-request/cooldown");
+  }
+
+  batch.set(requestRef, {
+    requesterUserId: userId,
+    type: input.type,
+    name,
+    searchQuery,
+    details,
+    source,
+    createdAt: serverTimestamp(),
+  });
+  stageCatalogRequestRateLimit(batch, userId, requestRef.id);
+  try {
+    await batch.commit();
+  } catch (error) {
+    if (error instanceof FirebaseError && error.code === "permission-denied") {
+      try {
+        const latestLimiter = await getDoc(limiterRef);
+        const latestUpdatedAt = latestLimiter.data()?.updatedAt;
+        if (
+          latestUpdatedAt instanceof Timestamp &&
+          isCatalogRequestCooldownActive(latestUpdatedAt.toMillis())
+        ) {
+          throw new CatalogRequestError("catalog-request/cooldown");
+        }
+      } catch (cooldownCheckError) {
+        if (cooldownCheckError instanceof CatalogRequestError) {
+          throw cooldownCheckError;
+        }
+      }
+    }
+    throw error;
+  }
 }
 
 export async function submitLocationRating(

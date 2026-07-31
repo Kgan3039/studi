@@ -16,7 +16,12 @@
     "test:map": "mocha tests/map-markers.test.mjs",
     "test:friends": "mocha tests/friend-suggestions.test.mjs",
     "test:search": "mocha tests/session-search.test.mjs",
-    "test:session-blocks": "mocha tests/session-block-warning.test.mjs"
+    "test:session-blocks": "mocha tests/session-block-warning.test.mjs",
+    "test:contact": "mocha tests/contact-email.test.mjs",
+    "test:links": "mocha tests/external-link.test.mjs",
+    "test:catalog-requests": "mocha tests/catalog-request.test.mjs",
+    "test:auth-listener": "mocha tests/auth-listener.test.mjs",
+    "test:message-history": "mocha tests/message-history.test.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/arapey": "^0.4.1",

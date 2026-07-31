@@ -35,6 +35,7 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 | `session_chat_opened` | Session chat screen gains focus (once per focus) | `classId`, `source` (`session_detail` \| `auto_join` \| `deeplink`) |
 | `group_message_sent` | `sendSessionMessage()` succeeds | `length` (number, not content) |
 | `report_submitted` | Report saved | `reason`, `context` |
+| `catalog_request_submitted` | Missing course or location request saved | `type`, `source` |
 | `user_blocked` | Block saved | `context` |
 | `friends_viewed` | Friends screen gains focus or switches tab | `tab` (`friends` \| `requests` \| `suggested`) |
 | `friend_request_sent` | `sendFriendRequest()` succeeds | `source` (`search` \| `suggested` \| `profile`) |

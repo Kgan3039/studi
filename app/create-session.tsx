@@ -20,6 +20,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SessionCard } from '@/components/session-card';
 import { SessionCreatedTransition } from '@/components/session-created-transition';
 import { Button } from '@/components/ui/Button';
+import {
+  CatalogRequestButton,
+  CatalogRequestSheet,
+} from '@/components/ui/CatalogRequestSheet';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { FieldLabel, FormSection } from '@/components/ui/FormSection';
 import { IconButton } from '@/components/ui/IconButton';
@@ -159,6 +163,7 @@ export default function CreateSessionScreen() {
     new Map()
   );
   const [locationQuery, setLocationQuery] = useState('');
+  const [requestSheetOpen, setRequestSheetOpen] = useState(false);
   const [showAllLocations, setShowAllLocations] = useState(false);
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedLocationId, setSelectedLocationId] = useState('');
@@ -540,12 +545,19 @@ export default function CreateSessionScreen() {
         </FormSection>
 
         <FormSection icon="mappin.and.ellipse" title="Place">
-          <SearchBar
-            accessibilityLabel="Search study spots"
-            onChangeText={setLocationQuery}
-            placeholder="Search spots by name, building, or tag"
-            value={locationQuery}
-          />
+          <View style={styles.searchRow}>
+            <SearchBar
+              accessibilityLabel="Search study spots"
+              containerStyle={styles.searchField}
+              onChangeText={setLocationQuery}
+              placeholder="Search spots by name, building, or tag"
+              value={locationQuery}
+            />
+            <CatalogRequestButton
+              type="location"
+              onPress={() => setRequestSheetOpen(true)}
+            />
+          </View>
           {isLoading ? (
             <ActivityIndicator color={palette.tint} />
           ) : filteredLocations.length > 0 ? (
@@ -603,9 +615,18 @@ export default function CreateSessionScreen() {
               ) : null}
             </View>
           ) : locationQuery.trim() ? (
-            <Text style={[TypeScale.body, { color: palette.icon }]}>
-              No saved study spots match that search yet.
-            </Text>
+            <View style={styles.noResultsBlock}>
+              <Text style={[TypeScale.body, styles.noResultsText, { color: palette.icon }]}>
+                No saved study spots match that search yet.
+              </Text>
+              <Button
+                icon="plus.circle.fill"
+                label="Request this spot"
+                onPress={() => setRequestSheetOpen(true)}
+                size="sm"
+                variant="secondary"
+              />
+            </View>
           ) : (
             <Text style={[TypeScale.body, { color: palette.icon }]}>
               No study spots are available right now.
@@ -875,6 +896,13 @@ export default function CreateSessionScreen() {
       </ScrollView>
       <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
       </Animated.View>
+      <CatalogRequestSheet
+        initialQuery={locationQuery}
+        onClose={() => setRequestSheetOpen(false)}
+        source="create-session-location"
+        type="location"
+        visible={requestSheetOpen}
+      />
       <SessionCreatedTransition
         classId={createdSession?.classId ?? ''}
         locationName={createdSession?.locationName ?? ''}
@@ -902,6 +930,22 @@ const styles = StyleSheet.create({
     marginHorizontal: Space.md,
     maxHeight: '88%',
     overflow: 'hidden',
+  },
+  searchRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  searchField: {
+    flex: 1,
+  },
+  noResultsBlock: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.md,
+  },
+  noResultsText: {
+    flex: 1,
   },
   panelHeader: {
     alignItems: 'center',

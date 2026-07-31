@@ -1,7 +1,9 @@
 import { Href, Link } from 'expo-router';
 import { openBrowserAsync, WebBrowserPresentationStyle } from 'expo-web-browser';
 import { type ComponentProps } from 'react';
-import { Linking } from 'react-native';
+import { Alert, Linking, Platform } from 'react-native';
+
+import { handleExternalLinkPress } from '@/lib/external-link-press';
 
 type Props = Omit<ComponentProps<typeof Link>, 'href'> & { href: Href & string };
 
@@ -11,19 +13,24 @@ export function ExternalLink({ href, ...rest }: Props) {
       target="_blank"
       {...rest}
       href={href}
-      onPress={async (event) => {
-        if (process.env.EXPO_OS !== 'web') {
-          // Prevent the default behavior of linking to the default browser on native.
-          event.preventDefault();
-          if (!href.startsWith('http')) {
-            await Linking.openURL(href);
-            return;
-          }
-          // Open the link in an in-app browser.
-          await openBrowserAsync(href, {
-            presentationStyle: WebBrowserPresentationStyle.AUTOMATIC,
-          });
-        }
+      onPress={(event) => {
+        // Pressable drops whatever this returns, so nothing may reject.
+        // handleExternalLinkPress already resolves on every path; the .catch()
+        // is the last line of defense. Branching, preventDefault, and the
+        // fallback alerts all live in lib/external-link-press.js.
+        void handleExternalLinkPress({
+          href,
+          isWeb: process.env.EXPO_OS === 'web',
+          preventDefault: () => event.preventDefault(),
+          canOpenURL:
+            Platform.OS === 'android' ? undefined : (url) => Linking.canOpenURL(url),
+          openURL: (url) => Linking.openURL(url),
+          openBrowser: (url) =>
+            openBrowserAsync(url, {
+              presentationStyle: WebBrowserPresentationStyle.AUTOMATIC,
+            }),
+          alert: (title, message) => Alert.alert(title, message),
+        }).catch(() => {});
       }}
     />
   );

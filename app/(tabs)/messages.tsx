@@ -1,12 +1,13 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { IconButton } from '@/components/ui/IconButton';
 import { LoadingState } from '@/components/ui/LoadingState';
 import {
   PullToRefreshIndicator,
@@ -20,17 +21,23 @@ import { Colors, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
+  confirmChatRemoval,
+  showChatRemovalFailure,
+} from '@/lib/confirm-chat-removal';
+import {
+  areMessageSourcesLoaded,
+  dedupeMessageRows,
+  isMessageRowVisible,
+} from '@/lib/message-history';
+import {
   getBlockedUserIds,
-  removeChatFromUserHistory,
-  SESSION_CHAT_GRACE_PERIOD_MS,
+  removeSessionChatFromUserHistory,
   subscribeToHiddenChats,
-  subscribeToKeptSessionChats,
   subscribeToUserConversations,
   subscribeToUserGroupChats,
   type ConversationListItem,
   type GroupChatListItem,
   type HiddenChat,
-  type KeptSessionChat,
 } from '@/lib/firestore';
 import { Timestamp } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
@@ -50,8 +57,8 @@ function formatTimestamp(value: unknown) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function chatHistoryKey(chatType: HiddenChat["chatType"], threadId: string) {
-  return `${chatType}:${threadId}`;
+function sessionChatHistoryKey(sessionId: string) {
+  return `group:${sessionId}`;
 }
 
 function timestampMillis(value: unknown) {
@@ -68,17 +75,16 @@ export default function MessagesScreen() {
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [groupChats, setGroupChats] = useState<GroupChatListItem[]>([]);
   const [hiddenChats, setHiddenChats] = useState<Map<string, HiddenChat>>(new Map());
-  const [keptSessionChats, setKeptSessionChats] = useState<Map<string, KeptSessionChat>>(new Map());
   const [pendingRemovalKeys, setPendingRemovalKeys] = useState<Set<string>>(new Set());
+  const pendingRemovalKeysRef = useRef(new Set<string>());
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isDmLoading, setIsDmLoading] = useState(true);
+  const [isGroupLoading, setIsGroupLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
-  const [isKeptChatsLoading, setIsKeptChatsLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState('');
+  const [hasLoadError, setHasLoadError] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const [nowMs, setNowMs] = useState(Date.now());
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -122,28 +128,24 @@ export default function MessagesScreen() {
   useEffect(() => {
     if (!currentUser) {
       setConversations([]);
-      setErrorMessage('');
-      setIsLoading(false);
+      setHasLoadError(false);
+      setIsDmLoading(false);
       setIsRefreshing(false);
       return;
     }
 
-    setIsLoading(true);
-    setErrorMessage('');
+    setIsDmLoading(true);
     const unsubscribe = subscribeToUserConversations(
       currentUser.uid,
       (loadedConversations) => {
         setConversations(loadedConversations);
-        setErrorMessage('');
-        setIsLoading(false);
-        setIsRefreshing(false);
+        setIsDmLoading(false);
       },
       // Listener failures (rules, offline, profile hydration) used to leave the
       // spinner up forever; surface them so pull-to-refresh can retry.
-      (error) => {
-        setErrorMessage(error.message);
-        setIsLoading(false);
-        setIsRefreshing(false);
+      () => {
+        setHasLoadError(true);
+        setIsDmLoading(false);
       }
     );
 
@@ -153,70 +155,31 @@ export default function MessagesScreen() {
   useEffect(() => {
     if (!currentUser) {
       setGroupChats([]);
+      setIsGroupLoading(false);
       return;
     }
 
+    setIsGroupLoading(true);
     const unsubscribe = subscribeToUserGroupChats(
       currentUser.uid,
       (loadedGroupChats) => {
         setGroupChats(loadedGroupChats);
+        setIsGroupLoading(false);
       },
-      (error) => {
-        setErrorMessage(error.message);
+      () => {
+        setHasLoadError(true);
+        setIsGroupLoading(false);
       }
     );
 
     return unsubscribe;
-  }, [currentUser]);
-
-  useEffect(() => {
-    if (!currentUser) {
-      setKeptSessionChats(new Map());
-      setIsKeptChatsLoading(false);
-      return;
-    }
-
-    setIsKeptChatsLoading(true);
-    const unsubscribe = subscribeToKeptSessionChats(
-      currentUser.uid,
-      (loadedChats) => {
-        setKeptSessionChats(loadedChats);
-        setIsKeptChatsLoading(false);
-      },
-      (error) => {
-        setErrorMessage(error.message);
-        setIsKeptChatsLoading(false);
-      }
-    );
-
-    return unsubscribe;
-  }, [currentUser]);
-
-  // No Firestore document changes at the grace-period deadline, so schedule a
-  // local refresh for the nearest one. This removes non-kept rows promptly
-  // without keeping a permanent interval running on the Messages tab.
-  useEffect(() => {
-    const nextDeadline = groupChats
-      .filter((chat) => !keptSessionChats.has(chat.sessionId))
-      .map((chat) => chat.endTime.toMillis() + SESSION_CHAT_GRACE_PERIOD_MS)
-      .filter((deadline) => deadline > nowMs)
-      .sort((first, second) => first - second)[0];
-
-    if (!nextDeadline) {
-      return;
-    }
-
-    const timeout = setTimeout(
-      () => setNowMs(Date.now()),
-      Math.min(nextDeadline - Date.now() + 100, 2_147_483_647)
-    );
-    return () => clearTimeout(timeout);
-  }, [groupChats, keptSessionChats, nowMs]);
+  }, [currentUser, refreshNonce]);
 
   useEffect(() => {
     if (!currentUser) {
       setHiddenChats(new Map());
       setPendingRemovalKeys(new Set());
+      pendingRemovalKeysRef.current.clear();
       setIsHistoryLoading(false);
       return;
     }
@@ -228,14 +191,26 @@ export default function MessagesScreen() {
         setHiddenChats(loadedHiddenChats);
         setIsHistoryLoading(false);
       },
-      (error) => {
-        setErrorMessage(error.message);
+      () => {
+        setHasLoadError(true);
         setIsHistoryLoading(false);
       }
     );
 
     return unsubscribe;
-  }, [currentUser]);
+  }, [currentUser, refreshNonce]);
+
+  const isAnyLoading = !areMessageSourcesLoaded({
+    dm: !isDmLoading,
+    group: !isGroupLoading,
+    hidden: !isHistoryLoading,
+  });
+
+  useEffect(() => {
+    if (isRefreshing && !isAnyLoading) {
+      setIsRefreshing(false);
+    }
+  }, [isAnyLoading, isRefreshing]);
 
   function handleRefresh() {
     if (!currentUser) {
@@ -243,6 +218,10 @@ export default function MessagesScreen() {
     }
 
     setIsRefreshing(true);
+    setHasLoadError(false);
+    setIsDmLoading(true);
+    setIsGroupLoading(true);
+    setIsHistoryLoading(true);
     setRefreshNonce((value) => value + 1);
   }
 
@@ -261,38 +240,26 @@ export default function MessagesScreen() {
         type: "group" as const,
         id: groupChat.sessionId,
         name: groupChat.title,
-        preview: groupChat.lastMessagePreview,
+        preview: "Session chat",
         timestamp: groupChat.lastMessageAt,
         groupChat,
       })),
     ];
 
-    return chats
+    return dedupeMessageRows(chats)
       .filter((chat) => {
-        if (
-          chat.type === "group" &&
-          nowMs >= chat.groupChat.endTime.toMillis() + SESSION_CHAT_GRACE_PERIOD_MS &&
-          !keptSessionChats.has(chat.id)
-        ) {
-          return false;
-        }
-
-        const key = chatHistoryKey(chat.type, chat.id);
-        if (pendingRemovalKeys.has(key)) {
-          return false;
-        }
-
-        const hiddenChat = hiddenChats.get(key);
-        if (!hiddenChat) {
+        if (chat.type === "dm") {
           return true;
         }
 
-        const keptChat = chat.type === "group" ? keptSessionChats.get(chat.id) : undefined;
-        if (keptChat && timestampMillis(keptChat.keptAt) > timestampMillis(hiddenChat.removedAt)) {
-          return true;
-        }
-
-        return timestampMillis(chat.timestamp) > timestampMillis(hiddenChat.removedAt);
+        const key = sessionChatHistoryKey(chat.id);
+        // Session-chat removal is persistent. New messages do not silently
+        // override an explicit owner-scoped hidden marker.
+        return isMessageRowVisible({
+          type: chat.type,
+          isHidden: hiddenChats.has(key),
+          isPendingRemoval: pendingRemovalKeys.has(key),
+        });
       })
       .sort((firstChat, secondChat) =>
         timestampMillis(secondChat.timestamp) - timestampMillis(firstChat.timestamp)
@@ -301,8 +268,6 @@ export default function MessagesScreen() {
     conversations,
     groupChats,
     hiddenChats,
-    keptSessionChats,
-    nowMs,
     pendingRemovalKeys,
   ]);
 
@@ -321,19 +286,23 @@ export default function MessagesScreen() {
     });
   }, [allChats, searchQuery]);
 
-  async function handleRemoveChat(chatType: HiddenChat["chatType"], threadId: string) {
+  async function handleRemoveSessionChat(sessionId: string) {
     if (!currentUser) {
       return;
     }
 
-    const key = chatHistoryKey(chatType, threadId);
+    const key = sessionChatHistoryKey(sessionId);
+    if (pendingRemovalKeysRef.current.has(key)) {
+      return;
+    }
+    pendingRemovalKeysRef.current.add(key);
     setPendingRemovalKeys((current) => new Set(current).add(key));
 
     try {
-      await removeChatFromUserHistory(currentUser.uid, chatType, threadId);
+      await removeSessionChatFromUserHistory(currentUser.uid, sessionId);
       setHiddenChats((current) => {
         const next = new Map(current);
-        next.set(key, { chatType, threadId, removedAt: Timestamp.now() });
+        next.set(key, { chatType: "group", threadId: sessionId, removedAt: Timestamp.now() });
         return next;
       });
       setPendingRemovalKeys((current) => {
@@ -347,8 +316,28 @@ export default function MessagesScreen() {
         next.delete(key);
         return next;
       });
-      Alert.alert("Couldn't remove conversation", "Please try again.");
+      await showChatRemovalFailure({
+        platform: Platform.OS,
+        showNativeAlert: Alert.alert,
+        showWebAlert: (message) => {
+          if (typeof window !== "undefined") {
+            window.alert(message);
+          }
+        },
+      });
+    } finally {
+      pendingRemovalKeysRef.current.delete(key);
     }
+  }
+
+  function confirmRemoveSessionChat(sessionId: string) {
+    confirmChatRemoval({
+      platform: Platform.OS,
+      showNativeAlert: Alert.alert,
+      showWebConfirm: (message) =>
+        typeof window !== "undefined" && window.confirm(message),
+      onConfirm: () => void handleRemoveSessionChat(sessionId),
+    });
   }
 
   return (
@@ -383,10 +372,10 @@ export default function MessagesScreen() {
             />
           ) : null}
 
-          {isLoading || isHistoryLoading || isKeptChatsLoading ? (
+          {isAnyLoading ? (
             <LoadingState title="Loading conversations" />
-          ) : errorMessage ? (
-            <ErrorState body={errorMessage} onRetry={handleRefresh} />
+          ) : hasLoadError ? (
+            <ErrorState body="We couldn't load your conversations." onRetry={handleRefresh} />
           ) : allChats.length > 0 ? (
             visibleChats.length > 0 ? (
               <View>
@@ -401,15 +390,98 @@ export default function MessagesScreen() {
                   const isBlocked =
                     !!otherUserId && blockedUserIds.includes(otherUserId);
 
+                  const rowContents = (
+                    <>
+                      <Avatar name={otherName} size="md" />
+
+                      <View style={styles.threadBody}>
+                        <View style={styles.threadHeader}>
+                          <Text
+                            style={[
+                              TypeScale.bodyStrong,
+                              styles.threadName,
+                              { color: palette.primaryText },
+                            ]}
+                            numberOfLines={1}>
+                            {otherName}
+                          </Text>
+
+                          <Text
+                            maxFontSizeMultiplier={1.6}
+                            style={[
+                              TypeScale.meta,
+                              styles.threadTimestamp,
+                              { color: palette.secondaryText },
+                            ]}
+                            numberOfLines={1}>
+                            {formatTimestamp(chat.timestamp)}
+                          </Text>
+                        </View>
+
+                        <View style={styles.threadPreview}>
+                          {isBlocked ? (
+                            <IconSymbol color={palette.tint} name="nosign" size={15} />
+                          ) : null}
+
+                          <Text
+                            style={[
+                              TypeScale.body,
+                              { color: isBlocked ? palette.tint : palette.secondaryText },
+                            ]}
+                            numberOfLines={1}>
+                            {isBlocked ? "Blocked" : chat.preview}
+                          </Text>
+                        </View>
+                      </View>
+                    </>
+                  );
+
+                  if (chat.type === "dm") {
+                    return (
+                      <Pressable
+                        key={`dm:${chat.id}`}
+                        accessibilityLabel={
+                          isBlocked
+                            ? `Conversation with ${otherName}, blocked`
+                            : `Conversation with ${otherName}`
+                        }
+                        accessibilityRole="button"
+                        onPress={() =>
+                          router.push({
+                            pathname: "/conversation/[conversationId]",
+                            params: {
+                              conversationId: chat.id,
+                              otherUserId,
+                              otherUserName: otherName,
+                            },
+                          })
+                        }
+                        style={({ pressed }) => [
+                          styles.threadRow,
+                          index > 0 && {
+                            borderTopColor: palette.border,
+                            borderTopWidth: StyleSheet.hairlineWidth,
+                          },
+                          { opacity: pressed ? 0.7 : 1 },
+                        ]}>
+                        {rowContents}
+                      </Pressable>
+                    );
+                  }
+
+                  const removalKey = sessionChatHistoryKey(chat.id);
+                  const isRemoving = pendingRemovalKeys.has(removalKey);
+
                   return (
                     <Swipeable
-                      key={`${chat.type}:${chat.id}`}
+                      key={`group:${chat.id}`}
                       overshootRight={false}
                       renderRightActions={() => (
                         <Pressable
-                          accessibilityLabel={`Remove conversation with ${otherName}`}
+                          accessibilityLabel={`Remove ${otherName} from my Messages`}
                           accessibilityRole="button"
-                          onPress={() => void handleRemoveChat(chat.type, chat.id)}
+                          disabled={isRemoving}
+                          onPress={() => confirmRemoveSessionChat(chat.id)}
                           style={({ pressed }) => [
                             styles.removeAction,
                             { backgroundColor: palette.destructive },
@@ -422,86 +494,37 @@ export default function MessagesScreen() {
                       )}
                       rightThreshold={44}
                     >
-                      <Pressable
-                        accessibilityLabel={
-                          isBlocked
-                            ? `Conversation with ${otherName}, blocked`
-                            : `Conversation with ${otherName}`
-                        }
-                        accessibilityRole="button"
-                        onPress={() => {
-                          if (chat.type === "dm") {
-                            router.push({
-                              pathname: "/conversation/[conversationId]",
-                              params: {
-                                conversationId: chat.id,
-                                otherUserId,
-                                otherUserName: otherName,
-                              },
-                            });
-                          } else {
-                            router.push({
-                              pathname: "/session-chat/[sessionId]",
-                              params: {
-                                sessionId: chat.id,
-                              },
-                            });
-                          }
-                        }}
-                        style={({ pressed }) => [
-                          styles.threadRow,
+                      <View
+                        style={[
+                          styles.rowShell,
                           index > 0 && {
                             borderTopColor: palette.border,
                             borderTopWidth: StyleSheet.hairlineWidth,
                           },
-                          { backgroundColor: palette.background, opacity: pressed ? 0.7 : 1 },
-                        ]}
-                      >
-                        <Avatar name={otherName} size="md" />
-
-                        <View style={styles.threadBody}>
-                          <View style={styles.threadHeader}>
-                            <Text
-                              style={[
-                                TypeScale.bodyStrong,
-                                styles.threadName,
-                                { color: palette.primaryText },
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {otherName}
-                            </Text>
-
-                            <Text
-                              maxFontSizeMultiplier={1.6}
-                              style={[
-                                TypeScale.meta,
-                                styles.threadTimestamp,
-                                { color: palette.secondaryText },
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {formatTimestamp(chat.timestamp)}
-                            </Text>
-                          </View>
-
-                          <View style={styles.threadPreview}>
-                            {isBlocked ? (
-                              <IconSymbol color={palette.tint} name="nosign" size={15} />
-                            ) : null}
-
-                            <Text
-                              style={[
-                                TypeScale.body,
-                                { color: isBlocked ? palette.tint : palette.secondaryText },
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {isBlocked ? "Blocked" : chat.preview}
-                            </Text>
-                          </View>
-                        </View>
-                      </Pressable>
+                          { backgroundColor: palette.background },
+                        ]}>
+                        <Pressable
+                          accessibilityLabel={`Session chat for ${otherName}`}
+                          accessibilityRole="button"
+                          onPress={() =>
+                            router.push({
+                              pathname: "/session-chat/[sessionId]",
+                              params: { sessionId: chat.id },
+                            })
+                          }
+                          style={({ pressed }) => [
+                            styles.threadRow,
+                            { opacity: pressed ? 0.7 : 1 },
+                          ]}>
+                          {rowContents}
+                        </Pressable>
+                        <IconButton
+                          accessibilityLabel={`Remove ${otherName} from my Messages`}
+                          disabled={isRemoving}
+                          icon="trash"
+                          onPress={() => confirmRemoveSessionChat(chat.id)}
+                        />
+                      </View>
                     </Swipeable>
                   );
                 })}
@@ -547,6 +570,12 @@ const styles = StyleSheet.create({
     gap: Space.md,
     minHeight: 64,
     paddingVertical: Space.md,
+    flex: 1,
+    minWidth: 0,
+  },
+  rowShell: {
+    alignItems: 'center',
+    flexDirection: 'row',
   },
   threadBody: {
     flex: 1,

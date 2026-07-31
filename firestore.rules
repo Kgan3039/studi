@@ -76,15 +76,18 @@ service cloud.firestore {
     }
 
     function isKnownRateLimitedAction(action) {
-      return action in ['sendMessage', 'createSession', 'reportUser', 'locationRating',
+      return action in ['sendMessage', 'createSession', 'reportUser', 'catalogRequest', 'locationRating',
                         'friendRequest', 'createConversation'];
     }
 
-    // Two rate-limit shapes share the rateLimits/{uid}/actions/{action} path:
+    // Three rate-limit shapes share the rateLimits/{uid}/actions/{action} path:
     //
-    //  - INTERVAL (the original five actions): a single `updatedAt`, valid when
+    //  - INTERVAL: a single `updatedAt`, valid when
     //    enough time has passed since the last one. Bounds RATE, not total
     //    volume — at a 10s interval that is still ~8,600 writes/day.
+    //  - BOUND INTERVAL (catalogRequest): `updatedAt` plus the exact request
+    //    document id authorized by that limiter update. Binding the id prevents
+    //    one atomic limiter write from authorizing multiple request creates.
     //  - COUNTER (createConversation): a fixed 24h window with a hard cap.
     //    Unsolicited DM threads need total reach bounded, not just slowed, so
     //    an interval throttle is the wrong instrument (security audit H3).
@@ -94,6 +97,10 @@ service cloud.firestore {
     // counter shape.
     function isCounterRateLimitedAction(action) {
       return action == 'createConversation';
+    }
+
+    function isBoundIntervalRateLimitedAction(action) {
+      return action == 'catalogRequest';
     }
 
     // New conversation partners allowed per window. A conversation ID is the
@@ -152,7 +159,7 @@ service cloud.firestore {
         );
     }
 
-    // Unchanged behavior for the original five actions.
+    // Unchanged behavior for the original interval actions.
     function isValidIntervalRateLimitWrite(userId, action) {
       return incoming().keys().hasOnly(['updatedAt'])
         && incoming().updatedAt == request.time
@@ -178,6 +185,22 @@ service cloud.firestore {
         );
     }
 
+    function isValidBoundIntervalRateLimitWrite(userId, action) {
+      return action == 'catalogRequest'
+        && incoming().keys().hasOnly(['updatedAt', 'lastRequestId'])
+        && incoming().updatedAt == request.time
+        && incoming().lastRequestId is string
+        && incoming().lastRequestId.size() > 0
+        && incoming().lastRequestId.size() <= 128
+        && (
+          !exists(rateLimitRef(userId, action))
+          || (
+            resource.data.updatedAt is timestamp
+            && resource.data.updatedAt <= request.time - duration.value(10, 'm')
+          )
+        );
+    }
+
     function isValidRateLimitWrite(userId, action) {
       return isVerifiedUwUser()
         && isKnownRateLimitedAction(action)
@@ -185,12 +208,21 @@ service cloud.firestore {
         && (
           isCounterRateLimitedAction(action)
             ? isValidQuotaCounterWrite(userId, action)
-            : isValidIntervalRateLimitWrite(userId, action)
+            : (
+              isBoundIntervalRateLimitedAction(action)
+                ? isValidBoundIntervalRateLimitWrite(userId, action)
+                : isValidIntervalRateLimitWrite(userId, action)
+            )
         );
     }
 
     function hasFreshRateLimit(userId, action) {
       return getAfter(rateLimitRef(userId, action)).data.updatedAt == request.time;
+    }
+
+    function hasFreshCatalogRequestRateLimit(userId, requestId) {
+      return getAfter(rateLimitRef(userId, 'catalogRequest')).data.updatedAt == request.time
+        && getAfter(rateLimitRef(userId, 'catalogRequest')).data.lastRequestId == requestId;
     }
 
     // ------------------------------------------------------------------
@@ -345,9 +377,9 @@ service cloud.firestore {
         allow delete: if false; // account deletion recursive-deletes the user tree
       }
 
-      // Personal inbox history. Removing a row only records an owner-scoped
-      // timestamp; it never mutates the shared DM/session or its messages.
-      // The client shows the thread again after a newer message arrives.
+      // Personal session-chat history. Removing a row only records an
+      // owner-scoped timestamp; it never mutates the shared session/messages.
+      // The marker remains until its owner explicitly restores the row.
       match /hiddenChats/{hiddenChatId} {
         function isOwnHiddenSession() {
           return incoming().chatType == 'group'
@@ -356,44 +388,20 @@ service cloud.firestore {
                get(/databases/$(database)/documents/sessions/$(incoming().threadId)).data.participantIds;
         }
 
-        function isOwnHiddenConversation() {
-          return incoming().chatType == 'dm'
-            && exists(/databases/$(database)/documents/conversations/$(incoming().threadId))
-            && request.auth.uid in
-               get(/databases/$(database)/documents/conversations/$(incoming().threadId)).data.participantIds;
-        }
-
         allow read: if isOwner(userId);
         allow create, update: if isOwner(userId)
           && hiddenChatId == incoming().chatType + '__' + incoming().threadId
           && incoming().keys().hasOnly(['chatType', 'threadId', 'removedAt'])
-          && incoming().chatType in ['dm', 'group']
+          && incoming().chatType == 'group'
           && incoming().threadId is string
           && incoming().threadId.size() >= 1
           && incoming().threadId.size() <= 300
           && incoming().removedAt == request.time
-          && (isOwnHiddenSession() || isOwnHiddenConversation());
-        allow delete: if false; // account deletion recursive-deletes the user tree
-      }
-
-      // A participant may preserve an ended session chat during its two-hour
-      // grace period. After the deadline this owner-only marker is what keeps
-      // the shared, immutable history readable and visible in their inbox.
-      match /keptSessionChats/{sessionId} {
-        function keptSession() {
-          return get(/databases/$(database)/documents/sessions/$(sessionId)).data;
-        }
-
-        allow read: if isOwner(userId);
-        allow create: if isOwner(userId)
-          && exists(/databases/$(database)/documents/sessions/$(sessionId))
-          && request.auth.uid in keptSession().participantIds
-          && request.time >= keptSession().endTime
-          && request.time < keptSession().endTime + duration.value(2, 'h')
-          && incoming().keys().hasOnly(['sessionId', 'keptAt'])
-          && incoming().sessionId == sessionId
-          && incoming().keptAt == request.time;
-        allow update, delete: if false;
+          && isOwnHiddenSession();
+        // Deleting the owner's marker is the explicit restore operation. There
+        // is no restore UI in this beta; account deletion also removes the user
+        // tree recursively through the existing Admin path.
+        allow delete: if isOwner(userId);
       }
     }
 
@@ -600,18 +608,11 @@ service cloud.firestore {
         }
 
         allow read: if isVerifiedUwUser()
-          && request.auth.uid in parentSession().participantIds
-          && (
-            request.time < parentSession().endTime + duration.value(2, 'h')
-            || exists(
-              /databases/$(database)/documents/users/$(request.auth.uid)/keptSessionChats/$(sessionId)
-            )
-          );
+          && request.auth.uid in parentSession().participantIds;
         allow create: if isVerifiedUwUser()
           && request.auth.uid == incoming().senderId
           && parentSession().status in ['open', 'full']
           && request.auth.uid in parentSession().participantIds
-          && request.time < parentSession().endTime + duration.value(2, 'h')
           && parentSession().participantIds.size() <= 20
           && incoming().keys().hasOnly(['senderId', 'text', 'createdAt'])
           && incoming().text is string
@@ -808,7 +809,8 @@ service cloud.firestore {
       // fully denied, including to their owner: their `updatedAt` would let a
       // caller predict exactly when a throttle lifts, and there is no reason
       // to hand that out for a read nothing needs.
-      allow read: if isOwner(userId) && isCounterRateLimitedAction(action);
+      allow read: if isOwner(userId)
+        && (isCounterRateLimitedAction(action) || isBoundIntervalRateLimitedAction(action));
       allow create, update: if isValidRateLimitWrite(userId, action);
       allow delete: if false;
     }
@@ -862,6 +864,35 @@ service cloud.firestore {
         && incoming().context.size() <= 40
         && incoming().createdAt == request.time
         && hasFreshRateLimit(request.auth.uid, 'reportUser');
+      allow read, update, delete: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // Catalog requests — write-only suggestions for missing courses/spots.
+    // The admin console or Admin SDK is the only review surface.
+    // ------------------------------------------------------------------
+
+    match /catalogRequests/{requestId} {
+      allow create: if isVerifiedUwUser()
+        && incoming().keys().hasOnly([
+             'requesterUserId', 'type', 'name', 'searchQuery', 'building',
+             'details', 'source', 'createdAt'
+           ])
+        && incoming().requesterUserId == request.auth.uid
+        && incoming().type in ['course', 'location']
+        && incoming().name is string
+        && incoming().name.size() >= 2
+        && incoming().name.size() <= 120
+        && incoming().searchQuery is string
+        && incoming().searchQuery.size() <= 120
+        && (!('building' in incoming())
+          || (incoming().building is string && incoming().building.size() <= 120))
+        && incoming().details is string
+        && incoming().details.size() <= 500
+        && incoming().source is string
+        && incoming().source.size() <= 40
+        && incoming().createdAt == request.time
+        && hasFreshCatalogRequestRateLimit(request.auth.uid, requestId);
       allow read, update, delete: if false;
     }
 

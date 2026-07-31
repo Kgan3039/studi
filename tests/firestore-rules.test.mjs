@@ -152,6 +152,16 @@ function createReportWithRateLimit(db, uid, reportId, report) {
   return batch.commit();
 }
 
+function createCatalogRequestWithRateLimit(db, uid, requestId, request) {
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'rateLimits', uid, 'actions', 'catalogRequest'), {
+    lastRequestId: requestId,
+    updatedAt: serverTimestamp(),
+  });
+  batch.set(doc(db, 'catalogRequests', requestId), request);
+  return batch.commit();
+}
+
 function setRatingWithRateLimit(db, uid, ratingId, rating) {
   const batch = batchWithRateLimit(db, uid, 'locationRating');
   batch.set(doc(db, 'locationRatings', ratingId), rating);
@@ -454,13 +464,8 @@ describe('personal hidden chat history', () => {
     });
   });
 
-  it('lets an owner hide their own DM and group chat', async () => {
+  it('lets an owner hide their own group chat', async () => {
     const db = ctx(ALICE);
-    await assertSucceeds(setDoc(doc(db, 'users', ALICE, 'hiddenChats', `dm__${convoId(ALICE, BOB)}`), {
-      chatType: 'dm',
-      threadId: convoId(ALICE, BOB),
-      removedAt: serverTimestamp(),
-    }));
     await assertSucceeds(setDoc(doc(db, 'users', ALICE, 'hiddenChats', 'group__sharedSession'), {
       chatType: 'group',
       threadId: 'sharedSession',
@@ -468,14 +473,24 @@ describe('personal hidden chat history', () => {
     }));
   });
 
-  it('cannot hide a chat for another user or a chat they do not belong to', async () => {
+  it('rejects DM hidden markers without changing direct-message access', async () => {
+    const db = ctx(ALICE);
     await assertFails(setDoc(
-      doc(ctx(ALICE), 'users', BOB, 'hiddenChats', `dm__${convoId(ALICE, BOB)}`),
+      doc(db, 'users', ALICE, 'hiddenChats', `dm__${convoId(ALICE, BOB)}`),
       { chatType: 'dm', threadId: convoId(ALICE, BOB), removedAt: serverTimestamp() }
     ));
+
+    await assertSucceeds(getDoc(doc(db, 'conversations', convoId(ALICE, BOB))));
+  });
+
+  it('cannot hide a session chat for another user or as a nonparticipant', async () => {
     await assertFails(setDoc(
-      doc(ctx(MALLORY), 'users', MALLORY, 'hiddenChats', `dm__${convoId(ALICE, BOB)}`),
-      { chatType: 'dm', threadId: convoId(ALICE, BOB), removedAt: serverTimestamp() }
+      doc(ctx(ALICE), 'users', BOB, 'hiddenChats', 'group__sharedSession'),
+      { chatType: 'group', threadId: 'sharedSession', removedAt: serverTimestamp() }
+    ));
+    await assertFails(setDoc(
+      doc(ctx(MALLORY), 'users', MALLORY, 'hiddenChats', 'group__sharedSession'),
+      { chatType: 'group', threadId: 'sharedSession', removedAt: serverTimestamp() }
     ));
   });
 
@@ -488,6 +503,108 @@ describe('personal hidden chat history', () => {
       doc(ctx(ALICE), 'users', ALICE, 'hiddenChats', 'group__sharedSession'),
       { chatType: 'group', threadId: 'sharedSession', removedAt: Timestamp.fromMillis(0) }
     ));
+  });
+
+  it('keeps markers private and lets only the owner restore one', async () => {
+    const hiddenRef = doc(
+      ctx(ALICE),
+      'users',
+      ALICE,
+      'hiddenChats',
+      'group__sharedSession'
+    );
+    await assertSucceeds(setDoc(hiddenRef, {
+      chatType: 'group',
+      threadId: 'sharedSession',
+      removedAt: serverTimestamp(),
+    }));
+
+    await assertFails(getDoc(doc(
+      ctx(BOB),
+      'users',
+      ALICE,
+      'hiddenChats',
+      'group__sharedSession'
+    )));
+    await assertFails(deleteDoc(doc(
+      ctx(BOB),
+      'users',
+      ALICE,
+      'hiddenChats',
+      'group__sharedSession'
+    )));
+    await assertFails(updateDoc(doc(
+      ctx(BOB),
+      'users',
+      ALICE,
+      'hiddenChats',
+      'group__sharedSession'
+    ), { removedAt: serverTimestamp() }));
+    await assertSucceeds(deleteDoc(hiddenRef));
+  });
+
+  it('rejects an atomic write that tries to change another user\'s hidden state', async () => {
+    const db = ctx(ALICE);
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'users', ALICE, 'hiddenChats', 'group__sharedSession'), {
+      chatType: 'group', threadId: 'sharedSession', removedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'users', BOB, 'hiddenChats', 'group__sharedSession'), {
+      chatType: 'group', threadId: 'sharedSession', removedAt: serverTimestamp(),
+    });
+
+    await assertFails(batch.commit());
+    const ownMarkerAfterFailure = await assertSucceeds(getDoc(doc(
+      db,
+      'users',
+      ALICE,
+      'hiddenChats',
+      'group__sharedSession'
+    )));
+    assert.equal(ownMarkerAfterFailure.exists(), false);
+  });
+
+  it('does not change session membership, messages, or access', async () => {
+    await seed('sessions/sharedSession/messages/message1', {
+      senderId: ALICE,
+      text: 'Meet by the windows',
+      createdAt: Timestamp.now(),
+    });
+    const db = ctx(BOB);
+    await assertSucceeds(setDoc(
+      doc(db, 'users', BOB, 'hiddenChats', 'group__sharedSession'),
+      { chatType: 'group', threadId: 'sharedSession', removedAt: serverTimestamp() }
+    ));
+
+    const sessionSnapshot = await assertSucceeds(
+      getDoc(doc(db, 'sessions', 'sharedSession'))
+    );
+    const messageSnapshot = await assertSucceeds(
+      getDoc(doc(db, 'sessions', 'sharedSession', 'messages', 'message1'))
+    );
+    assert.deepEqual(sessionSnapshot.data().participantIds, [ALICE, BOB]);
+    assert.equal(messageSnapshot.data().text, 'Meet by the windows');
+  });
+
+  it('does not grant a nonparticipant access when a marker is admin-seeded', async () => {
+    await seed('sessions/sharedSession/messages/message1', {
+      senderId: ALICE,
+      text: 'Participants only',
+      createdAt: Timestamp.now(),
+    });
+    await seed(`users/${MALLORY}/hiddenChats/group__sharedSession`, {
+      chatType: 'group',
+      threadId: 'sharedSession',
+      removedAt: Timestamp.now(),
+    });
+
+    await assertFails(getDoc(doc(
+      ctx(MALLORY),
+      'sessions',
+      'sharedSession',
+      'messages',
+      'message1'
+    )));
   });
 });
 
@@ -1370,79 +1487,6 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
       senderId: BOB, text: 'i left but…', createdAt: serverTimestamp(),
     }));
   });
-
-  it('stops all sends after the two-hour post-session grace period', async () => {
-    await seedChatSession('expired', {
-      endTime: Timestamp.fromMillis(Date.now() - 2 * 60 * 60 * 1000 - 5_000),
-    });
-    await assertFails(createSessionChatMessage(ctx(ALICE), ALICE, 'expired', 'm1', {
-      senderId: ALICE,
-      text: 'too late',
-      createdAt: serverTimestamp(),
-    }));
-  });
-
-  it('only keepers retain read access after the grace period', async () => {
-    await seedChatSession('expired', {
-      endTime: Timestamp.fromMillis(Date.now() - 2 * 60 * 60 * 1000 - 5_000),
-    });
-    await seed('sessions/expired/messages/m1', {
-      senderId: ALICE,
-      text: 'saved history',
-      createdAt: Timestamp.now(),
-    });
-    await seed(`users/${ALICE}/keptSessionChats/expired`, {
-      sessionId: 'expired',
-      keptAt: Timestamp.now(),
-    });
-
-    await assertSucceeds(getDoc(doc(ctx(ALICE), 'sessions', 'expired', 'messages', 'm1')));
-    await assertFails(getDoc(doc(ctx(BOB), 'sessions', 'expired', 'messages', 'm1')));
-  });
-});
-
-describe('kept session chats (users/{uid}/keptSessionChats)', () => {
-  it('lets a participant keep history during the two-hour grace period', async () => {
-    await seed('sessions/grace', validSession(ALICE, {
-      participantIds: [ALICE, BOB],
-      endTime: Timestamp.fromMillis(Date.now() - 60 * 60 * 1000),
-      createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-    }));
-
-    await assertSucceeds(setDoc(doc(ctx(BOB), 'users', BOB, 'keptSessionChats', 'grace'), {
-      sessionId: 'grace',
-      keptAt: serverTimestamp(),
-    }));
-  });
-
-  it('rejects outsiders, cross-user writes, and keeps after the deadline', async () => {
-    await seed('sessions/grace', validSession(ALICE, {
-      participantIds: [ALICE, BOB],
-      endTime: Timestamp.fromMillis(Date.now() - 60 * 60 * 1000),
-      createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-    }));
-    await seed('sessions/expired', validSession(ALICE, {
-      participantIds: [ALICE, BOB],
-      endTime: Timestamp.fromMillis(Date.now() - 3 * 60 * 60 * 1000),
-      createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-    }));
-
-    await assertFails(setDoc(doc(ctx(MALLORY), 'users', MALLORY, 'keptSessionChats', 'grace'), {
-      sessionId: 'grace',
-      keptAt: serverTimestamp(),
-    }));
-    await assertFails(setDoc(doc(ctx(ALICE), 'users', BOB, 'keptSessionChats', 'grace'), {
-      sessionId: 'grace',
-      keptAt: serverTimestamp(),
-    }));
-    await assertFails(setDoc(doc(ctx(BOB), 'users', BOB, 'keptSessionChats', 'expired'), {
-      sessionId: 'expired',
-      keptAt: serverTimestamp(),
-    }));
-  });
 });
 
 describe('chat read markers (users/{uid}/reads)', () => {
@@ -2009,6 +2053,130 @@ describe('reports (immutable, write-only)', () => {
       { ...valid(ALICE), details: 'x'.repeat(1001) }));
     await assertFails(createReportWithRateLimit(ctx(BOB), BOB, 'r5',
       { ...valid(BOB), reportedUserId: BOB }));
+  });
+});
+
+// ----------------------------------------------------- catalog requests
+describe('catalog requests (write-only)', () => {
+  const valid = (requester, overrides = {}) => ({
+    requesterUserId: requester,
+    type: 'course',
+    name: 'COMPSCI 999',
+    searchQuery: 'COMPSCI 999',
+    details: 'A course missing from the catalog.',
+    source: 'onboarding-classes',
+    createdAt: serverTimestamp(),
+    ...overrides,
+  });
+
+  it('one request with its matching limiter update succeeds and remains write-only', async () => {
+    await assertSucceeds(
+      createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr1', valid(ALICE))
+    );
+    await assertFails(getDoc(doc(ctx(ALICE), 'catalogRequests', 'cr1')));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'catalogRequests', 'cr1'), {
+      details: 'edited',
+    }));
+    await assertFails(deleteDoc(doc(ctx(ALICE), 'catalogRequests', 'cr1')));
+  });
+
+  it('a second request inside ten minutes fails', async () => {
+    await seed(`rateLimits/${ALICE}/actions/catalogRequest`, {
+      lastRequestId: 'cr1',
+      updatedAt: Timestamp.now(),
+    });
+    await assertFails(
+      createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr2', valid(ALICE))
+    );
+  });
+
+  it('two requests cannot share one limiter update in the same batch', async () => {
+    const db = ctx(ALICE);
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'rateLimits', ALICE, 'actions', 'catalogRequest'), {
+      lastRequestId: 'cr-batch-1',
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'catalogRequests', 'cr-batch-1'), valid(ALICE));
+    batch.set(doc(db, 'catalogRequests', 'cr-batch-2'), valid(ALICE));
+
+    await assertFails(batch.commit());
+  });
+
+  it('two concurrent independent batches allow exactly one request', async () => {
+    const attempts = [ctx(ALICE), ctx(ALICE)].map((db) => {
+      const requestRef = doc(collection(db, 'catalogRequests'));
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'rateLimits', ALICE, 'actions', 'catalogRequest'), {
+        lastRequestId: requestRef.id,
+        updatedAt: serverTimestamp(),
+      });
+      batch.set(requestRef, valid(ALICE));
+      return { requestId: requestRef.id, commit: batch.commit() };
+    });
+
+    const outcomes = await Promise.allSettled(attempts.map((attempt) => attempt.commit));
+    const successfulIndexes = outcomes
+      .map((outcome, index) => (outcome.status === 'fulfilled' ? index : -1))
+      .filter((index) => index >= 0);
+    const failedOutcomes = outcomes.filter((outcome) => outcome.status === 'rejected');
+
+    assert.equal(successfulIndexes.length, 1);
+    assert.equal(failedOutcomes.length, 1);
+
+    const successfulRequestId = attempts[successfulIndexes[0]].requestId;
+    await env.withSecurityRulesDisabled(async (context) => {
+      const adminDb = context.firestore();
+      const requestSnapshot = await getDocs(collection(adminDb, 'catalogRequests'));
+      const limiterSnapshot = await getDoc(
+        doc(adminDb, 'rateLimits', ALICE, 'actions', 'catalogRequest')
+      );
+
+      assert.equal(requestSnapshot.size, 1);
+      assert.equal(requestSnapshot.docs[0].id, successfulRequestId);
+      assert.equal(limiterSnapshot.data().lastRequestId, successfulRequestId);
+    });
+  });
+
+  it('a request id that does not match lastRequestId fails', async () => {
+    const db = ctx(ALICE);
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'rateLimits', ALICE, 'actions', 'catalogRequest'), {
+      lastRequestId: 'different-request',
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'catalogRequests', 'cr-mismatch'), valid(ALICE));
+
+    await assertFails(batch.commit());
+  });
+
+  it('rejects a forged requester uid', async () => {
+    await assertFails(
+      createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr3', valid(BOB))
+    );
+  });
+
+  it('allows another request once the cooldown has elapsed', async () => {
+    await seed(`rateLimits/${ALICE}/actions/catalogRequest`, {
+      lastRequestId: 'old-request',
+      updatedAt: Timestamp.fromMillis(Date.now() - 11 * 60 * 1000),
+    });
+    await assertSucceeds(
+      createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr-after-cooldown', valid(ALICE))
+    );
+  });
+
+  it('rejects invalid types and oversized names', async () => {
+    await assertFails(
+      createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr4', valid(ALICE, {
+        type: 'building',
+      }))
+    );
+    await assertFails(
+      createCatalogRequestWithRateLimit(ctx(ALICE), ALICE, 'cr5', valid(ALICE, {
+        name: 'x'.repeat(121),
+      }))
+    );
   });
 });
 

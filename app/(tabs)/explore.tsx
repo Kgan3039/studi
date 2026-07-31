@@ -27,6 +27,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CampusMap } from '@/components/campus-map';
 import type { MapSessionTiming } from '@/components/campus-map.types';
+import {
+  CatalogRequestButton,
+  CatalogRequestSheet,
+} from '@/components/ui/CatalogRequestSheet';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Button } from '@/components/ui/Button';
@@ -48,6 +52,7 @@ import {
 } from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
+import { shouldOfferLocationRequest } from '@/lib/catalog-request';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   getLocationRatingAggregates,
@@ -221,6 +226,7 @@ export default function StudyLocationsScreen() {
   const [activityFilters, setActivityFilters] = useState<ActivityFilter[]>([]);
   const [atmosphereFilters, setAtmosphereFilters] = useState<LocationAtmosphereFilter[]>([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [requestSheetOpen, setRequestSheetOpen] = useState(false);
   const activeFilterCount = activityFilters.length + atmosphereFilters.length;
 
   function toggleActivityFilter(id: ActivityFilter) {
@@ -374,6 +380,37 @@ export default function StudyLocationsScreen() {
     return groupedSessions;
   }, [sessions]);
 
+  const locationSearchTextById = useMemo(
+    () =>
+      new Map(
+        locations.map((location) => {
+          const aggregate = ratingAggregates.get(location.locationId);
+          const locationSessions = sessionsByLocationId.get(location.locationId) ?? [];
+          const locationTags = getLocationTags(location);
+          const reviewTags = aggregate?.reviewTags ?? [];
+          const searchText = [
+            location.name,
+            location.building,
+            location.campusArea,
+            location.notes,
+            ...locationTags,
+            ...reviewTags,
+            ...locationSessions.flatMap((session) => [session.classId, session.title]),
+          ]
+            .join(' ')
+            .toLowerCase();
+
+          return [location.locationId, searchText] as const;
+        })
+      ),
+    [locations, ratingAggregates, sessionsByLocationId]
+  );
+
+  const shouldOfferRequest = useMemo(
+    () => shouldOfferLocationRequest(searchQuery, [...locationSearchTextById.values()]),
+    [locationSearchTextById, searchQuery]
+  );
+
   const filteredLocations = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
     const now = Date.now();
@@ -384,17 +421,7 @@ export default function StudyLocationsScreen() {
       const locationSessions = sessionsByLocationId.get(location.locationId) ?? [];
       const locationTags = getLocationTags(location);
       const reviewTags = aggregate?.reviewTags ?? [];
-      const searchText = [
-        location.name,
-        location.building,
-        location.campusArea,
-        location.notes,
-        ...locationTags,
-        ...reviewTags,
-        ...locationSessions.flatMap((session) => [session.classId, session.title]),
-      ]
-        .join(' ')
-        .toLowerCase();
+      const searchText = locationSearchTextById.get(location.locationId) ?? '';
 
       if (normalizedQuery && !searchText.includes(normalizedQuery)) {
         return false;
@@ -434,6 +461,7 @@ export default function StudyLocationsScreen() {
     activityFilters,
     atmosphereFilters,
     locations,
+    locationSearchTextById,
     profileClassSet,
     ratingAggregates,
     searchQuery,
@@ -894,6 +922,10 @@ export default function StudyLocationsScreen() {
             value={searchQuery}
           />
         </View>
+        <CatalogRequestButton
+          type="location"
+          onPress={() => setRequestSheetOpen(true)}
+        />
         <Pressable
           accessibilityLabel={
             activeFilterCount > 0 ? `Filters, ${activeFilterCount} applied` : 'Filters'
@@ -1069,10 +1101,16 @@ export default function StudyLocationsScreen() {
         ) : !isLoading ? (
           <EmptyState
             icon="spot"
-            headline="No study spots found"
-            body="Try another search or clear the current filters."
-            actionLabel="Clear filters"
-            onAction={clearFilters}
+            headline={searchQuery.trim() ? 'No study spots found' : 'No study spots available'}
+            body={
+              shouldOfferRequest
+                ? 'We may be missing this spot. Send us a request and we’ll review it.'
+                : 'Try clearing the current filters.'
+            }
+            actionLabel={shouldOfferRequest ? 'Request this spot' : 'Clear filters'}
+            onAction={() =>
+              shouldOfferRequest ? setRequestSheetOpen(true) : clearFilters()
+            }
             style={styles.noPinsState}
           />
         ) : null}
@@ -1081,6 +1119,14 @@ export default function StudyLocationsScreen() {
     </ScrollView>
 
     <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
+
+    <CatalogRequestSheet
+      initialQuery={searchQuery}
+      onClose={() => setRequestSheetOpen(false)}
+      source="explore-location"
+      type="location"
+      visible={requestSheetOpen}
+    />
 
     <Sheet
       visible={filtersOpen}
