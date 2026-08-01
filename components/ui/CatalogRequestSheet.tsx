@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Input } from '@/components/ui/Input';
 import { Sheet } from '@/components/ui/Sheet';
+import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { Brand, Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -63,6 +64,7 @@ export function CatalogRequestSheet({
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const isLocation = type === 'location';
+  const { toast, show: showToast } = useSuccessToast();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [name, setName] = useState('');
   const [details, setDetails] = useState('');
@@ -120,9 +122,9 @@ export function CatalogRequestSheet({
       });
       track('catalog_request_submitted', { type, source });
       onClose();
-      Alert.alert(
+      showToast(
         'Request sent',
-        `Thanks. We’ll review this ${isLocation ? 'study spot' : 'course'} and add it if it belongs in Studi.`
+        `We’ll review this ${isLocation ? 'study spot' : 'course'} before it appears for everyone.`
       );
     } catch (requestError) {
       setError(catalogRequestErrorMessage(requestError));
@@ -132,6 +134,7 @@ export function CatalogRequestSheet({
   }
 
   return (
+    <>
     <Sheet
       visible={visible}
       onClose={handleClose}
@@ -195,6 +198,8 @@ export function CatalogRequestSheet({
         </View>
       </View>
     </Sheet>
+    <SuccessToast toast={toast} />
+    </>
   );
 }
 

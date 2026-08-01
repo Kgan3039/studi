@@ -2,6 +2,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -14,7 +15,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
+import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
@@ -26,10 +30,14 @@ import {
   getProfilesByIds,
   getSessionById,
   isGroupChatAvailable,
+  keepSessionChat,
   markSessionChatRead,
   MAX_GROUP_CHAT_PARTICIPANTS,
+  SESSION_CHAT_GRACE_PERIOD_MS,
   sendSessionMessage,
+  subscribeToKeptSessionChats,
   subscribeToSessionMessages,
+  type KeptSessionChat,
   type SessionMessage,
   type StudySessionListItem,
   type UserProfile,
@@ -95,12 +103,22 @@ function formatTimestamp(value: unknown) {
   });
 }
 
+function formatCountdown(remainingMs: number) {
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
 export default function SessionChatScreen() {
   const router = useRouter();
   const { sessionId, source } = useLocalSearchParams<{ sessionId?: string; source?: string }>();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const { toast, show: showToast } = useSuccessToast();
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [session, setSession] = useState<StudySessionListItem | null>(null);
@@ -118,6 +136,10 @@ export default function SessionChatScreen() {
   const [threadError, setThreadError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [focusNonce, setFocusNonce] = useState(0);
+  const [keptSessionChats, setKeptSessionChats] = useState<Map<string, KeptSessionChat>>(new Map());
+  const [isKeepStateLoading, setIsKeepStateLoading] = useState(true);
+  const [isKeeping, setIsKeeping] = useState(false);
+  const [nowMs, setNowMs] = useState(Date.now());
   // Cursor/hasMore for paging backwards; starts from the live window's edge.
   const cursorRef = useRef<QueryDocumentSnapshot | null>(null);
   const [hasEarlier, setHasEarlier] = useState(false);
@@ -146,6 +168,49 @@ export default function SessionChatScreen() {
       .then(setBlockedUserIds)
       .catch(() => setBlockedUserIds([]));
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setKeptSessionChats(new Map());
+      setIsKeepStateLoading(false);
+      return;
+    }
+
+    setIsKeepStateLoading(true);
+    const unsubscribe = subscribeToKeptSessionChats(
+      currentUser.uid,
+      (loadedChats) => {
+        setKeptSessionChats(loadedChats);
+        setIsKeepStateLoading(false);
+      },
+      () => setIsKeepStateLoading(false)
+    );
+
+    return unsubscribe;
+  }, [currentUser]);
+
+  useEffect(() => {
+    const sessionEndMs = session?.endTime.toMillis();
+    if (!sessionEndMs) {
+      return;
+    }
+
+    const graceDeadlineMs = sessionEndMs + SESSION_CHAT_GRACE_PERIOD_MS;
+    const currentMs = Date.now();
+    if (currentMs >= graceDeadlineMs) {
+      return;
+    }
+
+    // Before a session ends, a single wake-up is enough. Once its compact
+    // countdown is visible, tick only the label — never an idle chat screen.
+    const delay =
+      currentMs < sessionEndMs
+        ? sessionEndMs - currentMs + 100
+        : Math.min(1_000 - (currentMs % 1_000) + 20, graceDeadlineMs - currentMs + 20);
+    const timeout = setTimeout(() => setNowMs(Date.now()), Math.max(delay, 100));
+
+    return () => clearTimeout(timeout);
+  }, [nowMs, session?.endTime]);
 
   useEffect(() => {
     let cancelled = false;
@@ -193,12 +258,17 @@ export default function SessionChatScreen() {
 
   const isParticipant =
     !!currentUser && !!session && session.participantIds.includes(currentUser.uid);
-  // Two read-only states (rules deny new sends in both; history stays
-  // readable): cancelled sessions, and oversized legacy sessions past the
-  // group-chat fanout ceiling.
+  // Rules enforce every one of these states too. The expiry window is read-only
+  // unless this participant chose to keep the history before it closed.
   const isCancelled = session?.status === 'cancelled';
   const isOversized = !!session && !isGroupChatAvailable(session);
-  const isReadOnly = isCancelled || isOversized;
+  const sessionEndMs = session?.endTime.toMillis() ?? Number.POSITIVE_INFINITY;
+  const graceDeadlineMs = sessionEndMs + SESSION_CHAT_GRACE_PERIOD_MS;
+  const hasSessionEnded = nowMs >= sessionEndMs;
+  const hasGraceExpired = nowMs >= graceDeadlineMs;
+  const isKept = !!sessionId && keptSessionChats.has(sessionId);
+  const isReadOnly = isCancelled || isOversized || hasGraceExpired;
+  const canReadHistory = !hasGraceExpired || isKept;
 
   const markRead = useCallback(
     (newestMessageId: string | null) => {
@@ -220,7 +290,7 @@ export default function SessionChatScreen() {
   // Live window over the newest page. Local optimistic sends surface here
   // immediately (pending: true) and settle in place on ack.
   useEffect(() => {
-    if (!currentUser || !sessionId || !isParticipant) {
+    if (!currentUser || !sessionId || !isParticipant || !canReadHistory || isKeepStateLoading) {
       return;
     }
 
@@ -256,7 +326,15 @@ export default function SessionChatScreen() {
     );
 
     return unsubscribe;
-  }, [currentUser, sessionId, isParticipant, retryNonce, markRead]);
+  }, [
+    currentUser,
+    sessionId,
+    isParticipant,
+    canReadHistory,
+    isKeepStateLoading,
+    retryNonce,
+    markRead,
+  ]);
 
   // Resolve display names for senders no longer in the attendee list
   // (people who left the session but whose messages remain).
@@ -408,6 +486,34 @@ export default function SessionChatScreen() {
     }
   }
 
+  async function handleKeep() {
+    if (
+      !currentUser ||
+      !sessionId ||
+      isKept ||
+      isKeeping ||
+      !hasSessionEnded ||
+      hasGraceExpired
+    ) {
+      return;
+    }
+
+    try {
+      setIsKeeping(true);
+      await keepSessionChat(currentUser.uid, sessionId);
+      setKeptSessionChats((current) => {
+        const next = new Map(current);
+        next.set(sessionId, { keptAt: Date.now(), sessionId });
+        return next;
+      });
+      showToast('Chat history saved', 'You can come back to it anytime.');
+    } catch {
+      Alert.alert("Couldn't save chat history", 'Try again before the timer ends.');
+    } finally {
+      setIsKeeping(false);
+    }
+  }
+
   const participantCount = session?.participantIds.length ?? 0;
   const senderName = useCallback(
     (uid: string) => profilesById.get(uid)?.displayName.trim() || 'Student',
@@ -456,11 +562,34 @@ export default function SessionChatScreen() {
     );
   }
 
+  if (hasGraceExpired && isKeepStateLoading) {
+    return (
+      <View style={[styles.centered, { backgroundColor: palette.background }]}>
+        <ActivityIndicator color={palette.tint} />
+      </View>
+    );
+  }
+
+  if (hasGraceExpired && !isKept) {
+    return (
+      <View style={[styles.screen, { backgroundColor: palette.background }]}>
+        <EmptyState
+          icon="chat"
+          headline="Chat expired"
+          body="The two-hour window ended before this chat was saved."
+          actionLabel="Back to messages"
+          onAction={() => router.replace('/messages')}
+        />
+      </View>
+    );
+  }
+
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
-      style={[styles.screen, { backgroundColor: palette.background }]}>
+    <>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+        style={[styles.screen, { backgroundColor: palette.background }]}>
       {/* Identity strip under the nav header — mirrors the DM conversation. */}
       <View style={[styles.identityBar, { borderBottomColor: palette.border }]}>
         <View style={styles.identityText}>
@@ -481,10 +610,49 @@ export default function SessionChatScreen() {
         />
       </View>
 
+      {hasSessionEnded && !hasGraceExpired ? (
+        <View
+          style={[
+            styles.graceNotice,
+            { backgroundColor: palette.surfaceMuted, borderBottomColor: palette.border },
+          ]}>
+          <IconSymbol color={palette.tint} name="clock" size={18} />
+          <View style={styles.graceText}>
+            <Text style={[TypeScale.label, { color: palette.text }]}>Session ended</Text>
+            <Text
+              accessibilityLabel={`${formatCountdown(graceDeadlineMs - nowMs)} remaining to save chat history`}
+              style={[TypeScale.caption, { color: palette.icon }]}
+              numberOfLines={1}>
+              {isKept ? 'Chat history is saved.' : `Save history in ${formatCountdown(graceDeadlineMs - nowMs)}`}
+            </Text>
+          </View>
+          {isKept ? (
+            <View
+              accessibilityLabel="Chat history saved"
+              style={[styles.savedBadge, { backgroundColor: `${palette.success}14` }]}>
+              <IconSymbol color={palette.success} name="checkmark" size={15} />
+              <Text style={[TypeScale.label, { color: palette.success }]}>Saved</Text>
+            </View>
+          ) : (
+            <Button
+              disabled={isKeepStateLoading}
+              label="Keep"
+              loading={isKeeping}
+              onPress={handleKeep}
+              size="sm"
+              style={styles.keepAction}
+              variant="secondary"
+            />
+          )}
+        </View>
+      ) : null}
+
       {isReadOnly ? (
         <View style={[styles.readOnlyNotice, { backgroundColor: palette.surfaceMuted }]}>
           <Text style={[TypeScale.caption, styles.readOnlyText, { color: palette.icon }]}>
-            {isCancelled
+            {hasGraceExpired
+              ? 'This saved chat is now read-only.'
+              : isCancelled
               ? 'This session was cancelled. Chat history is still available.'
               : `Group chat is unavailable for sessions with more than ${MAX_GROUP_CHAT_PARTICIPANTS} people.`}
           </Text>
@@ -617,7 +785,9 @@ export default function SessionChatScreen() {
             multiline
             onChangeText={setDraft}
             placeholder={
-              isCancelled
+              hasGraceExpired
+                ? 'This chat is now read-only.'
+                : isCancelled
                 ? 'This session was cancelled.'
                 : isOversized
                   ? 'Chat is unavailable for this session.'
@@ -647,7 +817,9 @@ export default function SessionChatScreen() {
           </Pressable>
         </View>
       </View>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+      <SuccessToast toast={toast} />
+    </>
   );
 }
 
@@ -678,6 +850,30 @@ const styles = StyleSheet.create({
   },
   readOnlyText: {
     textAlign: 'center',
+  },
+  graceNotice: {
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: Space.sm,
+    paddingHorizontal: Space.lg + 4,
+    paddingVertical: Space.sm + 2,
+  },
+  graceText: {
+    flex: 1,
+    gap: 1,
+    minWidth: 0,
+  },
+  keepAction: {
+    flexShrink: 0,
+  },
+  savedBadge: {
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    flexDirection: 'row',
+    gap: Space.xs,
+    minHeight: 36,
+    paddingHorizontal: Space.md,
   },
   thread: {
     flex: 1,

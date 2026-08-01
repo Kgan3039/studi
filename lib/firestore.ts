@@ -233,9 +233,16 @@ export type ConversationListItem = DirectConversation & {
 };
 
 export type GroupChatListItem = {
+  endTime: Timestamp;
   sessionId: string;
   title: string;
   lastMessageAt: Timestamp;
+};
+
+/** An owner-scoped choice to retain an ended session chat. */
+export type KeptSessionChat = {
+  keptAt?: unknown;
+  sessionId: string;
 };
 
 export type HiddenChat = {
@@ -1418,6 +1425,8 @@ export function subscribeToConversationMessages(
 // ---------------------------------------------------------------------------
 
 export const SESSION_MESSAGES_PAGE_SIZE = 30;
+/** Ended session chats stay active for two hours unless their participant saves them. */
+export const SESSION_CHAT_GRACE_PERIOD_MS = 2 * 60 * 60 * 1000;
 
 /** Group-chat fanout ceiling, judged on the ACTUAL participant count (the
  *  optional capacity field can be absent on legacy sessions). Mirrors
@@ -1641,11 +1650,25 @@ function mapGroupChatListItem(
     return null;
   }
 
+  const endTime = normalizeSessionTimestamp(data.endTime);
+  // Every current session has an end time. Hide malformed legacy rows rather
+  // than treating an unknown deadline as a chat that lives forever.
+  if (!endTime) {
+    return null;
+  }
+
   return {
+    endTime,
     sessionId,
     title: typeof data.title === "string" ? data.title : "Study Session",
     lastMessageAt,
   };
+}
+
+/** A one-off lookup used to bring saved chats back into the bounded inbox. */
+export async function getGroupChatListItem(sessionId: string): Promise<GroupChatListItem | null> {
+  const sessionDoc = await getDoc(doc(db, COLLECTIONS.sessions, sessionId));
+  return sessionDoc.exists() ? mapGroupChatListItem(sessionId, sessionDoc.data()) : null;
 }
 
 /**
@@ -1676,6 +1699,38 @@ export function subscribeToUserGroupChats(
     },
     onError
   );
+}
+
+/** Owner-only saved-chat markers, written while a session's grace window is open. */
+export function subscribeToKeptSessionChats(
+  userId: string,
+  listener: (keptChats: Map<string, KeptSessionChat>) => void,
+  onError?: (error: Error) => void
+) {
+  return onSnapshot(
+    collection(db, COLLECTIONS.users, userId, "keptSessionChats"),
+    (snapshot) => {
+      const keptChats = new Map<string, KeptSessionChat>();
+
+      snapshot.docs.forEach((keptChatDoc) => {
+        const data = keptChatDoc.data({ serverTimestamps: "estimate" });
+        keptChats.set(keptChatDoc.id, {
+          keptAt: data.keptAt,
+          sessionId: keptChatDoc.id,
+        });
+      });
+
+      listener(keptChats);
+    },
+    onError
+  );
+}
+
+export async function keepSessionChat(userId: string, sessionId: string) {
+  await setDoc(doc(db, COLLECTIONS.users, userId, "keptSessionChats", sessionId), {
+    keptAt: serverTimestamp(),
+    sessionId,
+  } satisfies KeptSessionChat);
 }
 
 /**

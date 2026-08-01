@@ -403,6 +403,26 @@ service cloud.firestore {
         // tree recursively through the existing Admin path.
         allow delete: if isOwner(userId);
       }
+
+      // A participant can save an ended session chat while its two-hour
+      // window is open. The marker is private and makes that immutable
+      // history readable after the deadline passes.
+      match /keptSessionChats/{sessionId} {
+        function keptSession() {
+          return get(/databases/$(database)/documents/sessions/$(sessionId)).data;
+        }
+
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && exists(/databases/$(database)/documents/sessions/$(sessionId))
+          && request.auth.uid in keptSession().participantIds
+          && request.time >= keptSession().endTime
+          && request.time < keptSession().endTime + duration.value(2, 'h')
+          && incoming().keys().hasOnly(['sessionId', 'keptAt'])
+          && incoming().sessionId == sessionId
+          && incoming().keptAt == request.time;
+        allow update, delete: if false;
+      }
     }
 
     // ------------------------------------------------------------------
@@ -595,7 +615,9 @@ service cloud.firestore {
       // is written only by the Cloud Function (Admin SDK bypasses rules);
       // no client update branch exists for it. Leaving the session ends
       // access. A cancelled session is read-only: retained participants keep
-      // the history, nobody sends. Sends are also denied when the session
+      // the history, nobody sends. After the two-hour post-session grace
+      // window, only participants who saved their copy can read it. Sends end
+      // with that same grace window. Sends are also denied when the session
       // holds more than 20 people — the group-chat fanout ceiling, judged on
       // the ACTUAL participant count so legacy uncapped sessions can't force
       // unbounded notification fanout (mirrors MAX_GROUP_CHAT_PARTICIPANTS
@@ -608,11 +630,18 @@ service cloud.firestore {
         }
 
         allow read: if isVerifiedUwUser()
-          && request.auth.uid in parentSession().participantIds;
+          && request.auth.uid in parentSession().participantIds
+          && (
+            request.time < parentSession().endTime + duration.value(2, 'h')
+            || exists(
+              /databases/$(database)/documents/users/$(request.auth.uid)/keptSessionChats/$(sessionId)
+            )
+          );
         allow create: if isVerifiedUwUser()
           && request.auth.uid == incoming().senderId
           && parentSession().status in ['open', 'full']
           && request.auth.uid in parentSession().participantIds
+          && request.time < parentSession().endTime + duration.value(2, 'h')
           && parentSession().participantIds.size() <= 20
           && incoming().keys().hasOnly(['senderId', 'text', 'createdAt'])
           && incoming().text is string
