@@ -31,13 +31,17 @@ import {
 } from '@/lib/message-history';
 import {
   getBlockedUserIds,
+  getGroupChatListItem,
   removeSessionChatFromUserHistory,
+  SESSION_CHAT_GRACE_PERIOD_MS,
   subscribeToHiddenChats,
+  subscribeToKeptSessionChats,
   subscribeToUserConversations,
   subscribeToUserGroupChats,
   type ConversationListItem,
   type GroupChatListItem,
   type HiddenChat,
+  type KeptSessionChat,
 } from '@/lib/firestore';
 import { Timestamp } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
@@ -74,7 +78,9 @@ export default function MessagesScreen() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [groupChats, setGroupChats] = useState<GroupChatListItem[]>([]);
+  const [keptOnlyGroupChats, setKeptOnlyGroupChats] = useState<GroupChatListItem[]>([]);
   const [hiddenChats, setHiddenChats] = useState<Map<string, HiddenChat>>(new Map());
+  const [keptSessionChats, setKeptSessionChats] = useState<Map<string, KeptSessionChat>>(new Map());
   const [pendingRemovalKeys, setPendingRemovalKeys] = useState<Set<string>>(new Set());
   const pendingRemovalKeysRef = useRef(new Set<string>());
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
@@ -83,8 +89,10 @@ export default function MessagesScreen() {
   const [isGroupLoading, setIsGroupLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [isKeptChatsLoading, setIsKeptChatsLoading] = useState(true);
   const [hasLoadError, setHasLoadError] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [nowMs, setNowMs] = useState(Date.now());
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -177,6 +185,70 @@ export default function MessagesScreen() {
 
   useEffect(() => {
     if (!currentUser) {
+      setKeptSessionChats(new Map());
+      setIsKeptChatsLoading(false);
+      return;
+    }
+
+    setIsKeptChatsLoading(true);
+    const unsubscribe = subscribeToKeptSessionChats(
+      currentUser.uid,
+      (loadedChats) => {
+        setKeptSessionChats(loadedChats);
+        setIsKeptChatsLoading(false);
+      },
+      () => {
+        // The private marker was introduced after the inbox. If an older rule
+        // set is still live during rollout, preserve the ordinary inbox rather
+        // than turning this optional enhancement into a full-screen failure.
+        setKeptSessionChats(new Map());
+        setIsKeptChatsLoading(false);
+      }
+    );
+
+    return unsubscribe;
+  }, [currentUser, refreshNonce]);
+
+  // The main inbox listener deliberately stays capped to the 50 most recent
+  // active chats. Saved history is a promise, though, so fetch any kept chat
+  // that has aged out of that bounded query and merge it back into the list.
+  useEffect(() => {
+    if (!currentUser || keptSessionChats.size === 0) {
+      setKeptOnlyGroupChats([]);
+      return;
+    }
+
+    let active = true;
+    const activeChatIds = new Set(groupChats.map((chat) => chat.sessionId));
+    const missingIds = [...keptSessionChats.keys()].filter((id) => !activeChatIds.has(id));
+
+    if (missingIds.length === 0) {
+      setKeptOnlyGroupChats([]);
+      return;
+    }
+
+    void Promise.all(
+      missingIds.map((sessionId) => getGroupChatListItem(sessionId).catch(() => null))
+    ).then((loadedChats) => {
+      if (active) {
+        setKeptOnlyGroupChats(
+          loadedChats.filter((chat): chat is GroupChatListItem => chat !== null)
+        );
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [currentUser, groupChats, keptSessionChats]);
+
+  const allGroupChats = useMemo(
+    () => [...groupChats, ...keptOnlyGroupChats],
+    [groupChats, keptOnlyGroupChats]
+  );
+
+  useEffect(() => {
+    if (!currentUser) {
       setHiddenChats(new Map());
       setPendingRemovalKeys(new Set());
       pendingRemovalKeysRef.current.clear();
@@ -200,11 +272,12 @@ export default function MessagesScreen() {
     return unsubscribe;
   }, [currentUser, refreshNonce]);
 
-  const isAnyLoading = !areMessageSourcesLoaded({
-    dm: !isDmLoading,
-    group: !isGroupLoading,
-    hidden: !isHistoryLoading,
-  });
+  const isAnyLoading =
+    !areMessageSourcesLoaded({
+      dm: !isDmLoading,
+      group: !isGroupLoading,
+      hidden: !isHistoryLoading,
+    }) || isKeptChatsLoading;
 
   useEffect(() => {
     if (isRefreshing && !isAnyLoading) {
@@ -222,8 +295,31 @@ export default function MessagesScreen() {
     setIsDmLoading(true);
     setIsGroupLoading(true);
     setIsHistoryLoading(true);
+    setIsKeptChatsLoading(true);
     setRefreshNonce((value) => value + 1);
   }
+
+  // A grace deadline does not change any Firestore document. Wake only for
+  // the next one so an expired chat leaves the inbox promptly without a
+  // permanent timer on this tab.
+  useEffect(() => {
+    const nextDeadline = allGroupChats
+      .filter((chat) => !keptSessionChats.has(chat.sessionId))
+      .map((chat) => chat.endTime.toMillis() + SESSION_CHAT_GRACE_PERIOD_MS)
+      .filter((deadline) => deadline > nowMs)
+      .sort((first, second) => first - second)[0];
+
+    if (!nextDeadline) {
+      return;
+    }
+
+    const timeout = setTimeout(
+      () => setNowMs(Date.now()),
+      Math.min(nextDeadline - Date.now() + 100, 2_147_483_647)
+    );
+
+    return () => clearTimeout(timeout);
+  }, [allGroupChats, keptSessionChats, nowMs]);
 
   const allChats = useMemo(() => {
     const chats = [
@@ -236,7 +332,7 @@ export default function MessagesScreen() {
         conversation,
       })),
 
-      ...groupChats.map((groupChat) => ({
+      ...allGroupChats.map((groupChat) => ({
         type: "group" as const,
         id: groupChat.sessionId,
         name: groupChat.title,
@@ -250,6 +346,13 @@ export default function MessagesScreen() {
       .filter((chat) => {
         if (chat.type === "dm") {
           return true;
+        }
+
+        if (
+          nowMs >= chat.groupChat.endTime.toMillis() + SESSION_CHAT_GRACE_PERIOD_MS &&
+          !keptSessionChats.has(chat.id)
+        ) {
+          return false;
         }
 
         const key = sessionChatHistoryKey(chat.id);
@@ -266,8 +369,10 @@ export default function MessagesScreen() {
       );
   }, [
     conversations,
-    groupChats,
+    allGroupChats,
     hiddenChats,
+    keptSessionChats,
+    nowMs,
     pendingRemovalKeys,
   ]);
 

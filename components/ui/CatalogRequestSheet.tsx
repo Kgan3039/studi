@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Input } from '@/components/ui/Input';
 import { Sheet } from '@/components/ui/Sheet';
-import { Brand, Colors, Radius, Space, TypeScale } from '@/constants/theme';
+import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import { catalogRequestErrorMessage } from '@/lib/catalog-request';
@@ -24,31 +25,41 @@ type CatalogRequestSheetProps = {
   onClose: () => void;
 };
 
-type CatalogRequestButtonProps = {
+type CatalogRequestLinkProps = {
+  context?: 'catalog' | 'search';
   onPress: () => void;
   type: CatalogRequestType;
 };
 
-export function CatalogRequestButton({ onPress, type }: CatalogRequestButtonProps) {
+export function CatalogRequestLink({
+  context = 'search',
+  onPress,
+  type,
+}: CatalogRequestLinkProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
-  const label = type === 'course' ? 'Suggest a course' : 'Suggest a study spot';
+  const question =
+    type === 'course'
+      ? 'Can’t find a class?'
+      : context === 'catalog'
+        ? 'Can’t find a study spot?'
+        : 'Can’t find this spot?';
+  const label = `${question} Send a request`;
 
   return (
     <Pressable
       accessibilityLabel={label}
       accessibilityRole="button"
-      hitSlop={6}
+      hitSlop={8}
       onPress={onPress}
       style={({ pressed }) => [
-        styles.trigger,
-        {
-          backgroundColor: palette.surfaceMuted,
-          borderColor: palette.outline,
-          opacity: pressed ? 0.65 : 1,
-        },
+        styles.requestLink,
+        { opacity: pressed ? 0.62 : 1 },
       ]}>
-      <IconSymbol color={palette.tint} name="plus.circle.fill" size={21} />
+      <Text style={[TypeScale.caption, styles.requestLinkText, { color: palette.icon }]}>
+        {question}{' '}
+        <Text style={[styles.requestLinkAction, { color: palette.tint }]}>Send a request</Text>
+      </Text>
     </Pressable>
   );
 }
@@ -63,6 +74,7 @@ export function CatalogRequestSheet({
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const isLocation = type === 'location';
+  const { toast, show: showToast } = useSuccessToast();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [name, setName] = useState('');
   const [details, setDetails] = useState('');
@@ -120,9 +132,9 @@ export function CatalogRequestSheet({
       });
       track('catalog_request_submitted', { type, source });
       onClose();
-      Alert.alert(
+      showToast(
         'Request sent',
-        `Thanks. We’ll review this ${isLocation ? 'study spot' : 'course'} and add it if it belongs in Studi.`
+        `We’ll review this ${isLocation ? 'study spot' : 'course'} before it appears for everyone.`
       );
     } catch (requestError) {
       setError(catalogRequestErrorMessage(requestError));
@@ -132,6 +144,7 @@ export function CatalogRequestSheet({
   }
 
   return (
+    <>
     <Sheet
       visible={visible}
       onClose={handleClose}
@@ -195,17 +208,22 @@ export function CatalogRequestSheet({
         </View>
       </View>
     </Sheet>
+    <SuccessToast toast={toast} />
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  trigger: {
-    alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    height: 48,
-    justifyContent: 'center',
-    width: 48,
+  requestLink: {
+    alignSelf: 'flex-start',
+    paddingVertical: Space.xs,
+  },
+  requestLinkText: {
+    lineHeight: 20,
+  },
+  requestLinkAction: {
+    fontFamily: FontFamily.bodySemiBold,
+    textDecorationLine: 'underline',
   },
   form: {
     gap: Space.lg,

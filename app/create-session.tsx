@@ -21,7 +21,7 @@ import { SessionCard } from '@/components/session-card';
 import { SessionCreatedTransition } from '@/components/session-created-transition';
 import { Button } from '@/components/ui/Button';
 import {
-  CatalogRequestButton,
+  CatalogRequestLink,
   CatalogRequestSheet,
 } from '@/components/ui/CatalogRequestSheet';
 import { CourseChip } from '@/components/ui/CourseChip';
@@ -545,19 +545,12 @@ export default function CreateSessionScreen() {
         </FormSection>
 
         <FormSection icon="mappin.and.ellipse" title="Place">
-          <View style={styles.searchRow}>
-            <SearchBar
-              accessibilityLabel="Search study spots"
-              containerStyle={styles.searchField}
-              onChangeText={setLocationQuery}
-              placeholder="Search spots by name, building, or tag"
-              value={locationQuery}
-            />
-            <CatalogRequestButton
-              type="location"
-              onPress={() => setRequestSheetOpen(true)}
-            />
-          </View>
+          <SearchBar
+            accessibilityLabel="Search study spots"
+            onChangeText={setLocationQuery}
+            placeholder="Search spots by name, building, or tag"
+            value={locationQuery}
+          />
           {isLoading ? (
             <ActivityIndicator color={palette.tint} />
           ) : filteredLocations.length > 0 ? (
@@ -619,12 +612,9 @@ export default function CreateSessionScreen() {
               <Text style={[TypeScale.body, styles.noResultsText, { color: palette.icon }]}>
                 No saved study spots match that search yet.
               </Text>
-              <Button
-                icon="plus.circle.fill"
-                label="Request this spot"
+              <CatalogRequestLink
+                type="location"
                 onPress={() => setRequestSheetOpen(true)}
-                size="sm"
-                variant="secondary"
               />
             </View>
           ) : (
@@ -931,21 +921,12 @@ const styles = StyleSheet.create({
     maxHeight: '88%',
     overflow: 'hidden',
   },
-  searchRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.sm,
-  },
-  searchField: {
-    flex: 1,
-  },
   noResultsBlock: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.md,
+    alignItems: 'flex-start',
+    gap: Space.xs,
   },
   noResultsText: {
-    flex: 1,
+    flexShrink: 1,
   },
   panelHeader: {
     alignItems: 'center',

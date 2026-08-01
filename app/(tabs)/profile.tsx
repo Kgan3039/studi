@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import {
-  CatalogRequestButton,
+  CatalogRequestLink,
   CatalogRequestSheet,
 } from '@/components/ui/CatalogRequestSheet';
 import { CourseChip } from '@/components/ui/CourseChip';
@@ -689,21 +689,15 @@ export default function ProfileScreen() {
         footer={
           <Button label="Save classes" fullWidth loading={isSaving} onPress={handleSaveClasses} />
         }>
-          <View style={styles.classSearchRow}>
-            <TextInput
-              autoCapitalize="characters"
-              editable={!isSaving}
-              onChangeText={setCourseQuery}
-              placeholder={`Search ${UW_COURSE_COUNT.toLocaleString()} UW courses`}
-              placeholderTextColor={placeholderColor}
-              style={[styles.input, styles.classSearchField, inputColors]}
-              value={courseQuery}
-            />
-            <CatalogRequestButton
-              type="course"
-              onPress={openCourseRequest}
-            />
-          </View>
+          <TextInput
+            autoCapitalize="characters"
+            editable={!isSaving}
+            onChangeText={setCourseQuery}
+            placeholder={`Search ${UW_COURSE_COUNT.toLocaleString()} UW courses`}
+            placeholderTextColor={placeholderColor}
+            style={[styles.input, inputColors]}
+            value={courseQuery}
+          />
           {courseQuery.trim().length >= 2 ? (
             <View style={styles.searchResults}>
               {courseResults.length > 0 ? (
@@ -734,13 +728,7 @@ export default function ProfileScreen() {
                   <Text style={[TypeScale.caption, styles.noResultsText, { color: palette.icon }]}>
                     No courses matched that search yet.
                   </Text>
-                  <Button
-                    icon="plus.circle.fill"
-                    label="Request this course"
-                    onPress={openCourseRequest}
-                    size="sm"
-                    variant="secondary"
-                  />
+                  <CatalogRequestLink type="course" onPress={openCourseRequest} />
                 </View>
               )}
             </View>
@@ -1025,24 +1013,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.lg,
     paddingVertical: Space.md,
   },
-  classSearchRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.sm,
-  },
-  classSearchField: {
-    flex: 1,
-  },
   searchResults: {
     gap: Space.sm + 2,
   },
   noResultsBlock: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.md,
+    alignItems: 'flex-start',
+    gap: Space.xs,
   },
   noResultsText: {
-    flex: 1,
+    flexShrink: 1,
   },
   searchResultCard: {
     borderRadius: Radius.chip + 4,

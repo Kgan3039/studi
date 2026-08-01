@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { Button } from '@/components/ui/Button';
 import {
-  CatalogRequestButton,
+  CatalogRequestLink,
   CatalogRequestSheet,
 } from '@/components/ui/CatalogRequestSheet';
 import { Input } from '@/components/ui/Input';
@@ -141,20 +141,14 @@ export default function OnboardingClassesScreen() {
           We’ll only show sessions for your classes.
         </Text>
 
-        <View style={styles.searchRow}>
-          <Input
-            autoCapitalize="characters"
-            containerStyle={styles.searchField}
-            editable={!isSaving}
-            onChangeText={setCourseQuery}
-            placeholder="Search by course code or title…"
-            value={courseQuery}
-          />
-          <CatalogRequestButton
-            type="course"
-            onPress={() => setRequestSheetOpen(true)}
-          />
-        </View>
+        <Input
+          autoCapitalize="characters"
+          containerStyle={styles.search}
+          editable={!isSaving}
+          onChangeText={setCourseQuery}
+          placeholder="Search by course code or title…"
+          value={courseQuery}
+        />
 
         {courseResults.length > 0 ? (
           <View style={styles.rows}>
@@ -189,13 +183,7 @@ export default function OnboardingClassesScreen() {
             <Text style={[TypeScale.body, styles.noResults, { color: palette.icon }]}>
               No courses matched that search yet.
             </Text>
-            <Button
-              icon="plus.circle.fill"
-              label="Request this course"
-              onPress={() => setRequestSheetOpen(true)}
-              size="sm"
-              variant="secondary"
-            />
+            <CatalogRequestLink type="course" onPress={() => setRequestSheetOpen(true)} />
           </View>
         ) : null}
 
@@ -296,16 +284,6 @@ const styles = StyleSheet.create({
   search: {
     marginTop: Space.xl,
   },
-  searchRow: {
-    alignItems: 'flex-end',
-    flexDirection: 'row',
-    gap: Space.sm,
-    marginTop: Space.xl,
-  },
-  searchField: {
-    flex: 1,
-    marginTop: 0,
-  },
   rows: {
     gap: Space.sm,
     marginTop: Space.md,
@@ -345,9 +323,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   noResultsBlock: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.md,
+    alignItems: 'flex-start',
+    gap: Space.xs,
     marginTop: Space.md,
   },
   selectedBlock: {

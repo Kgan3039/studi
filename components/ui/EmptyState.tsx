@@ -32,8 +32,8 @@ const EMPTY_ICONS: Record<EmptyStateIcon, IconSymbolName> = {
 };
 
 /**
- * Empty state (handoff §2): icon disc + serif italic headline + one-sentence
- * body + pill CTA. Required on every list; never a dead end.
+ * Empty state (handoff §2): icon disc + serif italic headline + supporting
+ * copy + an optional CTA. Required on every list; never a dead end.
  */
 export function EmptyState({
   headline,
