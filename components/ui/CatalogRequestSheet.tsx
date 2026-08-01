@@ -6,7 +6,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Input } from '@/components/ui/Input';
 import { Sheet } from '@/components/ui/Sheet';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
-import { Brand, Colors, Radius, Space, TypeScale } from '@/constants/theme';
+import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import { catalogRequestErrorMessage } from '@/lib/catalog-request';
@@ -25,31 +25,31 @@ type CatalogRequestSheetProps = {
   onClose: () => void;
 };
 
-type CatalogRequestButtonProps = {
+type CatalogRequestLinkProps = {
   onPress: () => void;
   type: CatalogRequestType;
 };
 
-export function CatalogRequestButton({ onPress, type }: CatalogRequestButtonProps) {
+export function CatalogRequestLink({ onPress, type }: CatalogRequestLinkProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
-  const label = type === 'course' ? 'Suggest a course' : 'Suggest a study spot';
+  const question = type === 'course' ? 'Can’t find a class?' : 'Can’t find this spot?';
+  const label = `${question} Send a request`;
 
   return (
     <Pressable
       accessibilityLabel={label}
       accessibilityRole="button"
-      hitSlop={6}
+      hitSlop={8}
       onPress={onPress}
       style={({ pressed }) => [
-        styles.trigger,
-        {
-          backgroundColor: palette.surfaceMuted,
-          borderColor: palette.outline,
-          opacity: pressed ? 0.65 : 1,
-        },
+        styles.requestLink,
+        { opacity: pressed ? 0.62 : 1 },
       ]}>
-      <IconSymbol color={palette.tint} name="plus.circle.fill" size={21} />
+      <Text style={[TypeScale.caption, styles.requestLinkText, { color: palette.icon }]}>
+        {question}{' '}
+        <Text style={[styles.requestLinkAction, { color: palette.tint }]}>Send a request</Text>
+      </Text>
     </Pressable>
   );
 }
@@ -204,13 +204,16 @@ export function CatalogRequestSheet({
 }
 
 const styles = StyleSheet.create({
-  trigger: {
-    alignItems: 'center',
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    height: 48,
-    justifyContent: 'center',
-    width: 48,
+  requestLink: {
+    alignSelf: 'flex-start',
+    paddingVertical: Space.xs,
+  },
+  requestLinkText: {
+    lineHeight: 20,
+  },
+  requestLinkAction: {
+    fontFamily: FontFamily.bodySemiBold,
+    textDecorationLine: 'underline',
   },
   form: {
     gap: Space.lg,

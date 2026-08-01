@@ -1,8 +1,8 @@
 import { type ReactNode } from 'react';
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
-import { Colors, Space, TypeScale } from '@/constants/theme';
+import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 import { Button } from './Button';
@@ -13,6 +13,7 @@ export type EmptyStateProps = {
   headline: string;
   body?: string;
   actionLabel?: string;
+  actionVariant?: 'button' | 'link';
   onAction?: () => void;
   /** Built-in line-icon variants (board EmptyTemplate motifs). */
   icon?: EmptyStateIcon;
@@ -32,13 +33,14 @@ const EMPTY_ICONS: Record<EmptyStateIcon, IconSymbolName> = {
 };
 
 /**
- * Empty state (handoff §2): icon disc + serif italic headline + one-sentence
- * body + pill CTA. Required on every list; never a dead end.
+ * Empty state (handoff §2): icon disc + serif italic headline + supporting
+ * copy + an optional button or text CTA. Required on every list; never a dead end.
  */
 export function EmptyState({
   headline,
   body,
   actionLabel,
+  actionVariant = 'button',
   onAction,
   icon = 'dot',
   illustration,
@@ -56,8 +58,19 @@ export function EmptyState({
       {body ? (
         <Text style={[TypeScale.body, styles.body, { color: palette.icon }]}>{body}</Text>
       ) : null}
-      {actionLabel && onAction ? (
+      {actionLabel && onAction && actionVariant === 'button' ? (
         <Button label={actionLabel} onPress={onAction} style={styles.action} />
+      ) : actionLabel && onAction ? (
+        <Pressable
+          accessibilityLabel={actionLabel}
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={onAction}
+          style={({ pressed }) => [styles.linkAction, { opacity: pressed ? 0.62 : 1 }]}>
+          <Text style={[TypeScale.caption, styles.linkActionText, { color: palette.tint }]}>
+            {actionLabel}
+          </Text>
+        </Pressable>
       ) : null}
     </View>
   );
@@ -89,5 +102,14 @@ const styles = StyleSheet.create({
   action: {
     marginTop: Space.md,
     alignSelf: 'center',
+  },
+  linkAction: {
+    marginTop: Space.sm,
+    paddingVertical: Space.xs,
+  },
+  linkActionText: {
+    fontFamily: FontFamily.bodySemiBold,
+    lineHeight: 20,
+    textDecorationLine: 'underline',
   },
 });

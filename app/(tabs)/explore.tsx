@@ -27,10 +27,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CampusMap } from '@/components/campus-map';
 import type { MapSessionTiming } from '@/components/campus-map.types';
-import {
-  CatalogRequestButton,
-  CatalogRequestSheet,
-} from '@/components/ui/CatalogRequestSheet';
+import { CatalogRequestSheet } from '@/components/ui/CatalogRequestSheet';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Button } from '@/components/ui/Button';
@@ -922,10 +919,6 @@ export default function StudyLocationsScreen() {
             value={searchQuery}
           />
         </View>
-        <CatalogRequestButton
-          type="location"
-          onPress={() => setRequestSheetOpen(true)}
-        />
         <Pressable
           accessibilityLabel={
             activeFilterCount > 0 ? `Filters, ${activeFilterCount} applied` : 'Filters'
@@ -1104,10 +1097,13 @@ export default function StudyLocationsScreen() {
             headline={searchQuery.trim() ? 'No study spots found' : 'No study spots available'}
             body={
               shouldOfferRequest
-                ? 'We may be missing this spot. Send us a request and we’ll review it.'
+                ? 'We may be missing this spot.\nSend us a request and we’ll review it.'
                 : 'Try clearing the current filters.'
             }
-            actionLabel={shouldOfferRequest ? 'Request this spot' : 'Clear filters'}
+            actionLabel={
+              shouldOfferRequest ? 'Can’t find this spot? Send a request' : 'Clear filters'
+            }
+            actionVariant={shouldOfferRequest ? 'link' : 'button'}
             onAction={() =>
               shouldOfferRequest ? setRequestSheetOpen(true) : clearFilters()
             }
