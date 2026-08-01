@@ -27,7 +27,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CampusMap } from '@/components/campus-map';
 import type { MapSessionTiming } from '@/components/campus-map.types';
-import { CatalogRequestSheet } from '@/components/ui/CatalogRequestSheet';
+import {
+  CatalogRequestLink,
+  CatalogRequestSheet,
+} from '@/components/ui/CatalogRequestSheet';
 import { CourseChip } from '@/components/ui/CourseChip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Button } from '@/components/ui/Button';
@@ -900,7 +903,13 @@ export default function StudyLocationsScreen() {
       }
       scrollEventThrottle={16}
       style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: insets.top + Space.md }]}>
+      contentContainerStyle={[
+        styles.content,
+        {
+          paddingBottom: insets.bottom + Space.xxl * 2 + Space.md,
+          paddingTop: insets.top + Space.md,
+        },
+      ]}>
       <ScreenHeader
         showNotifications
         title="Study spots"
@@ -964,8 +973,14 @@ export default function StudyLocationsScreen() {
       <View style={styles.mapAndSheet}>
         <CampusMap
           locations={locations}
+          noResultsActionLabel={
+            shouldOfferRequest ? 'Can’t find this spot? Send a request' : undefined
+          }
           onOpenCampusMap={openCampusMap}
           onOpenLocation={handleOpenLocationFromMap}
+          onNoResultsAction={
+            shouldOfferRequest ? () => setRequestSheetOpen(true) : undefined
+          }
           onSelectLocation={selectLocation}
           selectedLocationId={selectedLocationId}
           sessionTimingByLocation={sessionTimingByLocation}
@@ -1090,6 +1105,16 @@ export default function StudyLocationsScreen() {
             })}
           </View>
 
+          {!searchQuery.trim() ? (
+            <View style={[styles.catalogRequestFooter, { borderTopColor: palette.border }]}>
+              <CatalogRequestLink
+                context="catalog"
+                type="location"
+                onPress={() => setRequestSheetOpen(true)}
+              />
+            </View>
+          ) : null}
+
           </View>
         ) : !isLoading ? (
           <EmptyState
@@ -1100,13 +1125,8 @@ export default function StudyLocationsScreen() {
                 ? 'We may be missing this spot.\nSend us a request and we’ll review it.'
                 : 'Try clearing the current filters.'
             }
-            actionLabel={
-              shouldOfferRequest ? 'Can’t find this spot? Send a request' : 'Clear filters'
-            }
-            actionVariant={shouldOfferRequest ? 'link' : 'button'}
-            onAction={() =>
-              shouldOfferRequest ? setRequestSheetOpen(true) : clearFilters()
-            }
+            actionLabel={shouldOfferRequest ? undefined : 'Clear filters'}
+            onAction={shouldOfferRequest ? undefined : clearFilters}
             style={styles.noPinsState}
           />
         ) : null}
@@ -1241,6 +1261,11 @@ const styles = StyleSheet.create({
   },
   resultsStack: {
     gap: Space.md,
+  },
+  catalogRequestFooter: {
+    alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: Space.md,
   },
   noPinsState: {
     backgroundColor: 'transparent',

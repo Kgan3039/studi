@@ -26,14 +26,24 @@ type CatalogRequestSheetProps = {
 };
 
 type CatalogRequestLinkProps = {
+  context?: 'catalog' | 'search';
   onPress: () => void;
   type: CatalogRequestType;
 };
 
-export function CatalogRequestLink({ onPress, type }: CatalogRequestLinkProps) {
+export function CatalogRequestLink({
+  context = 'search',
+  onPress,
+  type,
+}: CatalogRequestLinkProps) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
-  const question = type === 'course' ? 'Can’t find a class?' : 'Can’t find this spot?';
+  const question =
+    type === 'course'
+      ? 'Can’t find a class?'
+      : context === 'catalog'
+        ? 'Can’t find a study spot?'
+        : 'Can’t find this spot?';
   const label = `${question} Send a request`;
 
   return (

@@ -25,8 +25,10 @@ import type { MapSessionTiming } from '@/components/campus-map.types';
 
 type CampusMapProps = {
   locations: StudyLocation[];
+  noResultsActionLabel?: string;
   onOpenCampusMap: () => void;
   onOpenLocation: (locationId: string) => void;
+  onNoResultsAction?: () => void;
   onSelectLocation: (locationId: string) => void;
   selectedLocationId: string | null;
   sessionTimingByLocation: Map<string, MapSessionTiming>;
@@ -195,8 +197,10 @@ const CampusMapMarker = memo(function CampusMapMarker({
 
 export function CampusMap({
   locations,
+  noResultsActionLabel,
   onOpenCampusMap,
   onOpenLocation,
+  onNoResultsAction,
   onSelectLocation,
   selectedLocationId,
   sessionTimingByLocation,
@@ -415,16 +419,27 @@ export function CampusMap({
 
       {markerPlan.fitCoordinates.length === 0 ? (
         <View
-          pointerEvents="none"
+          pointerEvents={noResultsActionLabel && onNoResultsAction ? 'auto' : 'none'}
           style={[
             styles.emptyOverlay,
             Elevation.e1,
             { backgroundColor: palette.surface, borderColor: palette.border },
           ]}>
           <Text style={[TypeScale.label, { color: palette.text }]}>No matching pins</Text>
-          <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            Clear search or try another filter.
-          </Text>
+          {noResultsActionLabel && onNoResultsAction ? (
+            <Pressable
+              accessibilityLabel={noResultsActionLabel}
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={onNoResultsAction}
+              style={({ pressed }) => [styles.emptyOverlayAction, { opacity: pressed ? 0.62 : 1 }]}>
+              <Text style={[TypeScale.label, styles.emptyOverlayActionText, { color: palette.tint }]}>
+                {noResultsActionLabel}
+              </Text>
+            </Pressable>
+          ) : (
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>Clear search or try another filter.</Text>
+          )}
         </View>
       ) : null}
 
@@ -488,6 +503,13 @@ const styles = StyleSheet.create({
     paddingVertical: Space.md,
     position: 'absolute',
     top: Space.lg,
+  },
+  emptyOverlayAction: {
+    marginTop: Space.xs,
+    paddingVertical: 2,
+  },
+  emptyOverlayActionText: {
+    textDecorationLine: 'underline',
   },
   markerCore: {
     alignItems: 'center',
