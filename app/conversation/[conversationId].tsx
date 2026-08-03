@@ -283,11 +283,11 @@ export default function ConversationScreen() {
       track('user_blocked', { context: 'conversation' });
       setBlockedUserIds((currentIds) => [...new Set([...currentIds, partnerId])]);
       setConfirmBlock(false);
-      // Pop back to the existing Messages tab whenever it is in the stack;
-      // only deep links fall back to replacing the current route. `replace`
-      // unconditionally created duplicate tab entries, which made Back feel
-      // unpredictable after blocking someone.
-      router.dismissTo('/messages');
+      // Focus the existing Messages tab. `dismissTo` emits Expo Router's
+      // POP_TO action, which this native Stack does not handle consistently;
+      // after a block it could leave a stale conversation in the Back stack.
+      // `navigate` reuses the tab route instead of appending a duplicate.
+      router.navigate('/messages');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to block this user.';
       Alert.alert('Block Error', message);

@@ -154,6 +154,7 @@ describe("Remove from my Messages failure feedback", () => {
 describe("Messages beta production wiring", () => {
   const firestoreSource = readFileSync("lib/firestore.ts", "utf8");
   const messagesSource = readFileSync("app/(tabs)/messages.tsx", "utf8");
+  const conversationSource = readFileSync("app/conversation/[conversationId].tsx", "utf8");
   const confirmationSource = readFileSync("lib/confirm-chat-removal.js", "utf8");
   const firestoreIndexes = JSON.parse(readFileSync("firestore.indexes.json", "utf8"));
   const groupQuery = firestoreSource.slice(
@@ -233,5 +234,15 @@ describe("Messages beta production wiring", () => {
     assert.doesNotMatch(directMessageBranch, /hiddenChats|confirmRemove|IconButton|Swipeable/);
     assert.doesNotMatch(firestoreSource, /chatType: "dm"/);
     assert.match(firestoreSource, /where\("chatType", "==", "group"\)/);
+  });
+
+  it("returns a blocked conversation through the existing Messages tab", () => {
+    const blockBody = conversationSource.slice(
+      conversationSource.indexOf("async function handleBlockUser"),
+      conversationSource.indexOf("async function handleUnblockUser")
+    );
+
+    assert.match(blockBody, /router\.navigate\('\/messages'\)/);
+    assert.doesNotMatch(blockBody, /router\.(dismissTo|replace)\('\/messages'\)/);
   });
 });
