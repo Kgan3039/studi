@@ -11,11 +11,11 @@ import { useCallback, useEffect, useState } from 'react';
 import 'react-native-reanimated';
 
 import { StudiLaunchIntro } from '@/components/studi-launch-intro';
+import { HeaderBackButton } from '@/components/ui/HeaderBackButton';
 import { Colors, FontFamily } from '@/constants/theme';
-import { auth } from '@/firebaseConfig';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initAnalytics, track } from '@/lib/analytics';
-import { subscribeToAuthState, waitForAuthReady } from '@/lib/auth';
+import { subscribeToVerifiedAuthState, waitForAuthReady } from '@/lib/auth';
 import { addNotificationResponseListener } from '@/lib/notifications';
 
 type AuthGateState = 'pending' | 'signed-out' | 'unverified' | 'signed-in';
@@ -78,8 +78,14 @@ function RootLayout() {
       if (cancelled) {
         return;
       }
-      unsubscribe = subscribeToAuthState((user) => {
-        setAuthState(!user ? 'signed-out' : user.emailVerified ? 'signed-in' : 'unverified');
+      unsubscribe = subscribeToVerifiedAuthState((user, verificationState) => {
+        if (!user) {
+          setAuthState('signed-out');
+        } else if (verificationState === 'pending') {
+          setAuthState('pending');
+        } else {
+          setAuthState(verificationState === 'verified' ? 'signed-in' : 'unverified');
+        }
       });
     });
 
@@ -172,15 +178,9 @@ function RootLayout() {
 
     const leaf = segments[segments.length - 1] ?? '';
 
-    const currentUserIsVerified = auth.currentUser?.emailVerified === true;
-
     if (authState === 'signed-out' && !PUBLIC_LEAVES.has(leaf)) {
       router.replace('/welcome');
-    } else if (
-      authState === 'unverified' &&
-      !currentUserIsVerified &&
-      !UNVERIFIED_LEAVES.has(leaf)
-    ) {
+    } else if (authState === 'unverified' && !UNVERIFIED_LEAVES.has(leaf)) {
       router.replace('/verify-email');
     }
   }, [ready, authState, segments, router]);
@@ -192,16 +192,14 @@ function RootLayout() {
     return null;
   }
 
-  // `auth.currentUser` is updated by user.reload() before React receives the
-  // ID-token listener callback. Include it here to prevent a one-click
-  // verification navigation from racing the async state update.
-  const isSignedIn = authState === 'signed-in' || auth.currentUser?.emailVerified === true;
+  const isSignedIn = authState === 'signed-in';
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack
         screenOptions={{
-          headerBackTitle: 'Back',
+          headerBackVisible: false,
+          headerLeft: () => <HeaderBackButton />,
           headerShadowVisible: false,
           headerStyle: { backgroundColor: palette.background },
           headerTintColor: palette.text,

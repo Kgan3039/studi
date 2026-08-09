@@ -37,7 +37,7 @@ import {
   CatalogRequestError,
   isCatalogRequestCooldownActive,
 } from "@/lib/catalog-request";
-import { db } from "../firebaseConfig";
+import { auth, db } from "../firebaseConfig";
 import { track } from "./analytics";
 export const COLLECTIONS = {
   catalogRequests: "catalogRequests",
@@ -1168,26 +1168,50 @@ export async function createSession(input: {
     );
   }
 
-  const sessionRef = doc(collection(db, COLLECTIONS.sessions));
-  const batch = writeBatch(db);
+  const commitSession = async () => {
+    const sessionRef = doc(collection(db, COLLECTIONS.sessions));
+    const batch = writeBatch(db);
 
-  batch.set(sessionRef, {
-    classId: input.classId,
-    hostId: input.hostId,
-    locationId: input.locationId,
-    title: input.title.slice(0, 80),
-    startTime: Timestamp.fromDate(input.startTime),
-    endTime: Timestamp.fromDate(input.endTime),
-    participantIds: [input.hostId],
-    status: "open",
-    capacity: input.capacity,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-  stageRateLimit(batch, input.hostId, "createSession");
-  await batch.commit();
+    batch.set(sessionRef, {
+      classId: input.classId,
+      hostId: input.hostId,
+      locationId: input.locationId,
+      title: input.title.slice(0, 80),
+      startTime: Timestamp.fromDate(input.startTime),
+      endTime: Timestamp.fromDate(input.endTime),
+      participantIds: [input.hostId],
+      status: "open",
+      capacity: input.capacity,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    stageRateLimit(batch, input.hostId, "createSession");
+    await batch.commit();
 
-  return sessionRef.id;
+    return sessionRef.id;
+  };
+
+  try {
+    return await commitSession();
+  } catch (error) {
+    // user.reload() can update User.emailVerified before the ID token carries
+    // the matching claim. Refresh once only for that exact state; all rules,
+    // validation, and the create-session rate limit still apply on retry.
+    if (error instanceof FirebaseError && error.code === "permission-denied") {
+      const currentUser = auth.currentUser;
+
+      if (currentUser?.uid === input.hostId && currentUser.emailVerified) {
+        const { claims } = await currentUser.getIdTokenResult();
+
+        if (claims.email_verified !== true) {
+          await currentUser.getIdToken(true);
+          return commitSession();
+        }
+      }
+    }
+
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, FontFamily } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { subscribeToAuthState, waitForAuthReady } from '@/lib/auth';
+import { subscribeToVerifiedAuthState, waitForAuthReady } from '@/lib/auth';
 import { registerForPushNotifications } from '@/lib/notifications';
 
 type AuthGateState = 'pending' | 'signed-out' | 'unverified' | 'signed-in';
@@ -25,8 +25,14 @@ export default function TabLayout() {
       if (cancelled) {
         return;
       }
-      unsubscribe = subscribeToAuthState((user) => {
-        setAuthState(!user ? 'signed-out' : user.emailVerified ? 'signed-in' : 'unverified');
+      unsubscribe = subscribeToVerifiedAuthState((user, verificationState) => {
+        if (!user) {
+          setAuthState('signed-out');
+        } else if (verificationState === 'pending') {
+          setAuthState('pending');
+        } else {
+          setAuthState(verificationState === 'verified' ? 'signed-in' : 'unverified');
+        }
       });
     });
 
