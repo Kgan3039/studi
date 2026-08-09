@@ -217,6 +217,7 @@ export function subscribeToVerifiedAuthState(
   let generation = 0;
   let tokenVerified = false;
   let forcedRefreshUid: string | null = null;
+  let lastUid: string | null = null;
 
   const unsubscribe = subscribeToAuthState((user) => {
     const currentGeneration = ++generation;
@@ -224,8 +225,15 @@ export function subscribeToVerifiedAuthState(
     if (!user) {
       tokenVerified = false;
       forcedRefreshUid = null;
+      lastUid = null;
       listener(null, "unverified");
       return;
+    }
+
+    if (lastUid !== user.uid) {
+      lastUid = user.uid;
+      tokenVerified = false;
+      forcedRefreshUid = null;
     }
 
     if (!user.emailVerified) {
