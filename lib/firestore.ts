@@ -39,6 +39,10 @@ import {
 } from "@/lib/catalog-request";
 import { auth, db } from "../firebaseConfig";
 import { track } from "./analytics";
+import {
+  CreateSessionValidationError,
+  createWithStaleVerificationRetry,
+} from "./session-create-retry";
 export const COLLECTIONS = {
   catalogRequests: "catalogRequests",
   conversations: "conversations",
@@ -1163,7 +1167,7 @@ export async function createSession(input: {
     input.capacity < SESSION_CAPACITY_MIN ||
     input.capacity > SESSION_CAPACITY_MAX
   ) {
-    throw new Error(
+    throw new CreateSessionValidationError(
       `Choose a capacity between ${SESSION_CAPACITY_MIN} and ${SESSION_CAPACITY_MAX} seats.`
     );
   }
@@ -1191,27 +1195,16 @@ export async function createSession(input: {
     return sessionRef.id;
   };
 
-  try {
-    return await commitSession();
-  } catch (error) {
-    // user.reload() can update User.emailVerified before the ID token carries
-    // the matching claim. Refresh once only for that exact state; all rules,
-    // validation, and the create-session rate limit still apply on retry.
-    if (error instanceof FirebaseError && error.code === "permission-denied") {
-      const currentUser = auth.currentUser;
-
-      if (currentUser?.uid === input.hostId && currentUser.emailVerified) {
-        const { claims } = await currentUser.getIdTokenResult();
-
-        if (claims.email_verified !== true) {
-          await currentUser.getIdToken(true);
-          return commitSession();
-        }
-      }
-    }
-
-    throw error;
-  }
+  // user.reload() can update User.emailVerified before the ID token carries
+  // the matching claim. Refresh once only for that exact state; all rules,
+  // validation, and the create-session rate limit still apply on retry.
+  return createWithStaleVerificationRetry({
+    attempt: commitSession,
+    expectedUid: input.hostId,
+    getCurrentUser: () => auth.currentUser,
+    isPermissionDenied: (error) =>
+      error instanceof FirebaseError && error.code === "permission-denied",
+  });
 }
 
 // ---------------------------------------------------------------------------

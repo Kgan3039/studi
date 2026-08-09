@@ -21,6 +21,8 @@
     "test:links": "mocha tests/external-link.test.mjs",
     "test:catalog-requests": "mocha tests/catalog-request.test.mjs",
     "test:auth-listener": "mocha tests/auth-listener.test.mjs",
+    "test:auth-verification": "mocha tests/auth-verification-state.test.mjs",
+    "test:session-create-retry": "mocha tests/session-create-retry.test.mjs",
     "test:message-history": "mocha tests/message-history.test.mjs"
   },
   "dependencies": {

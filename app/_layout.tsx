@@ -17,8 +17,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initAnalytics, track } from '@/lib/analytics';
 import { subscribeToVerifiedAuthState, waitForAuthReady } from '@/lib/auth';
 import { addNotificationResponseListener } from '@/lib/notifications';
+import { getRootAuthAccess, type RootAuthState } from '@/lib/verified-auth-state';
 
-type AuthGateState = 'pending' | 'signed-out' | 'unverified' | 'signed-in';
 type LaunchIntroState = 'checking' | 'showing' | 'finished';
 
 // Routes reachable without a verified session. Everything else is gated below.
@@ -54,7 +54,8 @@ function RootLayout() {
   const pathname = usePathname();
   const router = useRouter();
   const segments = useSegments();
-  const [authState, setAuthState] = useState<AuthGateState>('pending');
+  const [authRestored, setAuthRestored] = useState(false);
+  const [authState, setAuthState] = useState<RootAuthState>('checking');
   const [launchIntroState, setLaunchIntroState] = useState<LaunchIntroState>('checking');
   const [fontsLoaded, fontError] = useFonts({
     Arapey_400Regular,
@@ -78,11 +79,12 @@ function RootLayout() {
       if (cancelled) {
         return;
       }
+      setAuthRestored(true);
       unsubscribe = subscribeToVerifiedAuthState((user, verificationState) => {
         if (!user) {
           setAuthState('signed-out');
         } else if (verificationState === 'pending') {
-          setAuthState('pending');
+          setAuthState('checking');
         } else {
           setAuthState(verificationState === 'verified' ? 'signed-in' : 'unverified');
         }
@@ -118,7 +120,8 @@ function RootLayout() {
   }, []);
 
   const fontsReady = fontsLoaded || fontError;
-  const ready = fontsReady && authState !== 'pending' && launchIntroState !== 'checking';
+  const authAccess = getRootAuthAccess({ authRestored, authState });
+  const ready = fontsReady && authAccess.mountNavigator && launchIntroState !== 'checking';
 
   const finishLaunchIntro = useCallback(() => {
     setLaunchIntroState('finished');
@@ -192,7 +195,7 @@ function RootLayout() {
     return null;
   }
 
-  const isSignedIn = authState === 'signed-in';
+  const isSignedIn = authAccess.allowProtectedRoutes;
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>

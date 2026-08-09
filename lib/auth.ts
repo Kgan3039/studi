@@ -16,6 +16,12 @@ import { auth } from "../firebaseConfig";
 import { identifyUser, resetAnalyticsIdentity, track } from "./analytics";
 import { subscribeToIdTokenState } from "./auth-listener";
 import { createOrUpdateUserProfile } from "./firestore";
+import {
+  createVerifiedAuthStateSubscriber,
+  type AuthVerificationState,
+} from "./verified-auth-state";
+
+export type { AuthVerificationState } from "./verified-auth-state";
 
 const UW_EMAIL_DOMAIN = "@wisc.edu";
 
@@ -203,8 +209,6 @@ export function subscribeToAuthState(listener: (user: User | null) => void) {
   return subscribeToIdTokenState(auth, onIdTokenChanged, listener);
 }
 
-export type AuthVerificationState = "pending" | "unverified" | "verified";
-
 /**
  * Subscribes to auth state without treating User.emailVerified as sufficient
  * for protected routes. reload() updates that local field before Firebase has
@@ -214,73 +218,10 @@ export type AuthVerificationState = "pending" | "unverified" | "verified";
 export function subscribeToVerifiedAuthState(
   listener: (user: User | null, state: AuthVerificationState) => void
 ) {
-  let generation = 0;
-  let tokenVerified = false;
-  let forcedRefreshUid: string | null = null;
-  let lastUid: string | null = null;
-
-  const unsubscribe = subscribeToAuthState((user) => {
-    const currentGeneration = ++generation;
-
-    if (!user) {
-      tokenVerified = false;
-      forcedRefreshUid = null;
-      lastUid = null;
-      listener(null, "unverified");
-      return;
-    }
-
-    if (lastUid !== user.uid) {
-      lastUid = user.uid;
-      tokenVerified = false;
-      forcedRefreshUid = null;
-    }
-
-    if (!user.emailVerified) {
-      tokenVerified = false;
-      forcedRefreshUid = null;
-      listener(user, "unverified");
-      return;
-    }
-
-    if (!tokenVerified) {
-      listener(user, "pending");
-    }
-
-    void (async () => {
-      try {
-        let { claims } = await user.getIdTokenResult();
-
-        if (claims.email_verified !== true && forcedRefreshUid !== user.uid) {
-          forcedRefreshUid = user.uid;
-          await user.getIdToken(true);
-          claims = (await user.getIdTokenResult()).claims;
-        }
-
-        if (currentGeneration !== generation || auth.currentUser?.uid !== user.uid) {
-          return;
-        }
-
-        tokenVerified = claims.email_verified === true;
-        listener(user, tokenVerified ? "verified" : "unverified");
-      } catch {
-        if (currentGeneration !== generation || auth.currentUser?.uid !== user.uid) {
-          return;
-        }
-
-        // Allow a later auth event or retry to force-refresh after a transient
-        // network failure instead of treating the first attempt as permanent.
-        forcedRefreshUid = null;
-        tokenVerified = false;
-        listener(user, "unverified");
-      }
-    })();
-  });
-
-  return () => {
-    generation += 1;
-    unsubscribe();
-  };
+  return createVerifiedAuthStateSubscriber<User>({
+    subscribeToAuthState,
+    getCurrentUser: () => auth.currentUser,
+  })(listener);
 }
 
 /**
