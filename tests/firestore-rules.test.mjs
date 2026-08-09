@@ -792,6 +792,48 @@ describe('sessions', () => {
     );
   });
 
+  it('rejects an unverified create atomically, then permits one verified retry', async () => {
+    await assertFails(
+      createSessionWithRateLimit(
+        ctx(ALICE, { verified: false }),
+        ALICE,
+        'stale-token-attempt',
+        validSession(ALICE)
+      )
+    );
+
+    const verifiedDb = ctx(ALICE);
+    assert.equal((await getDoc(doc(verifiedDb, 'sessions', 'stale-token-attempt'))).exists(), false);
+    await env.withSecurityRulesDisabled(async (adminContext) => {
+      const limiter = await getDoc(
+        doc(adminContext.firestore(), 'rateLimits', ALICE, 'actions', 'createSession')
+      );
+      assert.equal(limiter.exists(), false);
+    });
+
+    await assertSucceeds(
+      createSessionWithRateLimit(verifiedDb, ALICE, 'verified-retry', validSession(ALICE))
+    );
+    assert.equal((await getDoc(doc(verifiedDb, 'sessions', 'verified-retry'))).exists(), true);
+  });
+
+  it('allows at most one of two concurrent session-create batches', async () => {
+    const aliceDb = ctx(ALICE);
+    const results = await Promise.allSettled([
+      createSessionWithRateLimit(aliceDb, ALICE, 'rapid-create-1', validSession(ALICE)),
+      createSessionWithRateLimit(aliceDb, ALICE, 'rapid-create-2', validSession(ALICE)),
+    ]);
+
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+    assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+
+    const created = await Promise.all([
+      getDoc(doc(aliceDb, 'sessions', 'rapid-create-1')),
+      getDoc(doc(aliceDb, 'sessions', 'rapid-create-2')),
+    ]);
+    assert.equal(created.filter((snapshot) => snapshot.exists()).length, 1);
+  });
+
   it('rejects forged hostId, stuffed participants, bad status, past start', async () => {
     await assertFails(createSessionWithRateLimit(ctx(MALLORY), MALLORY, 's1',
       validSession(ALICE)));

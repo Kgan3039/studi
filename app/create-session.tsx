@@ -54,6 +54,7 @@ import {
   MAX_DAYS_IN_FUTURE,
   validateSessionSchedule,
 } from '@/lib/session-schedule';
+import { getCreateSessionErrorMessage } from '@/lib/session-create-retry';
 import type { User } from 'firebase/auth';
 
 const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
@@ -406,8 +407,7 @@ export default function CreateSessionScreen() {
         sessionId,
       });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to create the study session right now.';
+      const message = getCreateSessionErrorMessage(error);
       setStatus(message);
       Alert.alert('Create Session Error', message);
     } finally {

@@ -7,7 +7,7 @@ import { AvatarStack } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { subscribeToAuthState } from '@/lib/auth';
+import { subscribeToVerifiedAuthState } from '@/lib/auth';
 
 export default function WelcomeScreen() {
   const router = useRouter();
@@ -18,8 +18,8 @@ export default function WelcomeScreen() {
   // Self-healing: if a persisted verified session finishes restoring while
   // welcome is showing (cold-start race), bounce into the app.
   useEffect(() => {
-    const unsubscribe = subscribeToAuthState((user) => {
-      if (user?.emailVerified) {
+    const unsubscribe = subscribeToVerifiedAuthState((user, verificationState) => {
+      if (user && verificationState === 'verified') {
         router.replace('/');
       }
     });

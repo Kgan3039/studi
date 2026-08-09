@@ -16,6 +16,12 @@ import { auth } from "../firebaseConfig";
 import { identifyUser, resetAnalyticsIdentity, track } from "./analytics";
 import { subscribeToIdTokenState } from "./auth-listener";
 import { createOrUpdateUserProfile } from "./firestore";
+import {
+  createVerifiedAuthStateSubscriber,
+  type AuthVerificationState,
+} from "./verified-auth-state";
+
+export type { AuthVerificationState } from "./verified-auth-state";
 
 const UW_EMAIL_DOMAIN = "@wisc.edu";
 
@@ -201,6 +207,21 @@ export function subscribeToAuthState(listener: (user: User | null) => void) {
   // The ID-token listener updates route gates when verification claims change,
   // even though the signed-in user's UID remains the same.
   return subscribeToIdTokenState(auth, onIdTokenChanged, listener);
+}
+
+/**
+ * Subscribes to auth state without treating User.emailVerified as sufficient
+ * for protected routes. reload() updates that local field before Firebase has
+ * refreshed the ID token, while Firestore rules read email_verified from the
+ * token. Confirming the claim here prevents a short-lived permission race.
+ */
+export function subscribeToVerifiedAuthState(
+  listener: (user: User | null, state: AuthVerificationState) => void
+) {
+  return createVerifiedAuthStateSubscriber<User>({
+    subscribeToAuthState,
+    getCurrentUser: () => auth.currentUser,
+  })(listener);
 }
 
 /**

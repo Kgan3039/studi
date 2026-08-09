@@ -37,8 +37,12 @@ import {
   CatalogRequestError,
   isCatalogRequestCooldownActive,
 } from "@/lib/catalog-request";
-import { db } from "../firebaseConfig";
+import { auth, db } from "../firebaseConfig";
 import { track } from "./analytics";
+import {
+  CreateSessionValidationError,
+  createWithStaleVerificationRetry,
+} from "./session-create-retry";
 export const COLLECTIONS = {
   catalogRequests: "catalogRequests",
   conversations: "conversations",
@@ -1163,31 +1167,44 @@ export async function createSession(input: {
     input.capacity < SESSION_CAPACITY_MIN ||
     input.capacity > SESSION_CAPACITY_MAX
   ) {
-    throw new Error(
+    throw new CreateSessionValidationError(
       `Choose a capacity between ${SESSION_CAPACITY_MIN} and ${SESSION_CAPACITY_MAX} seats.`
     );
   }
 
-  const sessionRef = doc(collection(db, COLLECTIONS.sessions));
-  const batch = writeBatch(db);
+  const commitSession = async () => {
+    const sessionRef = doc(collection(db, COLLECTIONS.sessions));
+    const batch = writeBatch(db);
 
-  batch.set(sessionRef, {
-    classId: input.classId,
-    hostId: input.hostId,
-    locationId: input.locationId,
-    title: input.title.slice(0, 80),
-    startTime: Timestamp.fromDate(input.startTime),
-    endTime: Timestamp.fromDate(input.endTime),
-    participantIds: [input.hostId],
-    status: "open",
-    capacity: input.capacity,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+    batch.set(sessionRef, {
+      classId: input.classId,
+      hostId: input.hostId,
+      locationId: input.locationId,
+      title: input.title.slice(0, 80),
+      startTime: Timestamp.fromDate(input.startTime),
+      endTime: Timestamp.fromDate(input.endTime),
+      participantIds: [input.hostId],
+      status: "open",
+      capacity: input.capacity,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    stageRateLimit(batch, input.hostId, "createSession");
+    await batch.commit();
+
+    return sessionRef.id;
+  };
+
+  // user.reload() can update User.emailVerified before the ID token carries
+  // the matching claim. Refresh once only for that exact state; all rules,
+  // validation, and the create-session rate limit still apply on retry.
+  return createWithStaleVerificationRetry({
+    attempt: commitSession,
+    expectedUid: input.hostId,
+    getCurrentUser: () => auth.currentUser,
+    isPermissionDenied: (error) =>
+      error instanceof FirebaseError && error.code === "permission-denied",
   });
-  stageRateLimit(batch, input.hostId, "createSession");
-  await batch.commit();
-
-  return sessionRef.id;
 }
 
 // ---------------------------------------------------------------------------
