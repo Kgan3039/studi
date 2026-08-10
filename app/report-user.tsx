@@ -202,11 +202,11 @@ export default function ReportUserScreen() {
 
       <ConfirmDialog
         visible={confirmSubmit}
-        title="Report and block?"
+        title="Report and Block?"
         body={`${
           reportedUserName || 'This student'
         } will be blocked and our team will review your report. They won't be told who reported them.`}
-        confirmLabel="Report and block"
+        confirmLabel="Report and Block"
         loading={isSubmitting}
         onConfirm={handleSubmitReport}
         onCancel={() => setConfirmSubmit(false)}

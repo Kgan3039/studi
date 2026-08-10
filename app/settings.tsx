@@ -285,7 +285,7 @@ export default function SettingsScreen() {
           <ActionRow
             divided={false}
             icon="square.and.pencil"
-            label="Edit profile"
+            label="Edit Profile"
             onPress={() => router.push('/(tabs)/profile')}
           />
         </View>
@@ -380,7 +380,7 @@ export default function SettingsScreen() {
 
       <ConfirmDialog
         visible={showDeleteReauthModal}
-        title="Confirm with password"
+        title="Confirm with Password"
         body={`For security, re-enter your password for ${deleteReauthEmail || 'your account'}.`}
         confirmLabel="Delete account"
         loading={isReauthenticatingDelete}

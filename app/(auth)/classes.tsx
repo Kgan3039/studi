@@ -189,7 +189,7 @@ export default function OnboardingClassesScreen() {
 
         {classes.length > 0 ? (
           <View style={styles.selectedBlock}>
-            <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>Your classes</Text>
+            <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>Your Classes</Text>
             <View style={styles.rows}>
               {classes.map((classCode) => (
                 <Pressable

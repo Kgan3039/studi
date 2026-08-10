@@ -160,7 +160,7 @@ export default function RateLocationScreen() {
           <ScrollView
             contentContainerStyle={[styles.content, { paddingBottom: Space.lg }]}
             keyboardShouldPersistTaps="handled">
-            <FormSection icon="star.fill" title="Your rating">
+            <FormSection icon="star.fill" title="Your Rating">
               <View style={styles.starRow}>
                 {[1, 2, 3, 4, 5].map((star) => (
                   <Pressable

@@ -568,7 +568,7 @@ export default function SessionDetailScreen() {
                     <View style={styles.chatText}>
                       <View style={styles.chatTitleRow}>
                         <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
-                          Session chat
+                          Session Chat
                         </Text>
                         {hasUnreadChat ? (
                           <View

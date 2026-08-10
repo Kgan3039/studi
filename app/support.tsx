@@ -67,18 +67,18 @@ export default function SupportScreen() {
         <View style={[styles.section, { borderTopColor: palette.border }]}>
           <Text style={[styles.sectionTitle, { color: palette.text }]}>Common help</Text>
           <View style={styles.helpList}>
-            <HelpItem icon="trash.fill" title="Delete your account">
+            <HelpItem icon="trash.fill" title="Delete Your Account">
               Open Profile, choose Settings, then Delete account. Studi removes your account data
               after you confirm.
             </HelpItem>
-            <HelpItem icon="square.and.pencil" title="Update your profile">
+            <HelpItem icon="square.and.pencil" title="Update Your Profile">
               Open Profile to change your name, classes, and other account details.
             </HelpItem>
-            <HelpItem icon="calendar" title="Sessions and attendance">
+            <HelpItem icon="calendar" title="Sessions and Attendance">
               Refresh Sessions if a new event is missing. Contact support if a session still looks
               wrong.
             </HelpItem>
-            <HelpItem icon="hand.raised.fill" title="Safety and reports">
+            <HelpItem icon="hand.raised.fill" title="Safety and Reports">
               Open a student profile to block or report them. Include a short description so we can
               review it quickly.
             </HelpItem>

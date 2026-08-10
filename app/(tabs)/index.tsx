@@ -752,7 +752,7 @@ export default function HomeScreen() {
         {profileClasses.length > 0 ? (
           <View style={styles.section}>
             <SectionHeader
-              eyebrow="Your classes"
+              eyebrow="Your Classes"
               action={
                 <IconButton
                   accessibilityLabel="Edit your classes"
@@ -783,7 +783,7 @@ export default function HomeScreen() {
 
         <View style={styles.section}>
           <SectionHeader
-            eyebrow="Study buddies"
+            eyebrow="Study Buddies"
             action={
               <IconButton
                 accessibilityLabel="Find study buddies"

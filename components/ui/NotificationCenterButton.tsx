@@ -236,7 +236,7 @@ export function NotificationCenterButton() {
               accessibilityRole="button"
               onPress={handleMarkAllRead}
               style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
-              <Text style={[TypeScale.label, { color: palette.tint }]}>Mark all read</Text>
+              <Text style={[TypeScale.label, { color: palette.tint }]}>Mark All Read</Text>
             </Pressable>
           ) : null
         }
@@ -305,7 +305,7 @@ export function NotificationCenterButton() {
                 styles.viewAllButton,
                 { opacity: pressed ? 0.7 : 1 },
               ]}>
-              <Text style={[TypeScale.label, { color: palette.text }]}>View all notifications</Text>
+              <Text style={[TypeScale.label, { color: palette.text }]}>View All Notifications</Text>
               <MaterialIcons color={palette.tint} name="arrow-forward" size={18} />
             </Pressable>
         </View>
