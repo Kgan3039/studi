@@ -236,7 +236,7 @@ export function NotificationCenterButton() {
               accessibilityRole="button"
               onPress={handleMarkAllRead}
               style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
-              <Text style={[TypeScale.label, { color: palette.tint }]}>Mark All Read</Text>
+              <Text style={[TypeScale.label, { color: palette.tint }]}>Mark all read</Text>
             </Pressable>
           ) : null
         }
