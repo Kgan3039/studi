@@ -460,7 +460,7 @@ export default function ProfileScreen() {
           ) : null}
         </View>
         <IconButton
-          accessibilityLabel="Edit profile"
+          accessibilityLabel="Edit Profile"
           icon="square.and.pencil"
           onPress={() => setIsEditingName(true)}
         />
@@ -493,7 +493,7 @@ export default function ProfileScreen() {
         ]}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Study buddies"
+          accessibilityLabel="Study Buddies"
           onPress={() => router.push('/friends' as Href)}
           style={({ pressed }) => [
             styles.settingsRow,
@@ -643,7 +643,7 @@ export default function ProfileScreen() {
       {/* Current classes (board ProfileScreen ~1789). */}
       <View style={styles.section}>
         <SectionHeader
-          eyebrow="Current classes"
+          eyebrow="Current Classes"
           action={
             <IconButton
               accessibilityLabel="Edit your classes"

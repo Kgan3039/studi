@@ -65,7 +65,7 @@ export default function SupportScreen() {
         </View>
 
         <View style={[styles.section, { borderTopColor: palette.border }]}>
-          <Text style={[styles.sectionTitle, { color: palette.text }]}>Common help</Text>
+          <Text style={[styles.sectionTitle, { color: palette.text }]}>Common Help</Text>
           <View style={styles.helpList}>
             <HelpItem icon="trash.fill" title="Delete Your Account">
               Open Profile, choose Settings, then Delete account. Studi removes your account data

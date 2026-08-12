@@ -298,7 +298,7 @@ export function NotificationCenterButton() {
             )}
 
             <Pressable
-              accessibilityLabel="View all notifications"
+              accessibilityLabel="View All Notifications"
               accessibilityRole="button"
               onPress={handleViewAll}
               style={({ pressed }) => [
