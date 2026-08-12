@@ -25,6 +25,12 @@ import {
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
+import { useFriendRequestCooldown } from '@/lib/friend-request-cooldown';
+import {
+  canAttemptFriendRequest,
+  runFriendRequestSend,
+} from '@/lib/friend-request-control';
+import { presentFriendRequestFailure } from '@/lib/friend-request-feedback';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   acceptFriendRequest,
@@ -98,6 +104,7 @@ export default function ConversationScreen() {
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const friendRequestCooldown = useFriendRequestCooldown(currentUser?.uid);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [status, setStatus] = useState('Loading conversation...');
@@ -353,20 +360,22 @@ export default function ConversationScreen() {
   }
 
   async function handleConfirmAddFriend() {
-    if (!currentUser || !partnerId) {
+    if (!currentUser || !partnerId || !canAttemptFriendRequest(currentUser.uid)) {
       return;
     }
 
     try {
       setIsFriendActionPending(true);
-      await sendFriendRequest(currentUser.uid, partnerId);
+      const result = await runFriendRequestSend({
+        userId: currentUser.uid,
+        send: () => sendFriendRequest(currentUser.uid, partnerId),
+      });
+      if (result.status !== 'sent') return;
       setFriendStatus('outgoing');
       setConfirmAddFriend(false);
-      track('friend_request_sent', { source: 'conversation' });
+      track('friend_request_sent', { source: 'conversation', limiter_bound: true });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to send that request.';
-      Alert.alert('Study Buddy Error', message);
+      presentFriendRequestFailure(error);
     } finally {
       setIsFriendActionPending(false);
     }
@@ -650,7 +659,12 @@ export default function ConversationScreen() {
         visible={confirmAddFriend}
         title={`Send ${partnerName || 'this student'} a study buddy request?`}
         body="They'll see your request and can accept or ignore it."
-        confirmLabel="Send request"
+        confirmLabel={
+          friendRequestCooldown > 0
+            ? `Send Request in ${friendRequestCooldown}s`
+            : 'Send Request'
+        }
+        confirmDisabled={friendRequestCooldown > 0}
         loading={isFriendActionPending}
         onConfirm={handleConfirmAddFriend}
         onCancel={() => setConfirmAddFriend(false)}

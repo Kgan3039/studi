@@ -79,6 +79,22 @@ export function stageRateLimit(
   batch.set(rateLimitDoc(userId, action), { updatedAt: serverTimestamp() });
 }
 
+/**
+ * Phase 1 friend-request limiter. The request id binds this limiter advance to
+ * one deterministic request create; legacy clients still write only updatedAt
+ * until the Phase 2 rules cutover documented in docs/friend-request-cooldown-rollout.md.
+ */
+export function stageFriendRequestRateLimit(
+  batch: ReturnType<typeof writeBatch>,
+  userId: string,
+  requestId: string
+) {
+  batch.set(rateLimitDoc(userId, "friendRequest"), {
+    lastRequestId: requestId,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 function stageCatalogRequestRateLimit(
   batch: ReturnType<typeof writeBatch>,
   userId: string,

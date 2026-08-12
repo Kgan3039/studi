@@ -27,16 +27,24 @@ import {
   writeBatch,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
+import { FirebaseError } from "firebase/app";
 
 import { getFunctions, httpsCallable } from "firebase/functions";
 
-import app, { db } from "../firebaseConfig";
+import app, { auth, db } from "../firebaseConfig";
+import {
+  FRIEND_REQUEST_COOLDOWN_MS,
+} from "./friend-request-control";
+import {
+  FriendRequestAuthError,
+  FriendRequestCooldownError,
+} from "./friend-request-errors";
 import {
   buildParticipantKey,
   COLLECTIONS,
   getProfilesByIds,
   parseUserProfile,
-  stageRateLimit,
+  stageFriendRequestRateLimit,
   type UserProfile,
 } from "./firestore";
 
@@ -150,15 +158,50 @@ function parseFriendRequest(id: string, data: Record<string, unknown>): FriendRe
 
 export async function sendFriendRequest(fromUid: string, toUid: string) {
   assertSafePair(fromUid, toUid);
+  const requestId = buildFriendRequestId(fromUid, toUid);
 
   const batch = writeBatch(db);
-  batch.set(friendRequestDoc(fromUid, toUid), {
+  batch.set(doc(db, COLLECTIONS.friendRequests, requestId), {
     fromUid,
     toUid,
     createdAt: serverTimestamp(),
   });
-  stageRateLimit(batch, fromUid, "friendRequest");
-  await batch.commit();
+  stageFriendRequestRateLimit(batch, fromUid, requestId);
+  try {
+    await batch.commit();
+  } catch (error) {
+    // Rules intentionally return the same permission-denied code for cooldown,
+    // blocks, stale verification, and relationship races. Only a recent
+    // server-authored limiter timestamp is trusted evidence for cooldown copy.
+    if (error instanceof FirebaseError && error.code === "permission-denied") {
+      try {
+        const limiter = await getDoc(
+          doc(db, COLLECTIONS.rateLimits, fromUid, "actions", "friendRequest")
+        );
+        const updatedAt = limiter.data()?.updatedAt;
+        if (
+          updatedAt instanceof Timestamp &&
+          Date.now() - updatedAt.toMillis() < FRIEND_REQUEST_COOLDOWN_MS
+        ) {
+          throw new FriendRequestCooldownError();
+        }
+      } catch (evidenceError) {
+        if (evidenceError instanceof FriendRequestCooldownError) {
+          throw evidenceError;
+        }
+        // If the evidence read itself is denied/unavailable, retain the
+        // original generic failure rather than guessing.
+      }
+      if (
+        !auth.currentUser ||
+        auth.currentUser.uid !== fromUid ||
+        !auth.currentUser.emailVerified
+      ) {
+        throw new FriendRequestAuthError();
+      }
+    }
+    throw error;
+  }
 }
 
 export async function cancelFriendRequest(fromUid: string, toUid: string) {

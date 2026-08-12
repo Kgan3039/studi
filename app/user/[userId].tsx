@@ -32,6 +32,12 @@ import {
   type FriendStatus,
 } from '@/lib/friends';
 import { track } from '@/lib/analytics';
+import { useFriendRequestCooldown } from '@/lib/friend-request-cooldown';
+import {
+  canAttemptFriendRequest,
+  runFriendRequestSend,
+} from '@/lib/friend-request-control';
+import { presentFriendRequestFailure } from '@/lib/friend-request-feedback';
 
 type LoadState = 'loading' | 'ready' | 'error' | 'blocked';
 
@@ -43,6 +49,7 @@ export default function PublicProfileScreen() {
   const { userId } = useLocalSearchParams<{ userId: string }>();
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const friendRequestCooldown = useFriendRequestCooldown(currentUser?.uid);
   const [myClasses, setMyClasses] = useState<string[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [status, setStatus] = useState<FriendStatus>('none');
@@ -131,13 +138,23 @@ export default function PublicProfileScreen() {
     }
   }
 
-  function handleConfirmAdd() {
-    if (!currentUser || !userId) return;
-    runAction(async () => {
-      await sendFriendRequest(currentUser.uid, userId);
-      track('friend_request_sent', { source: 'profile' });
+  async function handleConfirmAdd() {
+    if (!currentUser || !userId || !canAttemptFriendRequest(currentUser.uid)) return;
+    setActionPending(true);
+    try {
+      const result = await runFriendRequestSend({
+        userId: currentUser.uid,
+        send: () => sendFriendRequest(currentUser.uid, userId),
+      });
+      if (result.status !== 'sent') return;
+      track('friend_request_sent', { source: 'profile', limiter_bound: true });
       setConfirmAdd(false);
-    }, 'outgoing');
+      setStatus('outgoing');
+    } catch (error) {
+      presentFriendRequestFailure(error);
+    } finally {
+      setActionPending(false);
+    }
   }
 
   function handleAcceptRequest() {
@@ -370,7 +387,12 @@ export default function PublicProfileScreen() {
         visible={confirmAdd}
         title={`Send ${name} a study buddy request?`}
         body="They'll see your request and can accept or ignore it."
-        confirmLabel="Send request"
+        confirmLabel={
+          friendRequestCooldown > 0
+            ? `Send Request in ${friendRequestCooldown}s`
+            : 'Send Request'
+        }
+        confirmDisabled={friendRequestCooldown > 0}
         loading={actionPending}
         onConfirm={handleConfirmAdd}
         onCancel={() => setConfirmAdd(false)}
