@@ -2,6 +2,7 @@ import { Stack, useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   StyleSheet,
@@ -23,6 +24,10 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Brand, Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
+import {
+  startFriendRequestCooldown,
+  useFriendRequestCooldown,
+} from '@/lib/friend-request-cooldown';
 import { subscribeToAuthState } from '@/lib/auth';
 import { getUserProfile, type UserProfile } from '@/lib/firestore';
 import {
@@ -61,6 +66,7 @@ export default function FriendsScreen() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
+  const friendRequestCooldown = useFriendRequestCooldown();
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [myClasses, setMyClasses] = useState<string[]>([]);
@@ -356,6 +362,7 @@ export default function FriendsScreen() {
     markPending(target.uid, true);
     try {
       await sendFriendRequest(currentUser.uid, target.uid);
+      startFriendRequestCooldown();
       track('friend_request_sent', { source: target.source });
       if (target.source === 'search') {
         setSentTo((current) => new Set(current).add(target.uid));
@@ -363,8 +370,9 @@ export default function FriendsScreen() {
         setSuggested((current) => current.filter((item) => item.profile.uid !== target.uid));
       }
       setPendingRequest(null);
-    } catch {
-      // Leave the dialog open so the request can be retried.
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to send that request.';
+      Alert.alert('Study Buddy Error', message);
     } finally {
       markPending(target.uid, false);
     }
@@ -526,7 +534,12 @@ export default function FriendsScreen() {
         visible={!!pendingRequest}
         title={`Send ${pendingRequest?.name ?? 'this student'} a study buddy request?`}
         body="They'll see your request and can accept or ignore it."
-        confirmLabel="Send request"
+        confirmLabel={
+          friendRequestCooldown > 0
+            ? `Send request in ${friendRequestCooldown}s`
+            : 'Send request'
+        }
+        confirmDisabled={friendRequestCooldown > 0}
         loading={!!pendingRequest && pendingUids.has(pendingRequest.uid)}
         onConfirm={handleConfirmSend}
         onCancel={() => setPendingRequest(null)}

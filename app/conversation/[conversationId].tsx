@@ -25,6 +25,10 @@ import {
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
+import {
+  startFriendRequestCooldown,
+  useFriendRequestCooldown,
+} from '@/lib/friend-request-cooldown';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   acceptFriendRequest,
@@ -96,6 +100,7 @@ export default function ConversationScreen() {
   }>();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
+  const friendRequestCooldown = useFriendRequestCooldown();
   const insets = useSafeAreaInsets();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -360,6 +365,7 @@ export default function ConversationScreen() {
     try {
       setIsFriendActionPending(true);
       await sendFriendRequest(currentUser.uid, partnerId);
+      startFriendRequestCooldown();
       setFriendStatus('outgoing');
       setConfirmAddFriend(false);
       track('friend_request_sent', { source: 'conversation' });
@@ -650,7 +656,12 @@ export default function ConversationScreen() {
         visible={confirmAddFriend}
         title={`Send ${partnerName || 'this student'} a study buddy request?`}
         body="They'll see your request and can accept or ignore it."
-        confirmLabel="Send request"
+        confirmLabel={
+          friendRequestCooldown > 0
+            ? `Send request in ${friendRequestCooldown}s`
+            : 'Send request'
+        }
+        confirmDisabled={friendRequestCooldown > 0}
         loading={isFriendActionPending}
         onConfirm={handleConfirmAddFriend}
         onCancel={() => setConfirmAddFriend(false)}

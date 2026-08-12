@@ -32,6 +32,10 @@ import {
   type FriendStatus,
 } from '@/lib/friends';
 import { track } from '@/lib/analytics';
+import {
+  startFriendRequestCooldown,
+  useFriendRequestCooldown,
+} from '@/lib/friend-request-cooldown';
 
 type LoadState = 'loading' | 'ready' | 'error' | 'blocked';
 
@@ -40,6 +44,7 @@ export default function PublicProfileScreen() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
+  const friendRequestCooldown = useFriendRequestCooldown();
   const { userId } = useLocalSearchParams<{ userId: string }>();
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -105,8 +110,9 @@ export default function PublicProfileScreen() {
     try {
       await action();
       setStatus(nextStatus);
-    } catch {
-      // Leave the current status so the button can be retried.
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to update this study buddy.';
+      Alert.alert('Study Buddy Error', message);
     } finally {
       setActionPending(false);
     }
@@ -135,6 +141,7 @@ export default function PublicProfileScreen() {
     if (!currentUser || !userId) return;
     runAction(async () => {
       await sendFriendRequest(currentUser.uid, userId);
+      startFriendRequestCooldown();
       track('friend_request_sent', { source: 'profile' });
       setConfirmAdd(false);
     }, 'outgoing');
@@ -370,7 +377,12 @@ export default function PublicProfileScreen() {
         visible={confirmAdd}
         title={`Send ${name} a study buddy request?`}
         body="They'll see your request and can accept or ignore it."
-        confirmLabel="Send request"
+        confirmLabel={
+          friendRequestCooldown > 0
+            ? `Send request in ${friendRequestCooldown}s`
+            : 'Send request'
+        }
+        confirmDisabled={friendRequestCooldown > 0}
         loading={actionPending}
         onConfirm={handleConfirmAdd}
         onCancel={() => setConfirmAdd(false)}

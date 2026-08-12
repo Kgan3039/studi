@@ -22,6 +22,7 @@ export type ConfirmDialogProps = {
   confirmLabel: string;
   cancelLabel?: string;
   loading?: boolean;
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   /** Extra content between the body and the actions — e.g. a re-auth field.
@@ -42,6 +43,7 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel = 'Cancel',
   loading = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
   children,
@@ -91,6 +93,7 @@ export function ConfirmDialog({
             <Button
               label={confirmLabel}
               loading={loading}
+              disabled={confirmDisabled}
               onPress={onConfirm}
               style={styles.confirmAction}
             />
