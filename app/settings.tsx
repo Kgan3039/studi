@@ -285,7 +285,7 @@ export default function SettingsScreen() {
           <ActionRow
             divided={false}
             icon="square.and.pencil"
-            label="Edit profile"
+            label="Edit Profile"
             onPress={() => router.push('/(tabs)/profile')}
           />
         </View>
@@ -335,10 +335,10 @@ export default function SettingsScreen() {
 
       {/* Privacy and support (moved from Profile). */}
       <View style={styles.section}>
-        <SectionHeader eyebrow="Privacy and support" />
+        <SectionHeader eyebrow="Privacy and Support" />
         <View style={[styles.groupList, { borderColor: palette.border }]}>
           <ExternalLink href={STUDI_PRIVACY_POLICY_URL as Href & string} asChild>
-            <ActionRow icon="hand.raised.fill" label="Privacy policy" />
+            <ActionRow icon="hand.raised.fill" label="Privacy Policy" />
           </ExternalLink>
           <ExternalLink href={STUDI_SUPPORT_URL as Href & string} asChild>
             <ActionRow icon="questionmark.circle.fill" label="Support" />
@@ -380,7 +380,7 @@ export default function SettingsScreen() {
 
       <ConfirmDialog
         visible={showDeleteReauthModal}
-        title="Confirm with password"
+        title="Confirm with Password"
         body={`For security, re-enter your password for ${deleteReauthEmail || 'your account'}.`}
         confirmLabel="Delete account"
         loading={isReauthenticatingDelete}

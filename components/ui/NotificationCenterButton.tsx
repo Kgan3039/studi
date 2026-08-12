@@ -298,14 +298,14 @@ export function NotificationCenterButton() {
             )}
 
             <Pressable
-              accessibilityLabel="View all notifications"
+              accessibilityLabel="View All Notifications"
               accessibilityRole="button"
               onPress={handleViewAll}
               style={({ pressed }) => [
                 styles.viewAllButton,
                 { opacity: pressed ? 0.7 : 1 },
               ]}>
-              <Text style={[TypeScale.label, { color: palette.text }]}>View all notifications</Text>
+              <Text style={[TypeScale.label, { color: palette.text }]}>View All Notifications</Text>
               <MaterialIcons color={palette.tint} name="arrow-forward" size={18} />
             </Pressable>
         </View>

@@ -912,7 +912,7 @@ export default function StudyLocationsScreen() {
       ]}>
       <ScreenHeader
         showNotifications
-        title="Study spots"
+        title="Study Spots"
         status={loadMessage}
       />
 

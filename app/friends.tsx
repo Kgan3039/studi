@@ -440,7 +440,7 @@ export default function FriendsScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
-      <Stack.Screen options={{ title: 'Study buddies' }} />
+      <Stack.Screen options={{ title: 'Study Buddies' }} />
 
       <View style={[styles.header, { paddingTop: Space.sm }]}>
         <SearchBar

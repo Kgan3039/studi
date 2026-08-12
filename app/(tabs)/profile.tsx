@@ -460,7 +460,7 @@ export default function ProfileScreen() {
           ) : null}
         </View>
         <IconButton
-          accessibilityLabel="Edit profile"
+          accessibilityLabel="Edit Profile"
           icon="square.and.pencil"
           onPress={() => setIsEditingName(true)}
         />
@@ -493,7 +493,7 @@ export default function ProfileScreen() {
         ]}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Study buddies"
+          accessibilityLabel="Study Buddies"
           onPress={() => router.push('/friends' as Href)}
           style={({ pressed }) => [
             styles.settingsRow,
@@ -504,7 +504,7 @@ export default function ProfileScreen() {
             <IconSymbol name="person.2.fill" size={22} color={palette.tint} />
           </View>
           <View style={styles.settingsRowBody}>
-            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Study buddies</Text>
+            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Study Buddies</Text>
             <Text style={[TypeScale.caption, { color: palette.icon }]}>
               Friends, requests, and classmates
             </Text>
@@ -538,7 +538,7 @@ export default function ProfileScreen() {
       <Sheet
         visible={isEditingName}
         onClose={() => setIsEditingName(false)}
-        title="Edit profile"
+        title="Edit Profile"
         subtitle={nameStatus}
         footer={
           <Button
@@ -643,7 +643,7 @@ export default function ProfileScreen() {
       {/* Current classes (board ProfileScreen ~1789). */}
       <View style={styles.section}>
         <SectionHeader
-          eyebrow="Current classes"
+          eyebrow="Current Classes"
           action={
             <IconButton
               accessibilityLabel="Edit your classes"
@@ -684,7 +684,7 @@ export default function ProfileScreen() {
       <Sheet
         visible={isEditing}
         onClose={() => setIsEditing(false)}
-        title="Your classes"
+        title="Your Classes"
         subtitle={classesStatus}
         footer={
           <Button label="Save classes" fullWidth loading={isSaving} onPress={handleSaveClasses} />
@@ -772,7 +772,7 @@ export default function ProfileScreen() {
 
       {/* Top-rated campus locations. */}
       <View style={styles.section}>
-        <SectionHeader eyebrow="Top study spots" />
+        <SectionHeader eyebrow="Top Study Spots" />
         {savedLocations.length > 0 ? (
           <View style={[styles.rowList, { borderTopColor: palette.border }]}>
             {savedLocations.map((location) => (
