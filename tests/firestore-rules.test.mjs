@@ -105,6 +105,15 @@ function batchWithRateLimit(db, uid, action) {
   return batch;
 }
 
+function batchWithBoundFriendRequestRateLimit(db, uid, requestId) {
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'rateLimits', uid, 'actions', 'friendRequest'), {
+    lastRequestId: requestId,
+    updatedAt: serverTimestamp(),
+  });
+  return batch;
+}
+
 function createSessionWithRateLimit(db, uid, sessionId, session) {
   const batch = batchWithRateLimit(db, uid, 'createSession');
   batch.set(doc(db, 'sessions', sessionId), session);
@@ -1779,9 +1788,18 @@ describe('friend requests (friendRequests/{from}__{to})', () => {
   const reqId = (from, to) => `${from}__${to}`;
   const seedUser = (uid) => seed(`users/${uid}`, { displayName: uid, classes: [] });
 
-  // Mirrors sendFriendRequest in lib/friends.ts: request doc + friendRequest
-  // rate-limit write in one batch.
+  // Mirrors the updated sendFriendRequest in lib/friends.ts: request doc plus
+  // an id-bound limiter write in one batch.
   function sendRequest(db, uid, fromUid, toUid) {
+    const requestId = reqId(fromUid, toUid);
+    const batch = batchWithBoundFriendRequestRateLimit(db, uid, requestId);
+    batch.set(doc(db, 'friendRequests', requestId), {
+      fromUid, toUid, createdAt: serverTimestamp(),
+    });
+    return batch.commit();
+  }
+
+  function sendLegacyRequest(db, uid, fromUid, toUid) {
     const batch = batchWithRateLimit(db, uid, 'friendRequest');
     batch.set(doc(db, 'friendRequests', reqId(fromUid, toUid)), {
       fromUid, toUid, createdAt: serverTimestamp(),
@@ -1792,6 +1810,123 @@ describe('friend requests (friendRequests/{from}__{to})', () => {
   it('valid create succeeds with a fresh rate-limit write and a real target', async () => {
     await seedUser(BOB);
     await assertSucceeds(sendRequest(ctx(ALICE), ALICE, ALICE, BOB));
+  });
+
+  it('PHASE 1: temporarily accepts the legacy updatedAt-only client shape', async () => {
+    await seedUser(BOB);
+    await assertSucceeds(sendLegacyRequest(ctx(ALICE), ALICE, ALICE, BOB));
+  });
+
+  it('rejects a second request inside the ten-second cooldown', async () => {
+    await seedUser(BOB);
+    await seedUser(MALLORY);
+    await assertSucceeds(sendRequest(ctx(ALICE), ALICE, ALICE, BOB));
+    await assertFails(sendRequest(ctx(ALICE), ALICE, ALICE, MALLORY));
+  });
+
+  it('allows another request once the ten-second cooldown has elapsed', async () => {
+    await seedUser(BOB);
+    await seed(`rateLimits/${ALICE}/actions/friendRequest`, {
+      lastRequestId: reqId(ALICE, MALLORY),
+      updatedAt: Timestamp.fromMillis(Date.now() - 11_000),
+    });
+    await assertSucceeds(sendRequest(ctx(ALICE), ALICE, ALICE, BOB));
+  });
+
+  it('rejects a bound limiter whose lastRequestId does not match the create', async () => {
+    await seedUser(BOB);
+    const db = ctx(ALICE);
+    const batch = batchWithBoundFriendRequestRateLimit(
+      db,
+      ALICE,
+      reqId(ALICE, MALLORY)
+    );
+    batch.set(doc(db, 'friendRequests', reqId(ALICE, BOB)), {
+      fromUid: ALICE, toUid: BOB, createdAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
+  });
+
+  it('rejects unknown fields on both bound and legacy friendRequest limiters', async () => {
+    const db = ctx(ALICE);
+    await assertFails(setDoc(doc(db, 'rateLimits', ALICE, 'actions', 'friendRequest'), {
+      lastRequestId: reqId(ALICE, BOB),
+      updatedAt: serverTimestamp(),
+      extra: true,
+    }));
+    await assertFails(setDoc(doc(db, 'rateLimits', ALICE, 'actions', 'friendRequest'), {
+      updatedAt: serverTimestamp(),
+      extra: true,
+    }));
+  });
+
+  it('rejects a forged limiter owner and denies limiter deletion', async () => {
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'rateLimits', BOB, 'actions', 'friendRequest'),
+      { lastRequestId: reqId(BOB, MALLORY), updatedAt: serverTimestamp() }
+    ));
+    await seed(`rateLimits/${ALICE}/actions/friendRequest`, {
+      lastRequestId: reqId(ALICE, BOB),
+      updatedAt: Timestamp.now(),
+    });
+    await assertFails(
+      deleteDoc(doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', 'friendRequest'))
+    );
+  });
+
+  it('one bound limiter cannot authorize two request creates in one batch', async () => {
+    await seedUser(BOB);
+    await seedUser(MALLORY);
+    const db = ctx(ALICE);
+    const firstId = reqId(ALICE, BOB);
+    const secondId = reqId(ALICE, MALLORY);
+    const batch = batchWithBoundFriendRequestRateLimit(db, ALICE, firstId);
+    batch.set(doc(db, 'friendRequests', firstId), {
+      fromUid: ALICE, toUid: BOB, createdAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'friendRequests', secondId), {
+      fromUid: ALICE, toUid: MALLORY, createdAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
+    assert.equal((await getDoc(doc(ctx(ALICE), 'friendRequests', firstId))).exists(), false);
+    assert.equal((await getDoc(doc(ctx(ALICE), 'friendRequests', secondId))).exists(), false);
+  });
+
+  it('two concurrent bound batches against one limiter allow exactly one request', async () => {
+    await seedUser(BOB);
+    await seedUser(MALLORY);
+    const attempts = await Promise.allSettled([
+      sendRequest(ctx(ALICE), ALICE, ALICE, BOB),
+      sendRequest(ctx(ALICE), ALICE, ALICE, MALLORY),
+    ]);
+    assert.equal(attempts.filter((result) => result.status === 'fulfilled').length, 1);
+    assert.equal(attempts.filter((result) => result.status === 'rejected').length, 1);
+    const first = await getDoc(doc(ctx(ALICE), 'friendRequests', reqId(ALICE, BOB)));
+    const second = await getDoc(doc(ctx(ALICE), 'friendRequests', reqId(ALICE, MALLORY)));
+    assert.equal(Number(first.exists()) + Number(second.exists()), 1);
+    const limiter = await getDoc(
+      doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', 'friendRequest')
+    );
+    assert.equal(
+      limiter.data().lastRequestId,
+      first.exists() ? reqId(ALICE, BOB) : reqId(ALICE, MALLORY)
+    );
+  });
+
+  it('PHASE 1 GAP: a legacy limiter can still authorize two creates in one batch', async () => {
+    // This assertion deliberately flips to assertFails in Phase 2. Keeping it
+    // visible prevents the compatibility bypass from looking fixed early.
+    await seedUser(BOB);
+    await seedUser(MALLORY);
+    const db = ctx(ALICE);
+    const batch = batchWithRateLimit(db, ALICE, 'friendRequest');
+    batch.set(doc(db, 'friendRequests', reqId(ALICE, BOB)), {
+      fromUid: ALICE, toUid: BOB, createdAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'friendRequests', reqId(ALICE, MALLORY)), {
+      fromUid: ALICE, toUid: MALLORY, createdAt: serverTimestamp(),
+    });
+    await assertSucceeds(batch.commit());
   });
 
   it('requires the fresh rate-limit write', async () => {
@@ -1818,7 +1953,7 @@ describe('friend requests (friendRequests/{from}__{to})', () => {
   it('rejects an id that does not match from__to', async () => {
     await seedUser(BOB);
     const db = ctx(ALICE);
-    const batch = batchWithRateLimit(db, ALICE, 'friendRequest');
+    const batch = batchWithBoundFriendRequestRateLimit(db, ALICE, reqId(ALICE, BOB));
     batch.set(doc(db, 'friendRequests', 'wrongId'), {
       fromUid: ALICE, toUid: BOB, createdAt: serverTimestamp(),
     });
@@ -1830,7 +1965,7 @@ describe('friend requests (friendRequests/{from}__{to})', () => {
     const unsafe = 'bad__uid';
     await seed(`users/${unsafe}`, { displayName: 'Weird', classes: [] });
     const db = ctx(ALICE);
-    const batch = batchWithRateLimit(db, ALICE, 'friendRequest');
+    const batch = batchWithBoundFriendRequestRateLimit(db, ALICE, `${ALICE}__${unsafe}`);
     batch.set(doc(db, 'friendRequests', `${ALICE}__${unsafe}`), {
       fromUid: ALICE, toUid: unsafe, createdAt: serverTimestamp(),
     });
@@ -2659,9 +2794,13 @@ describe('PR B conversation quota (phase 1)', () => {
     windowStart: Timestamp.now(), count, updatedAt: Timestamp.now(), expiresAt: ttl(),
   });
   const seedUser = (uid) => seed(`users/${uid}`, { displayName: uid, classes: [] });
-  // The five pre-existing minimum-interval actions. No client reads these.
+  // The five pre-existing minimum-interval actions. Friend requests become
+  // owner-readable in their two-phase bound-limiter rollout; the other four
+  // remain unreadable.
   const INTERVAL_ACTIONS = ['sendMessage', 'createSession', 'reportUser',
                             'locationRating', 'friendRequest'];
+  const PRIVATE_INTERVAL_ACTIONS = ['sendMessage', 'createSession', 'reportUser',
+                                    'locationRating'];
 
   // A fresh-window counter write, as the client transaction emits it.
   const openWindow = () => ({
@@ -2764,14 +2903,27 @@ describe('PR B conversation quota (phase 1)', () => {
       await assertFails(getDoc(quotaRef(ctx(MALLORY), ALICE)));
     });
 
-    it('denies the OWNER reading any interval-action doc', async () => {
+    it('denies the OWNER reading the unrelated interval-action docs', async () => {
       // Read is scoped to createConversation, the only action a client reads.
       // An interval doc's updatedAt would tell its owner exactly when the
       // throttle lifts; nothing needs that, so it stays denied.
-      for (const action of INTERVAL_ACTIONS) {
+      for (const action of PRIVATE_INTERVAL_ACTIONS) {
         await seed(`rateLimits/${ALICE}/actions/${action}`, { updatedAt: Timestamp.now() });
         await assertFails(getDoc(doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', action)));
       }
+    });
+
+    it('allows only the owner to read the friendRequest limiter as cooldown evidence', async () => {
+      await seed(`rateLimits/${ALICE}/actions/friendRequest`, {
+        lastRequestId: `${ALICE}__${BOB}`,
+        updatedAt: Timestamp.now(),
+      });
+      await assertSucceeds(
+        getDoc(doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', 'friendRequest'))
+      );
+      await assertFails(
+        getDoc(doc(ctx(MALLORY), 'rateLimits', ALICE, 'actions', 'friendRequest'))
+      );
     });
 
     it('denies another user reading interval-action docs', async () => {

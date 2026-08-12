@@ -38,7 +38,7 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 | `catalog_request_submitted` | Missing course or location request saved | `type`, `source` |
 | `user_blocked` | Block saved | `context` |
 | `friends_viewed` | Friends screen gains focus or switches tab | `tab` (`friends` \| `requests` \| `suggested`) |
-| `friend_request_sent` | `sendFriendRequest()` succeeds | `source` (`search` \| `suggested` \| `profile`) |
+| `friend_request_sent` | Updated client successfully commits a new request with its request-bound limiter | `source` (`search` \| `suggested` \| `profile` \| `conversation`), `limiter_bound` (`true`; Phase 2 adoption signal) |
 | `friend_request_accepted` | `acceptFriendRequest()` succeeds | — |
 | `friend_request_declined` | `declineFriendRequest()` succeeds | — |
 | `friend_request_cancelled` | `cancelFriendRequest()` succeeds | — |

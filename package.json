@@ -15,6 +15,7 @@
     "test:deletion": "mocha tests/account-deletion.test.mjs",
     "test:map": "mocha tests/map-markers.test.mjs",
     "test:friends": "mocha tests/friend-suggestions.test.mjs",
+    "test:friend-request": "mocha tests/friend-request-cooldown.test.mjs",
     "test:search": "mocha tests/session-search.test.mjs",
     "test:session-blocks": "mocha tests/session-block-warning.test.mjs",
     "test:contact": "mocha tests/contact-email.test.mjs",

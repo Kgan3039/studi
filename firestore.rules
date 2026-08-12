@@ -85,16 +85,18 @@ service cloud.firestore {
     //  - INTERVAL: a single `updatedAt`, valid when
     //    enough time has passed since the last one. Bounds RATE, not total
     //    volume — at a 10s interval that is still ~8,600 writes/day.
-    //  - BOUND INTERVAL (catalogRequest): `updatedAt` plus the exact request
+    //  - BOUND INTERVAL (catalogRequest and updated friendRequest clients):
+    //    `updatedAt` plus the exact request
     //    document id authorized by that limiter update. Binding the id prevents
     //    one atomic limiter write from authorizing multiple request creates.
     //  - COUNTER (createConversation): a fixed 24h window with a hard cap.
     //    Unsolicited DM threads need total reach bounded, not just slowed, so
     //    an interval throttle is the wrong instrument (security audit H3).
     //
-    // The two are kept strictly separate: the five interval actions keep their
-    // exact prior schema and semantics, and only createConversation may use the
-    // counter shape.
+    // Friend requests are in a compatibility rollout: Phase 1 accepts both the
+    // old interval shape and the new bound shape. Phase 2 removes the legacy
+    // branch and requires the id-bound proof on every request create. See
+    // docs/friend-request-cooldown-rollout.md.
     function isCounterRateLimitedAction(action) {
       return action == 'createConversation';
     }
@@ -159,7 +161,8 @@ service cloud.firestore {
         );
     }
 
-    // Unchanged behavior for the original interval actions.
+    // Unchanged behavior for interval actions other than friendRequest, whose
+    // temporary two-shape rollout is validated separately below.
     function isValidIntervalRateLimitWrite(userId, action) {
       return incoming().keys().hasOnly(['updatedAt'])
         && incoming().updatedAt == request.time
@@ -201,6 +204,32 @@ service cloud.firestore {
         );
     }
 
+    function isValidBoundFriendRequestId(userId) {
+      return incoming().lastRequestId is string
+        && incoming().lastRequestId.split('__').size() == 2
+        && incoming().lastRequestId.split('__')[0] == userId
+        && isSafeUidComponent(incoming().lastRequestId.split('__')[0])
+        && isSafeUidComponent(incoming().lastRequestId.split('__')[1])
+        && incoming().lastRequestId.split('__')[0] != incoming().lastRequestId.split('__')[1];
+    }
+
+    function isValidFriendRequestRateLimitWrite(userId) {
+      return incoming().updatedAt == request.time
+        && (
+          !exists(rateLimitRef(userId, 'friendRequest'))
+          || respectsRateLimit(userId, 'friendRequest', resource.data.updatedAt)
+        )
+        && (
+          // PHASE 1 compatibility only. Already-installed clients write this
+          // shape. Remove this branch during the Phase 2 rules cutover.
+          incoming().keys().hasOnly(['updatedAt'])
+          || (
+            incoming().keys().hasOnly(['updatedAt', 'lastRequestId'])
+            && isValidBoundFriendRequestId(userId)
+          )
+        );
+    }
+
     function isValidRateLimitWrite(userId, action) {
       return isVerifiedUwUser()
         && isKnownRateLimitedAction(action)
@@ -209,9 +238,13 @@ service cloud.firestore {
           isCounterRateLimitedAction(action)
             ? isValidQuotaCounterWrite(userId, action)
             : (
-              isBoundIntervalRateLimitedAction(action)
-                ? isValidBoundIntervalRateLimitWrite(userId, action)
-                : isValidIntervalRateLimitWrite(userId, action)
+              action == 'friendRequest'
+                ? isValidFriendRequestRateLimitWrite(userId)
+                : (
+                  isBoundIntervalRateLimitedAction(action)
+                    ? isValidBoundIntervalRateLimitWrite(userId, action)
+                    : isValidIntervalRateLimitWrite(userId, action)
+                )
             )
         );
     }
@@ -223,6 +256,21 @@ service cloud.firestore {
     function hasFreshCatalogRequestRateLimit(userId, requestId) {
       return getAfter(rateLimitRef(userId, 'catalogRequest')).data.updatedAt == request.time
         && getAfter(rateLimitRef(userId, 'catalogRequest')).data.lastRequestId == requestId;
+    }
+
+    function hasFreshBoundFriendRequestRateLimit(userId, requestId) {
+      return getAfter(rateLimitRef(userId, 'friendRequest')).data.updatedAt == request.time
+        && getAfter(rateLimitRef(userId, 'friendRequest')).data.lastRequestId == requestId;
+    }
+
+    function hasFreshFriendRequestRateLimitPhase1(userId, requestId) {
+      return getAfter(rateLimitRef(userId, 'friendRequest')).data.updatedAt == request.time
+        && (
+          // PHASE 1 compatibility only. The legacy shape remains a documented
+          // direct-write bypass until adoption permits the Phase 2 cutover.
+          !('lastRequestId' in getAfter(rateLimitRef(userId, 'friendRequest')).data)
+          || hasFreshBoundFriendRequestRateLimit(userId, requestId)
+        );
     }
 
     // ------------------------------------------------------------------
@@ -834,12 +882,15 @@ service cloud.firestore {
       // instead of a generic failure. Reading your own conversation counter
       // reveals nothing you did not already do.
       //
-      // The five interval actions have never been read by any client and stay
-      // fully denied, including to their owner: their `updatedAt` would let a
-      // caller predict exactly when a throttle lifts, and there is no reason
-      // to hand that out for a read nothing needs.
+      // The friendRequest limiter is also owner-readable during the rollout so
+      // a restarted client can distinguish a real active cooldown from other
+      // permission failures. The remaining interval actions stay fully denied.
       allow read: if isOwner(userId)
-        && (isCounterRateLimitedAction(action) || isBoundIntervalRateLimitedAction(action));
+        && (
+          isCounterRateLimitedAction(action)
+          || isBoundIntervalRateLimitedAction(action)
+          || action == 'friendRequest'
+        );
       allow create, update: if isValidRateLimitWrite(userId, action);
       allow delete: if false;
     }
@@ -973,7 +1024,7 @@ service cloud.firestore {
         // Already friends — nothing to request.
         && !exists(friendshipRef(incoming().fromUid, incoming().toUid))
         && !isBlockedEitherWay(incoming().fromUid, incoming().toUid)
-        && hasFreshRateLimit(request.auth.uid, 'friendRequest');
+        && hasFreshFriendRequestRateLimitPhase1(request.auth.uid, requestId);
       allow update: if false;
       // Sender cancels; recipient declines (or deletes as part of accepting).
       allow delete: if isVerifiedUwUser()

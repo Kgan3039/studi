@@ -2,7 +2,6 @@ import { Stack, useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   StyleSheet,
@@ -24,10 +23,12 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Brand, Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
+import { useFriendRequestCooldown } from '@/lib/friend-request-cooldown';
 import {
-  startFriendRequestCooldown,
-  useFriendRequestCooldown,
-} from '@/lib/friend-request-cooldown';
+  canAttemptFriendRequest,
+  runFriendRequestSend,
+} from '@/lib/friend-request-control';
+import { presentFriendRequestFailure } from '@/lib/friend-request-feedback';
 import { subscribeToAuthState } from '@/lib/auth';
 import { getUserProfile, type UserProfile } from '@/lib/firestore';
 import {
@@ -66,9 +67,9 @@ export default function FriendsScreen() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
-  const friendRequestCooldown = useFriendRequestCooldown();
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const friendRequestCooldown = useFriendRequestCooldown(currentUser?.uid);
   const [myClasses, setMyClasses] = useState<string[]>([]);
   const [tab, setTab] = useState<Tab>('friends');
 
@@ -358,12 +359,15 @@ export default function FriendsScreen() {
   // don't — those already read as a direct response to something).
   async function handleConfirmSend() {
     const target = pendingRequest;
-    if (!currentUser || !target) return;
+    if (!currentUser || !target || !canAttemptFriendRequest(currentUser.uid)) return;
     markPending(target.uid, true);
     try {
-      await sendFriendRequest(currentUser.uid, target.uid);
-      startFriendRequestCooldown();
-      track('friend_request_sent', { source: target.source });
+      const result = await runFriendRequestSend({
+        userId: currentUser.uid,
+        send: () => sendFriendRequest(currentUser.uid, target.uid),
+      });
+      if (result.status !== 'sent') return;
+      track('friend_request_sent', { source: target.source, limiter_bound: true });
       if (target.source === 'search') {
         setSentTo((current) => new Set(current).add(target.uid));
       } else {
@@ -371,8 +375,7 @@ export default function FriendsScreen() {
       }
       setPendingRequest(null);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to send that request.';
-      Alert.alert('Study Buddy Error', message);
+      presentFriendRequestFailure(error);
     } finally {
       markPending(target.uid, false);
     }
@@ -536,8 +539,8 @@ export default function FriendsScreen() {
         body="They'll see your request and can accept or ignore it."
         confirmLabel={
           friendRequestCooldown > 0
-            ? `Send request in ${friendRequestCooldown}s`
-            : 'Send request'
+            ? `Send Request in ${friendRequestCooldown}s`
+            : 'Send Request'
         }
         confirmDisabled={friendRequestCooldown > 0}
         loading={!!pendingRequest && pendingUids.has(pendingRequest.uid)}
