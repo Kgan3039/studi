@@ -57,26 +57,38 @@ export const COLLECTIONS = {
   users: "users",
 } as const;
 
-type RateLimitedAction =
-  | "catalogRequest"
-  | "createConversation"
+type BoundIntervalRateLimitedAction =
   | "createSession"
-  | "friendRequest"
   | "locationRating"
   | "reportUser"
   | "sendMessage";
+
+type RateLimitedAction =
+  | BoundIntervalRateLimitedAction
+  | "catalogRequest"
+  | "createConversation"
+  | "friendRequest";
 
 function rateLimitDoc(userId: string, action: RateLimitedAction) {
   return doc(db, COLLECTIONS.rateLimits, userId, "actions", action);
 }
 
-/** Exported for lib/friends.ts — every abuse-prone write batches one of these. */
-export function stageRateLimit(
+/**
+ * Phase 1 bound interval limiter. Updated clients bind the limiter advance to
+ * one exact Firestore resource path. Rules temporarily accept the legacy
+ * `{ updatedAt }` shape until the rollout in docs/rate-limit-rollout.md reaches
+ * its Phase 2 cutover.
+ */
+function stageBoundRateLimit(
   batch: ReturnType<typeof writeBatch>,
   userId: string,
-  action: RateLimitedAction
+  action: BoundIntervalRateLimitedAction,
+  resourcePath: string
 ) {
-  batch.set(rateLimitDoc(userId, action), { updatedAt: serverTimestamp() });
+  batch.set(rateLimitDoc(userId, action), {
+    lastResourceId: resourcePath,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 /**
@@ -1205,7 +1217,7 @@ export async function createSession(input: {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-    stageRateLimit(batch, input.hostId, "createSession");
+    stageBoundRateLimit(batch, input.hostId, "createSession", `sessions/${sessionRef.id}`);
     await batch.commit();
 
     return sessionRef.id;
@@ -1424,7 +1436,12 @@ export async function sendDirectMessage(
     lastMessageAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
-  stageRateLimit(batch, senderId, "sendMessage");
+  stageBoundRateLimit(
+    batch,
+    senderId,
+    "sendMessage",
+    `conversations/${conversationId}/messages/${messageRef.id}`
+  );
   await batch.commit();
   track("message_sent", { length: trimmedText.length });
 }
@@ -1519,7 +1536,12 @@ export async function sendSessionMessage(
     text: trimmedText.slice(0, 2000),
     createdAt: serverTimestamp(),
   });
-  stageRateLimit(batch, senderId, "sendMessage");
+  stageBoundRateLimit(
+    batch,
+    senderId,
+    "sendMessage",
+    `sessions/${sessionId}/messages/${messageId}`
+  );
   await batch.commit();
   track("group_message_sent", { length: trimmedText.length });
 }
@@ -1871,7 +1893,7 @@ export async function reportUser(
     context,
     createdAt: serverTimestamp(),
   });
-  stageRateLimit(batch, reporterUserId, "reportUser");
+  stageBoundRateLimit(batch, reporterUserId, "reportUser", `reports/${reportRef.id}`);
   await batch.commit();
 }
 
@@ -1964,7 +1986,12 @@ export async function submitLocationRating(
     createdAt: existing.exists() ? existing.data()?.createdAt : serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
-  stageRateLimit(batch, userId, "locationRating");
+  stageBoundRateLimit(
+    batch,
+    userId,
+    "locationRating",
+    `locationRatings/${ratingRef.id}`
+  );
   await batch.commit();
 }
 

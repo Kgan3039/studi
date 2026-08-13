@@ -235,6 +235,14 @@ export function waitForAuthReady() {
 }
 
 export async function logOut() {
+  try {
+    const { unregisterCurrentPushToken } = await import("./notifications");
+    await unregisterCurrentPushToken();
+  } catch (error) {
+    if (__DEV__) {
+      console.warn("Push cleanup failed during sign-out", error);
+    }
+  }
   await signOut(auth);
   resetAnalyticsIdentity();
 }

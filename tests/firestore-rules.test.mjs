@@ -105,6 +105,15 @@ function batchWithRateLimit(db, uid, action) {
   return batch;
 }
 
+function batchWithBoundRateLimit(db, uid, action, lastResourceId) {
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'rateLimits', uid, 'actions', action), {
+    lastResourceId,
+    updatedAt: serverTimestamp(),
+  });
+  return batch;
+}
+
 function batchWithBoundFriendRequestRateLimit(db, uid, requestId) {
   const batch = writeBatch(db);
   batch.set(doc(db, 'rateLimits', uid, 'actions', 'friendRequest'), {
@@ -1717,6 +1726,28 @@ describe('account deletion jobs (Admin SDK only)', () => {
   });
 });
 
+describe('push token ownership registry (Admin SDK only)', () => {
+  it('clients cannot read, write, or delete token ownership records', async () => {
+    await seed('pushTokenOwners/tokenHash', { userId: ALICE, updatedAt: Timestamp.now() });
+    await assertFails(getDoc(doc(ctx(ALICE), 'pushTokenOwners', 'tokenHash')));
+    await assertFails(setDoc(doc(ctx(ALICE), 'pushTokenOwners', 'otherHash'), {
+      userId: ALICE, updatedAt: serverTimestamp(),
+    }));
+    await assertFails(deleteDoc(doc(ctx(ALICE), 'pushTokenOwners', 'tokenHash')));
+    await seed('pushTokenInstallations/installationHash', {
+      userId: ALICE,
+      installationId: 'installation_0001',
+      registrationId: 'registration_0001',
+      tokenHash: 'tokenHash',
+      updatedAt: Timestamp.now(),
+    });
+    await assertFails(getDoc(doc(ctx(ALICE), 'pushTokenInstallations', 'installationHash')));
+    await assertFails(setDoc(doc(ctx(ALICE), 'pushTokenInstallations', 'otherHash'), {
+      userId: ALICE,
+    }));
+  });
+});
+
 // ---------------------------------------------------------------- blocks
 describe('locations (curated public data)', () => {
   it('readable by any signed-in user, including unverified', async () => {
@@ -2273,6 +2304,31 @@ describe('locationRatings', () => {
       )
     );
   });
+
+  it('allows owner raw reads but denies outsider get and list', async () => {
+    await seed(`locationRatings/college-library__${ALICE}`, {
+      locationId: 'college-library', userId: ALICE, stars: 4, tags: [],
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+    });
+    await assertSucceeds(
+      getDoc(doc(ctx(ALICE), 'locationRatings', `college-library__${ALICE}`))
+    );
+    await assertFails(
+      getDoc(doc(ctx(BOB), 'locationRatings', `college-library__${ALICE}`))
+    );
+    await assertFails(getDocs(collection(ctx(BOB), 'locationRatings')));
+    await assertSucceeds(getDocs(query(
+      collection(ctx(ALICE), 'locationRatings'),
+      where('userId', '==', ALICE)
+    )));
+  });
+
+  it('keeps public location aggregates readable', async () => {
+    await seed('locations/college-library', {
+      name: 'College Library', ratingCount: 2, ratingSum: 9,
+    });
+    await assertSucceeds(getDoc(doc(ctx(BOB), 'locations', 'college-library')));
+  });
 });
 
 // ---------------------------------------------------------------- reports
@@ -2777,6 +2833,172 @@ describe('PR A hardening', () => {
         participantIds: [ALICE, BOB], updatedAt: serverTimestamp(),
       }));
     });
+  });
+});
+
+// -------------------------------------- bound generic interval limiters (H1)
+describe('bound generic interval limiters (phase 1)', () => {
+  const adapters = [
+    {
+      name: 'createSession',
+      action: 'createSession',
+      path: (id) => `sessions/${id}`,
+      setup: async () => {},
+      stage(batch, db, id, actor) {
+        batch.set(doc(db, 'sessions', id), validSession(actor));
+      },
+    },
+    {
+      name: 'direct message',
+      action: 'sendMessage',
+      path: (id) => `conversations/${convoId(ALICE, BOB)}/messages/${id}`,
+      setup: async () => {
+        await seed(`users/${ALICE}`, { displayName: 'Alice', classes: [] });
+        await seed(`users/${BOB}`, { displayName: 'Bob', classes: [] });
+        await seed(`conversations/${convoId(ALICE, BOB)}`, {
+          participantIds: [ALICE, BOB].sort(),
+          participantKey: convoId(ALICE, BOB),
+          lastMessagePreview: '',
+          lastMessageAt: Timestamp.now(), createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+        });
+      },
+      stage(batch, db, id, actor) {
+        const cid = convoId(ALICE, BOB);
+        batch.set(doc(db, 'conversations', cid, 'messages', id), {
+          senderId: actor, text: 'hello', createdAt: serverTimestamp(),
+        });
+        batch.update(doc(db, 'conversations', cid), {
+          lastMessagePreview: 'hello', lastMessageAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      },
+    },
+    {
+      name: 'session chat message',
+      action: 'sendMessage',
+      path: (id) => `sessions/chat-session/messages/${id}`,
+      setup: async () => {
+        await seed('sessions/chat-session', validSession(ALICE, {
+          participantIds: [ALICE, BOB],
+        }));
+      },
+      stage(batch, db, id, actor) {
+        batch.set(doc(db, 'sessions', 'chat-session', 'messages', id), {
+          senderId: actor, text: 'hello', createdAt: serverTimestamp(),
+        });
+      },
+    },
+    {
+      name: 'reportUser',
+      action: 'reportUser',
+      path: (id) => `reports/${id}`,
+      setup: async () => {},
+      stage(batch, db, id, actor) {
+        batch.set(doc(db, 'reports', id), {
+          reporterUserId: actor, reportedUserId: BOB, reason: 'Spam', details: '',
+          context: 'general', createdAt: serverTimestamp(),
+        });
+      },
+    },
+    {
+      name: 'locationRating',
+      action: 'locationRating',
+      path: (id) => `locationRatings/${id}__${ALICE}`,
+      setup: async () => {},
+      stage(batch, db, id, actor) {
+        batch.set(doc(db, 'locationRatings', `${id}__${ALICE}`), {
+          locationId: id, userId: actor, stars: 5, tags: [],
+          createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        });
+      },
+    },
+  ];
+
+  function commit(adapter, db, actor, ids, boundId, legacy = false) {
+    const batch = legacy
+      ? batchWithRateLimit(db, actor, adapter.action)
+      : batchWithBoundRateLimit(db, actor, adapter.action, adapter.path(boundId));
+    ids.forEach((id) => adapter.stage(batch, db, id, actor));
+    return batch.commit();
+  }
+
+  async function resetFor(adapter) {
+    await env.clearFirestore();
+    await adapter.setup();
+  }
+
+  it('accepts one correctly bound write for every action', async () => {
+    for (const adapter of adapters) {
+      await resetFor(adapter);
+      await assertSucceeds(commit(adapter, ctx(ALICE), ALICE, ['one'], 'one'));
+    }
+  });
+
+  it('denies a second bound write inside the interval', async () => {
+    for (const adapter of adapters) {
+      await resetFor(adapter);
+      await assertSucceeds(commit(adapter, ctx(ALICE), ALICE, ['one'], 'one'));
+      await assertFails(commit(adapter, ctx(ALICE), ALICE, ['two'], 'two'));
+    }
+  });
+
+  it('denies two resources reusing one bound limiter in the same batch', async () => {
+    for (const adapter of adapters) {
+      await resetFor(adapter);
+      await assertFails(commit(adapter, ctx(ALICE), ALICE, ['one', 'two'], 'one'));
+    }
+  });
+
+  it('denies a mismatched resource binding', async () => {
+    for (const adapter of adapters) {
+      await resetFor(adapter);
+      await assertFails(commit(adapter, ctx(ALICE), ALICE, ['one'], 'other'));
+    }
+  });
+
+  it('denies forged actor ownership', async () => {
+    for (const adapter of adapters) {
+      await resetFor(adapter);
+      await assertFails(commit(adapter, ctx(MALLORY), ALICE, ['one'], 'one'));
+    }
+  });
+
+  it('serializes concurrent independent bound writes', async () => {
+    for (const adapter of adapters) {
+      await resetFor(adapter);
+      const results = await Promise.allSettled([
+        commit(adapter, ctx(ALICE), ALICE, ['one'], 'one'),
+        commit(adapter, ctx(ALICE), ALICE, ['two'], 'two'),
+      ]);
+      assert.equal(results.filter(({ status }) => status === 'fulfilled').length, 1,
+        `${adapter.name}: exactly one commit succeeds`);
+      assert.equal(results.filter(({ status }) => status === 'rejected').length, 1,
+        `${adapter.name}: exactly one commit is throttled`);
+    }
+  });
+
+  it('documents released-client old-shape compatibility during Phase 1', async () => {
+    for (const adapter of adapters) {
+      await resetFor(adapter);
+      await assertSucceeds(commit(adapter, ctx(ALICE), ALICE, ['one'], 'one', true));
+      await resetFor(adapter);
+      // Intentional compatibility gap: this assertion must invert at Phase 2.
+      await assertSucceeds(commit(adapter, ctx(ALICE), ALICE, ['one', 'two'], 'one', true));
+    }
+  });
+
+  it('rejects deletion and extra limiter fields', async () => {
+    for (const adapter of adapters) {
+      await resetFor(adapter);
+      const db = ctx(ALICE);
+      await assertFails(setDoc(doc(db, 'rateLimits', ALICE, 'actions', adapter.action), {
+        updatedAt: serverTimestamp(), lastResourceId: adapter.path('one'), extra: true,
+      }));
+      await seed(`rateLimits/${ALICE}/actions/${adapter.action}`, {
+        updatedAt: Timestamp.fromMillis(0),
+      });
+      await assertFails(deleteDoc(doc(db, 'rateLimits', ALICE, 'actions', adapter.action)));
+    }
   });
 });
 

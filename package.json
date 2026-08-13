@@ -24,7 +24,9 @@
     "test:auth-listener": "mocha tests/auth-listener.test.mjs",
     "test:auth-verification": "mocha tests/auth-verification-state.test.mjs",
     "test:session-create-retry": "mocha tests/session-create-retry.test.mjs",
-    "test:message-history": "mocha tests/message-history.test.mjs"
+    "test:message-history": "mocha tests/message-history.test.mjs",
+    "test:analytics-routes": "mocha tests/analytics-routes.test.mjs",
+    "test:push-token-ownership": "mocha tests/push-token-ownership.test.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/arapey": "^0.4.1",

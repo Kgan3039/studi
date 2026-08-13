@@ -27,6 +27,65 @@ The notifications-center PR extends that into a persistent pipeline:
 Not implemented: App Check, RNFirebase messaging, friend notifications,
 client dismiss (no delete rule; records expire via TTL).
 
+## Token ownership across account changes
+
+Token documents remain private under each user. In addition, the Admin-only
+`pushTokenOwners/{sha256(token)}` registry records which UID currently owns a
+physical Expo token. The Admin-only
+`pushTokenInstallations/{sha256(randomInstallationId)}` registry identifies one
+random app installation lineage (not a hardware identifier) and its current
+token. `registerPushToken({ token, previousToken?, installationId,
+registrationId })` transfers
+that ownership atomically: the prior owner's token document is disabled before
+the new owner's is enabled, and same-user token rotation disables the prior
+token and clears its registry in the same transaction. When a legacy token has
+no registry, the transaction performs an indexed, exact-token collection-group
+lookup capped at 21 results. One prior owner is transferred safely; ambiguous
+enabled duplicates fail closed for manual investigation.
+
+Each registration intent has a fresh random `registrationId`. The ownership
+transaction assigns the authoritative installation generation: a retry of the
+same current registration keeps its generation, while a new registration
+advances it by exactly one. A legacy client `generation` input is accepted only
+for rollout compatibility and never controls server ordering. Unregister must
+present the token, installation ID, registration ID, and server-issued
+generation; delayed cleanup is therefore a no-op after a newer registration
+wins. Concurrent rotations serialize on the installation registry.
+`previousToken` cleanup is limited to the same UID and installation lineage, so
+separate installations retain independent active tokens.
+
+The client stores a UID-scoped active token plus uncertain registration tokens
+in AsyncStorage, the same local persistence model used by Firebase Auth. A
+candidate is persisted before registration, so a committed request whose
+response is lost can retry idempotently after restart. The 3.5-second sign-out bound
+includes installation and local-state reads, callable work, and persistence.
+Tokens are cleared locally only after confirmed unregister; failures and
+timeouts remain persisted for the next authenticated registration. A stale
+former-owner unregister is a server-side no-op after another user claims the
+token. Any account-deletion job, including `complete`, permanently blocks new
+token registration. Account deletion conditionally removes only registries still owned by
+the deleting UID before recursively deleting that user's private tree. Raw
+Expo tokens are never logged or sent to analytics.
+
+### H3 rollout order
+
+No one-time raw-token migration is required: the final registration function
+contains the compatibility lookup and can safely claim legacy documents with
+no registry. Deploy in this order:
+
+1. Deploy `firestore:indexes` and wait until the `tokens.expoPushToken`
+   collection-group index is enabled.
+2. Deploy all Functions together. The callables continue accepting the legacy
+   `expoPushToken` input while adding registry backfill-on-claim and rotation.
+3. Release the client with `token`/`previousToken`, persisted retry intent, and
+   bounded sign-out cleanup.
+4. Watch `failed-precondition` registration failures. They indicate malformed
+   or ambiguous legacy ownership; Functions logs include only the token hash
+   and affected document paths so ops can disable the conflicting associations
+   without exposing the raw token.
+5. Run physical shared-device QA for A → sign-out → B, T1 → T2 rotation,
+   simulated offline unregister, restart/retry, and account deletion.
+
 Group-message notifications are **block-filtered server-side**: before
 `notifyUser()` runs, `onSessionMessageCreated` checks both directions of the
 deterministic `userBlocks/{blocker}__{blocked}` docs in one batched `getAll`
@@ -157,6 +216,10 @@ Push (unchanged from V1):
 - DM from A to B pushes only to B; tap opens `/conversation/{id}`.
 - Joining a hosted session pushes the host; tap opens `/session/{id}`.
 - Invalid/stale Expo tokens are disabled without breaking the source write.
+- Shared-device account switch: register token T as A, sign out, sign in as B,
+  and verify T is enabled only for B and A notifications no longer arrive.
+- Rotate T to a new token for the same UID and verify the new registration is
+  persisted; repeat registration remains idempotent.
 
 Pipeline + center (this PR):
 - Every event above also creates a row in `/notifications` for the recipient,

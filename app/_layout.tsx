@@ -15,6 +15,7 @@ import { HeaderBackButton } from '@/components/ui/HeaderBackButton';
 import { Colors, FontFamily } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initAnalytics, track } from '@/lib/analytics';
+import { analyticsRouteForPathname } from '@/lib/analytics-routes';
 import { subscribeToVerifiedAuthState, waitForAuthReady } from '@/lib/auth';
 import { addNotificationResponseListener } from '@/lib/notifications';
 import { getRootAuthAccess, type RootAuthState } from '@/lib/verified-auth-state';
@@ -66,7 +67,7 @@ function RootLayout() {
   });
 
   useEffect(() => {
-    track('screen_view', { pathname });
+    track('screen_view', { pathname: analyticsRouteForPathname(pathname) });
   }, [pathname]);
 
   useEffect(() => {

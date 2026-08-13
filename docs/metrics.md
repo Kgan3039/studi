@@ -44,7 +44,7 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 | `friend_request_cancelled` | `cancelFriendRequest()` succeeds | — |
 | `friend_removed` | `removeFriend()` succeeds | — |
 | `account_deleted` | Deletion callable succeeds | — |
-| `screen_view` | expo-router pathname change | `pathname` |
+| `screen_view` | expo-router pathname change | `pathname` (static route or sanitized template; never a concrete uid/session/conversation id) |
 
 **Never** put message text, emails, names, or any PII in properties. uid is the identity
 key (PostHog `identify`), traits limited to `classCount`.

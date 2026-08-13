@@ -33,6 +33,8 @@ const EXPECTED_STEP_ORDER = [
   'friend-requests',
   'friendships',
   'location-ratings',
+  'push-token-owners',
+  'push-token-installations',
   'catalog-requests',
   'user-tree',
 ];
@@ -40,11 +42,22 @@ const EXPECTED_STEP_ORDER = [
 // Minimal fakes for the Firestore/Auth surface the runner touches. Queries
 // always come back empty (each cleanup step is exercised as a no-op pass);
 // a named collection can be made to throw to simulate a mid-run failure.
-function createFakes({ catalogRequests = [] } = {}) {
+function createFakes({
+  catalogRequests = [],
+  pushTokenOwners = [],
+  pushTokenInstallations = [],
+  transferOwnerOnTransaction = null,
+} = {}) {
   const ops = [];
   const jobWrites = [];
   const storedCatalogRequests = new Map(
     catalogRequests.map((request) => [request.id, { ...request }])
+  );
+  const storedPushTokenOwners = new Map(
+    pushTokenOwners.map((owner) => [owner.id, { ...owner }])
+  );
+  const storedPushTokenInstallations = new Map(
+    pushTokenInstallations.map((installation) => [installation.id, { ...installation }])
   );
   let jobData = null;
   let authUserExists = true;
@@ -70,9 +83,13 @@ function createFakes({ catalogRequests = [] } = {}) {
   };
 
   function makeQuery(name, field, value) {
+    let max = Infinity;
     const query = {
       where: () => query,
-      limit: () => query,
+      limit: (value) => {
+        max = value;
+        return query;
+      },
       async get() {
         if (failures.collection === name) {
           const error = new Error(`${name} query failed`);
@@ -85,7 +102,28 @@ function createFakes({ catalogRequests = [] } = {}) {
             .map((request) => ({
               ref: { collection: name, id: request.id },
             }));
-          return { empty: docs.length === 0, docs };
+          const page = docs.slice(0, max);
+          return { empty: page.length === 0, docs: page };
+        }
+        if (name === 'pushTokenOwners') {
+          const docs = [...storedPushTokenOwners.values()]
+            .filter((owner) => owner[field] === value)
+            .map((owner) => ({
+              ref: { collection: name, id: owner.id },
+              data: () => ({ ...owner }),
+            }));
+          const page = docs.slice(0, max);
+          return { empty: page.length === 0, docs: page };
+        }
+        if (name === 'pushTokenInstallations') {
+          const docs = [...storedPushTokenInstallations.values()]
+            .filter((installation) => installation[field] === value)
+            .map((installation) => ({
+              ref: { collection: name, id: installation.id },
+              data: () => ({ ...installation }),
+            }));
+          const page = docs.slice(0, max);
+          return { empty: page.length === 0, docs: page };
         }
         return { empty: true, docs: [] };
       },
@@ -105,11 +143,14 @@ function createFakes({ catalogRequests = [] } = {}) {
     },
     batch() {
       const updates = [];
+      const deletes = [];
       return {
         update(ref, fields) {
           updates.push({ ref, fields });
         },
-        delete() {},
+        delete(ref) {
+          deletes.push(ref);
+        },
         async commit() {
           for (const { ref, fields } of updates) {
             if (ref.collection !== 'catalogRequests') continue;
@@ -123,8 +164,44 @@ function createFakes({ catalogRequests = [] } = {}) {
               }
             });
           }
+          deletes.forEach((ref) => {
+            if (ref.collection === 'pushTokenOwners') {
+              storedPushTokenOwners.delete(ref.id);
+            }
+          });
         },
       };
+    },
+    async runTransaction(callback) {
+      if (transferOwnerOnTransaction) {
+        const owner = storedPushTokenOwners.get(transferOwnerOnTransaction.id);
+        if (owner) owner.userId = transferOwnerOnTransaction.userId;
+        transferOwnerOnTransaction = null;
+      }
+      const deletes = [];
+      await callback({
+        async get(ref) {
+          const value = ref.collection === 'pushTokenOwners'
+            ? storedPushTokenOwners.get(ref.id)
+            : ref.collection === 'pushTokenInstallations'
+              ? storedPushTokenInstallations.get(ref.id)
+              : undefined;
+          return {
+            exists: value !== undefined,
+            ref,
+            data: () => value && ({ ...value }),
+          };
+        },
+        delete(ref) {
+          deletes.push(ref);
+        },
+      });
+      deletes.forEach((ref) => {
+        if (ref.collection === 'pushTokenOwners') storedPushTokenOwners.delete(ref.id);
+        if (ref.collection === 'pushTokenInstallations') {
+          storedPushTokenInstallations.delete(ref.id);
+        }
+      });
     },
     async recursiveDelete() {
       ops.push('recursiveDelete');
@@ -166,6 +243,8 @@ function createFakes({ catalogRequests = [] } = {}) {
     jobWrites,
     failures,
     getCatalogRequests: () => [...storedCatalogRequests.values()],
+    getPushTokenOwners: () => [...storedPushTokenOwners.values()],
+    getPushTokenInstallations: () => [...storedPushTokenInstallations.values()],
     getJobData: () => jobData,
     runner: createAccountDeletionRunner({ db, auth, FieldValue }),
   };
@@ -299,6 +378,47 @@ describe('deletion runner (same code path as callable + ops script)', () => {
     assert.equal(owned.details, 'Second floor');
     assert.equal(other.requesterUserId, 'bobUid');
     assert.equal(other.anonymized, undefined);
+  });
+
+  it('removes token ownership records linked to the deleted uid', async () => {
+    const fakes = createFakes({
+      pushTokenOwners: [
+        { id: 'owned-token-hash', userId: UID },
+        { id: 'other-token-hash', userId: 'bobUid' },
+      ],
+      pushTokenInstallations: [
+        { id: 'owned-installation', userId: UID },
+        { id: 'other-installation', userId: 'bobUid' },
+      ],
+    });
+    await fakes.runner.runCleanup(UID);
+    assert.deepEqual(fakes.getPushTokenOwners(), [
+      { id: 'other-token-hash', userId: 'bobUid' },
+    ]);
+    assert.deepEqual(fakes.getPushTokenInstallations(), [
+      { id: 'other-installation', userId: 'bobUid' },
+    ]);
+  });
+
+  it('preserves a registry transferred before deletion cleanup commits', async () => {
+    const fakes = createFakes({
+      pushTokenOwners: [{ id: 'shared-token-hash', userId: UID }],
+      transferOwnerOnTransaction: { id: 'shared-token-hash', userId: 'bobUid' },
+    });
+    await fakes.runner.runCleanup(UID);
+    assert.deepEqual(fakes.getPushTokenOwners(), [
+      { id: 'shared-token-hash', userId: 'bobUid' },
+    ]);
+  });
+
+  it('removes owned registries across bounded cleanup pages', async () => {
+    const pushTokenOwners = Array.from({ length: 205 }, (_, index) => ({
+      id: `owned-token-${index}`,
+      userId: UID,
+    }));
+    const fakes = createFakes({ pushTokenOwners });
+    await fakes.runner.runCleanup(UID);
+    assert.deepEqual(fakes.getPushTokenOwners(), []);
   });
 
   it('a failed step persists the failing phase and leaves the job resumable', async () => {

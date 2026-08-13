@@ -82,9 +82,9 @@ service cloud.firestore {
 
     // Three rate-limit shapes share the rateLimits/{uid}/actions/{action} path:
     //
-    //  - INTERVAL: a single `updatedAt`, valid when
-    //    enough time has passed since the last one. Bounds RATE, not total
-    //    volume — at a 10s interval that is still ~8,600 writes/day.
+    //  - INTERVAL: updated clients bind `updatedAt` to one exact resource path
+    //    in `lastResourceId`. The legacy `{ updatedAt }` shape remains accepted
+    //    during Phase 1; see docs/rate-limit-rollout.md.
     //  - BOUND INTERVAL (catalogRequest and updated friendRequest clients):
     //    `updatedAt` plus the exact request
     //    document id authorized by that limiter update. Binding the id prevents
@@ -161,10 +161,22 @@ service cloud.firestore {
         );
     }
 
-    // Unchanged behavior for interval actions other than friendRequest, whose
-    // temporary two-shape rollout is validated separately below.
+    function hasValidBoundResourceId() {
+      return incoming().lastResourceId is string
+        && incoming().lastResourceId.size() > 0
+        && incoming().lastResourceId.size() <= 500;
+    }
+
+    // Phase 1 accepts the released legacy shape and the resource-bound shape.
+    // Phase 2 removes the first branch after adoption is confirmed.
     function isValidIntervalRateLimitWrite(userId, action) {
-      return incoming().keys().hasOnly(['updatedAt'])
+      return (
+          incoming().keys().hasOnly(['updatedAt'])
+          || (
+            incoming().keys().hasOnly(['updatedAt', 'lastResourceId'])
+            && hasValidBoundResourceId()
+          )
+        )
         && incoming().updatedAt == request.time
         && (
           !exists(rateLimitRef(userId, action))
@@ -251,6 +263,39 @@ service cloud.firestore {
 
     function hasFreshRateLimit(userId, action) {
       return getAfter(rateLimitRef(userId, action)).data.updatedAt == request.time;
+    }
+
+    function hasFreshBoundRateLimitPhase1(userId, action, resourceId) {
+      return getAfter(rateLimitRef(userId, action)).data.updatedAt == request.time
+        && (
+          // Phase 1 compatibility: released clients write no binding.
+          !('lastResourceId' in getAfter(rateLimitRef(userId, action)).data)
+          || getAfter(rateLimitRef(userId, action)).data.lastResourceId == resourceId
+        );
+    }
+
+    function hasFreshDirectMessageMetadataRateLimitPhase1(userId, conversationId) {
+      let limiter = getAfter(rateLimitRef(userId, 'sendMessage')).data;
+      let parts = 'lastResourceId' in limiter ? limiter.lastResourceId.split('/') : [];
+      return limiter.updatedAt == request.time
+        && (
+          !('lastResourceId' in limiter)
+          || (
+            parts.size() == 4
+            && parts[0] == 'conversations'
+            && parts[1] == conversationId
+            && parts[2] == 'messages'
+            && existsAfter(
+              /databases/$(database)/documents/conversations/$(conversationId)/messages/$(parts[3])
+            )
+            && getAfter(
+              /databases/$(database)/documents/conversations/$(conversationId)/messages/$(parts[3])
+            ).data.senderId == userId
+            && getAfter(
+              /databases/$(database)/documents/conversations/$(conversationId)/messages/$(parts[3])
+            ).data.createdAt == request.time
+          )
+        );
     }
 
     function hasFreshCatalogRequestRateLimit(userId, requestId) {
@@ -652,7 +697,9 @@ service cloud.firestore {
       allow read: if isVerifiedUwUser();
       allow create: if isVerifiedUwUser()
         && isValidNewSession()
-        && hasFreshRateLimit(request.auth.uid, 'createSession');
+        && hasFreshBoundRateLimitPhase1(
+             request.auth.uid, 'createSession', 'sessions/' + sessionId
+           );
       allow update: if isVerifiedUwUser()
         && (isHostEdit() || isSelfJoin() || isSelfJoinNoOp() || isSelfLeave());
       allow delete: if isVerifiedUwUser() && request.auth.uid == resource.data.hostId;
@@ -696,7 +743,11 @@ service cloud.firestore {
           && incoming().text.size() >= 1
           && incoming().text.size() <= 2000
           && incoming().createdAt == request.time
-          && hasFreshRateLimit(request.auth.uid, 'sendMessage');
+          && hasFreshBoundRateLimitPhase1(
+               request.auth.uid,
+               'sendMessage',
+               'sessions/' + sessionId + '/messages/' + messageId
+             );
         allow update: if false;
         allow delete: if false;
       }
@@ -780,7 +831,7 @@ service cloud.firestore {
              resource.data.participantIds[0],
              resource.data.participantIds[1]
            )
-        && hasFreshRateLimit(request.auth.uid, 'sendMessage');
+        && hasFreshDirectMessageMetadataRateLimitPhase1(request.auth.uid, conversationId);
       allow delete: if false;
 
       match /messages/{messageId} {
@@ -798,7 +849,11 @@ service cloud.firestore {
           && incoming().text.size() >= 1
           && incoming().text.size() <= 2000
           && incoming().createdAt == request.time
-          && hasFreshRateLimit(request.auth.uid, 'sendMessage')
+          && hasFreshBoundRateLimitPhase1(
+               request.auth.uid,
+               'sendMessage',
+               'conversations/' + conversationId + '/messages/' + messageId
+             )
           && !isBlockedEitherWay(
                parentConversation().participantIds[0],
                parentConversation().participantIds[1]
@@ -845,14 +900,25 @@ service cloud.firestore {
     }
 
     match /locationRatings/{ratingId} {
-      allow read: if isVerifiedUwUser();
+      // Missing owner gets must remain possible for the edit/create screen, so
+      // get authorization is derived from the deterministic path. Queries are
+      // authorized only when every returned document belongs to the caller.
+      allow get: if isVerifiedUwUser()
+        && ratingId.split('__').size() == 2
+        && ratingId.split('__')[1] == request.auth.uid;
+      allow list: if isVerifiedUwUser()
+        && resource.data.userId == request.auth.uid;
       allow create: if isVerifiedUwUser()
         && hasValidLocationRating(ratingId)
-        && hasFreshRateLimit(request.auth.uid, 'locationRating');
+        && hasFreshBoundRateLimitPhase1(
+             request.auth.uid, 'locationRating', 'locationRatings/' + ratingId
+           );
       allow update: if isVerifiedUwUser()
         && hasValidLocationRating(ratingId)
         && incoming().createdAt == resource.data.createdAt
-        && hasFreshRateLimit(request.auth.uid, 'locationRating');
+        && hasFreshBoundRateLimitPhase1(
+             request.auth.uid, 'locationRating', 'locationRatings/' + ratingId
+           );
       allow delete: if isVerifiedUwUser() && resource.data.userId == request.auth.uid;
     }
 
@@ -865,6 +931,18 @@ service cloud.firestore {
     // ------------------------------------------------------------------
 
     match /accountDeletionJobs/{uid} {
+      allow read, write: if false;
+    }
+
+    // Global token-hash ownership registry. Cloud Functions atomically move a
+    // physical Expo token between accounts; clients never inspect or mutate it.
+    match /pushTokenOwners/{tokenHash} {
+      allow read, write: if false;
+    }
+
+    // Per-installation current-token registry. Random installation IDs are
+    // not device identifiers and remain Admin-only like token ownership.
+    match /pushTokenInstallations/{installationHash} {
       allow read, write: if false;
     }
 
@@ -943,7 +1021,9 @@ service cloud.firestore {
         && incoming().context is string
         && incoming().context.size() <= 40
         && incoming().createdAt == request.time
-        && hasFreshRateLimit(request.auth.uid, 'reportUser');
+        && hasFreshBoundRateLimitPhase1(
+             request.auth.uid, 'reportUser', 'reports/' + reportId
+           );
       allow read, update, delete: if false;
     }
 

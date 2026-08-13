@@ -35,6 +35,13 @@ const {
   isCandidateExcludedByExistence,
   relationshipDocRefsForCandidate,
 } = require("./friend-suggestions");
+const {
+  PushTokenOwnershipConflictError,
+  SAFE_OPERATION_ID_PATTERN,
+  claimPushTokenOwnership,
+  isValidOptionalClientGeneration,
+  releasePushTokenOwnership,
+} = require("./push-token-ownership");
 
 admin.initializeApp();
 setGlobalOptions({ region: "us-central1", maxInstances: 5 });
@@ -66,6 +73,14 @@ function pushTokenRef(uid, expoPushToken) {
     .doc("pushTokens")
     .collection("tokens")
     .doc(hashPushToken(expoPushToken));
+}
+
+function pushTokenOwnerRef(expoPushToken) {
+  return db.collection("pushTokenOwners").doc(hashPushToken(expoPushToken));
+}
+
+function pushTokenInstallationRef(installationId) {
+  return db.collection("pushTokenInstallations").doc(hashPushToken(installationId));
 }
 
 function normalizePreview(text, maxLength = 120) {
@@ -315,12 +330,23 @@ exports.registerPushToken = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "Sign in with a verified UW account.");
   }
 
-  const expoPushToken = request.data?.expoPushToken;
+  // Keep expoPushToken as a legacy input alias while the updated client rolls out.
+  const expoPushToken = request.data?.token ?? request.data?.expoPushToken;
+  const previousExpoPushToken = request.data?.previousToken;
+  const providedInstallationId = request.data?.installationId;
+  const providedRegistrationId = request.data?.registrationId;
+  const providedGeneration = request.data?.generation;
   const platform = request.data?.platform;
   const projectId = request.data?.projectId;
 
   if (!Expo.isExpoPushToken(expoPushToken)) {
     throw new HttpsError("invalid-argument", "Invalid Expo push token.");
+  }
+  if (
+    previousExpoPushToken !== undefined &&
+    !Expo.isExpoPushToken(previousExpoPushToken)
+  ) {
+    throw new HttpsError("invalid-argument", "Invalid previous Expo push token.");
   }
 
   if (!["ios", "android"].includes(platform)) {
@@ -331,27 +357,60 @@ exports.registerPushToken = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "Invalid Expo project id.");
   }
 
-  const ref = pushTokenRef(uid, expoPushToken);
+  const tokenHash = hashPushToken(expoPushToken);
+  const previousTokenHash = previousExpoPushToken
+    ? hashPushToken(previousExpoPushToken)
+    : null;
+  const installationId = providedInstallationId ?? `legacy_${tokenHash}`;
+  const registrationId = providedRegistrationId ?? `legacy_${tokenHash}`;
+  if (
+    !SAFE_OPERATION_ID_PATTERN.test(installationId) ||
+    !SAFE_OPERATION_ID_PATTERN.test(registrationId) ||
+    ((providedInstallationId === undefined) !== (providedRegistrationId === undefined))
+    || !isValidOptionalClientGeneration(providedGeneration)
+  ) {
+    throw new HttpsError("invalid-argument", "Invalid push registration identity.");
+  }
   const now = admin.firestore.FieldValue.serverTimestamp();
 
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    tx.set(
-      ref,
-      {
-        expoPushToken,
-        platform,
-        projectId,
-        enabled: true,
-        createdAt: snap.exists ? snap.data()?.createdAt ?? now : now,
-        updatedAt: now,
-        lastSeenAt: now,
-      },
-      { merge: true }
-    );
-  });
+  try {
+    const result = await claimPushTokenOwnership({
+      db,
+      uid,
+      expoPushToken,
+      previousExpoPushToken,
+      platform,
+      projectId,
+      installationId,
+      registrationId,
+      tokenHash,
+      previousTokenHash,
+      tokenRef: pushTokenRef(uid, expoPushToken),
+      ownerRef: pushTokenOwnerRef(expoPushToken),
+      installationRef: pushTokenInstallationRef(installationId),
+      installationRefFor: pushTokenInstallationRef,
+      previousTokenRef: previousExpoPushToken
+        ? pushTokenRef(uid, previousExpoPushToken)
+        : null,
+      previousOwnerRef: previousExpoPushToken
+        ? pushTokenOwnerRef(previousExpoPushToken)
+        : null,
+      deletionJobRef: db.collection("accountDeletionJobs").doc(uid),
+      now,
+    });
+    return { status: "registered", generation: result.generation };
+  } catch (error) {
+    if (error instanceof PushTokenOwnershipConflictError) {
+      console.error("Push token ownership conflict", {
+        code: error.code,
+        tokenHash,
+        documentPaths: error.details?.documentPaths ?? [],
+      });
+      throw new HttpsError("failed-precondition", "Push token ownership could not be updated.");
+    }
+    throw error;
+  }
 
-  return { status: "registered" };
 });
 
 exports.unregisterPushToken = onCall(async (request) => {
@@ -361,21 +420,43 @@ exports.unregisterPushToken = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "Sign in with a verified UW account.");
   }
 
-  const expoPushToken = request.data?.expoPushToken;
+  const expoPushToken = request.data?.token ?? request.data?.expoPushToken;
   if (!Expo.isExpoPushToken(expoPushToken)) {
     throw new HttpsError("invalid-argument", "Invalid Expo push token.");
   }
 
-  await pushTokenRef(uid, expoPushToken).set(
-    {
-      expoPushToken,
-      enabled: false,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true }
-  );
+  const tokenHash = hashPushToken(expoPushToken);
+  const providedInstallationId = request.data?.installationId;
+  const providedRegistrationId = request.data?.registrationId;
+  const providedGeneration = request.data?.generation;
+  const installationId = providedInstallationId ?? `legacy_${tokenHash}`;
+  const registrationId = providedRegistrationId ?? `legacy_${tokenHash}`;
+  const generation = providedGeneration ?? 1;
+  if (
+    !SAFE_OPERATION_ID_PATTERN.test(installationId) ||
+    !SAFE_OPERATION_ID_PATTERN.test(registrationId) ||
+    ((providedInstallationId === undefined) !== (providedRegistrationId === undefined))
+    || !Number.isSafeInteger(generation) || generation < 1
+  ) {
+    throw new HttpsError("invalid-argument", "Invalid push registration identity.");
+  }
+  const now = admin.firestore.FieldValue.serverTimestamp();
 
-  return { status: "unregistered" };
+  const removed = await releasePushTokenOwnership({
+    db,
+    uid,
+    expoPushToken,
+    installationId,
+    registrationId,
+    generation,
+    tokenHash,
+    tokenRef: pushTokenRef(uid, expoPushToken),
+    ownerRef: pushTokenOwnerRef(expoPushToken),
+    installationRef: pushTokenInstallationRef(installationId),
+    now,
+  });
+
+  return { status: removed ? "unregistered" : "stale", removed };
 });
 
 exports.onDirectMessageCreated = onDocumentCreated(

@@ -115,6 +115,16 @@
   ],
   "fieldOverrides": [
     {
+      "collectionGroup": "tokens",
+      "fieldPath": "expoPushToken",
+      "indexes": [
+        {
+          "queryScope": "COLLECTION_GROUP",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "messages",
       "fieldPath": "senderId",
       "indexes": [

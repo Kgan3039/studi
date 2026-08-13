@@ -155,6 +155,22 @@ function createAccountDeletionRunner({ db, auth, FieldValue }) {
     });
   }
 
+  async function deleteOwnedPushRegistries(collectionName, uid) {
+    await drainQuery(
+      db.collection(collectionName).where("userId", "==", uid),
+      async (docs) => {
+        await db.runTransaction(async (tx) => {
+          const current = await Promise.all(docs.map((docSnap) => tx.get(docSnap.ref)));
+          current.forEach((snapshot) => {
+            if (snapshot.exists && snapshot.data()?.userId === uid) {
+              tx.delete(snapshot.ref);
+            }
+          });
+        });
+      }
+    );
+  }
+
   // Ordered, idempotent cleanup steps. Reports are intentionally retained
   // (moderation evidence); rate-limit docs are inert leftovers.
   function cleanupSteps(uid) {
@@ -236,6 +252,16 @@ function createAccountDeletionRunner({ db, auth, FieldValue }) {
         // The aggregate trigger decrements location counts per delete.
         name: "location-ratings",
         run: () => deleteQueryBatch(db.collection("locationRatings").where("userId", "==", uid)),
+      },
+      {
+        // Re-read in a transaction so a token transferred to another user
+        // after the query cannot lose its new ownership registry.
+        name: "push-token-owners",
+        run: () => deleteOwnedPushRegistries("pushTokenOwners", uid),
+      },
+      {
+        name: "push-token-installations",
+        run: () => deleteOwnedPushRegistries("pushTokenInstallations", uid),
       },
       {
         // Preserve the requested catalog item for review, but remove the

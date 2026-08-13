@@ -1,9 +1,15 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { Platform } from 'react-native';
 
 import app, { auth } from '../firebaseConfig';
+import {
+  PUSH_CLEANUP_TIMEOUT_MS,
+  cleanupCurrentPushRegistration,
+  createPushRegistrationState,
+} from './push-registration-state';
 
 type NotificationRegistrationResult =
   | { status: 'registered'; expoPushToken: string }
@@ -15,7 +21,7 @@ type NotificationRegistrationResult =
 type NotificationModule = typeof import('expo-notifications');
 
 let configuredPresentation = false;
-let didAttemptRegistration = false;
+const registrationState = createPushRegistrationState({ storage: AsyncStorage });
 
 // Firestore auto-IDs, Firebase uids, and `${uidA}__${uidB}` conversation keys
 // all fit this; dots, slashes, backslashes, percent-escapes, and empty
@@ -109,11 +115,6 @@ export async function registerForPushNotifications(): Promise<NotificationRegist
     return { status: 'signed-out' };
   }
 
-  if (didAttemptRegistration) {
-    return { status: 'skipped' };
-  }
-  didAttemptRegistration = true;
-
   if (!isSupportedNativeRuntime() || !Device.isDevice) {
     return { status: 'unsupported' };
   }
@@ -128,51 +129,131 @@ export async function registerForPushNotifications(): Promise<NotificationRegist
     return { status: 'unsupported' };
   }
 
-  try {
-    await configureNotificationPresentation();
+  const resumedAfterCleanup = registrationState.resume(currentUser.uid);
+  return registrationState.run(currentUser.uid, async () => {
+    try {
+      await configureNotificationPresentation();
 
-    const existingPermission = await Notifications.getPermissionsAsync();
-    let finalStatus = existingPermission.status;
+      const existingPermission = await Notifications.getPermissionsAsync();
+      let finalStatus = existingPermission.status;
 
-    if (finalStatus !== 'granted') {
-      const requestedPermission = await Notifications.requestPermissionsAsync();
-      finalStatus = requestedPermission.status;
+      if (finalStatus !== 'granted') {
+        const requestedPermission = await Notifications.requestPermissionsAsync();
+        finalStatus = requestedPermission.status;
+      }
+
+      if (finalStatus !== 'granted') {
+        return { status: 'denied' };
+      }
+
+      const token = await Notifications.getExpoPushTokenAsync({ projectId });
+      if (auth.currentUser?.uid !== currentUser.uid) {
+        return { status: 'signed-out' };
+      }
+
+      const installationId = await registrationState.getInstallationId();
+      const storedState = await registrationState.getSnapshot(currentUser.uid);
+
+      const intent = await registrationState.createRegistrationIntent(
+        currentUser.uid,
+        token.data,
+        resumedAfterCleanup
+      );
+      if (auth.currentUser?.uid !== currentUser.uid) {
+        return { status: 'signed-out' };
+      }
+
+      const registerPushToken = httpsCallable<
+        Record<string, unknown>,
+        { status: string; generation: number }
+      >(getFunctions(app, 'us-central1'), 'registerPushToken');
+      const registrationResult = await registerPushToken({
+        token: token.data,
+        ...(storedState.active?.token && storedState.active.token !== token.data
+          ? { previousToken: storedState.active.token }
+          : {}),
+        installationId,
+        registrationId: intent.registrationId,
+        generation: intent.generation,
+        platform: Platform.OS,
+        projectId,
+      });
+
+      if (auth.currentUser?.uid !== currentUser.uid) {
+        return { status: 'signed-out' };
+      }
+      if (!Number.isSafeInteger(registrationResult.data.generation) || registrationResult.data.generation < 1) {
+        return { status: 'error' };
+      }
+      await registrationState.markRegistered(currentUser.uid, {
+        ...intent,
+        generation: registrationResult.data.generation,
+      });
+
+      return { status: 'registered', expoPushToken: token.data };
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('Push notification registration skipped:', error);
+      }
+      return { status: 'error' };
     }
-
-    if (finalStatus !== 'granted') {
-      return { status: 'denied' };
-    }
-
-    const token = await Notifications.getExpoPushTokenAsync({ projectId });
-    const registerPushToken = httpsCallable(getFunctions(app, 'us-central1'), 'registerPushToken');
-    await registerPushToken({
-      expoPushToken: token.data,
-      platform: Platform.OS,
-      projectId,
-    });
-
-    return { status: 'registered', expoPushToken: token.data };
-  } catch (error) {
-    if (__DEV__) {
-      console.warn('Push notification registration skipped:', error);
-    }
-    return { status: 'error' };
-  }
+  });
 }
 
-export async function unregisterPushToken(expoPushToken: string) {
-  if (!auth.currentUser || !expoPushToken) {
-    return;
-  }
+type PushCleanupEntry = {
+  token: string;
+  installationId: string;
+  registrationId: string;
+  generation: number;
+};
 
+async function unregisterPushTokenForUid(uid: string, entry: PushCleanupEntry) {
+  if (auth.currentUser?.uid !== uid || !entry.token) return false;
   try {
-    const unregister = httpsCallable(getFunctions(app, 'us-central1'), 'unregisterPushToken');
-    await unregister({ expoPushToken });
+    const unregister = httpsCallable<
+      PushCleanupEntry,
+      { status: 'unregistered' | 'stale'; removed: boolean }
+    >(getFunctions(app, 'us-central1'), 'unregisterPushToken');
+    const result = await unregister(entry);
+    return result.data?.removed === true;
   } catch (error) {
     if (__DEV__) {
       console.warn('Push notification unregister skipped:', error);
     }
+    return false;
   }
+}
+
+export async function unregisterPushToken(expoPushToken: string) {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return false;
+  const state = await registrationState.getSnapshot(uid);
+  const entry = [state.active, ...state.pending].find(
+    (candidate) => candidate?.token === expoPushToken
+  );
+  if (!entry) return false;
+  return unregisterPushTokenForUid(uid, {
+    ...entry,
+    installationId: await registrationState.getInstallationId(),
+  });
+}
+
+/**
+ * Bounded best-effort sign-out cleanup. Active and uncertain registrations are
+ * persisted per UID in AsyncStorage before the callable runs. Failed or timed
+ * out tokens stay there for the next authenticated registration to reconcile;
+ * the server's owner check makes a former owner's stale retry harmless.
+ */
+export async function unregisterCurrentPushToken() {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return;
+  await cleanupCurrentPushRegistration({
+    state: registrationState,
+    uid,
+    getInstallationId: () => registrationState.getInstallationId(),
+    unregister: (entry) => unregisterPushTokenForUid(uid, entry),
+    timeoutMs: PUSH_CLEANUP_TIMEOUT_MS,
+  });
 }
 
 export type NotificationTapTarget = {
