@@ -519,7 +519,7 @@ service cloud.firestore {
     }
 
     // ------------------------------------------------------------------
-    // Sessions — validated create; host/join/no-op/leave update branches.
+    // Sessions — validated create; host-edit, join/no-op/leave update branches.
     // Times are Firestore Timestamps (PR 5 client migration).
     // ------------------------------------------------------------------
 
@@ -579,17 +579,22 @@ service cloud.firestore {
         && incoming().updatedAt == request.time;
     }
 
-    function sessionIdentityPinned() {
+    function sessionOwnerPinned() {
       return incoming().hostId == resource.data.hostId
-        && incoming().createdAt == resource.data.createdAt
+        && incoming().createdAt == resource.data.createdAt;
+    }
+
+    function sessionIdentityPinned() {
+      return sessionOwnerPinned()
         && incoming().classId == resource.data.classId;
     }
 
     function isHostEdit() {
       return request.auth.uid == resource.data.hostId
-        && sessionIdentityPinned()
+        && sessionOwnerPinned()
         && affectedKeys().hasOnly(['title', 'locationId', 'startTime', 'endTime',
-                                   'status', 'participantIds', 'capacity', 'updatedAt'])
+                                   'status', 'participantIds', 'capacity', 'classId',
+                                   'updatedAt'])
         && hasValidCapacity(incoming())
         // Duplicate padding was the one way a host could grow participantIds
         // past the subset test below (duplicates of a seated member collapse in
@@ -608,6 +613,8 @@ service cloud.firestore {
         && incoming().status in ['open', 'full', 'cancelled']
         && incoming().title is string && incoming().title.size() >= 1
         && incoming().title.size() <= 80
+        && incoming().classId is string
+        && incoming().classId.size() >= 1 && incoming().classId.size() <= 20
         && incoming().locationId is string
         && incoming().locationId.size() >= 1 && incoming().locationId.size() <= 60
         && incoming().startTime is timestamp

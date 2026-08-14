@@ -999,9 +999,16 @@ describe('sessions', () => {
     await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
       locationId: 'L'.repeat(61), updatedAt: serverTimestamp(),
     }));
-    // Identity stays pinned:
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    // The host may change the class, while ownership and creation metadata
+    // remain pinned for every host edit.
+    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
       classId: 'MATH 221', updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      classId: 'C'.repeat(21), updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 's1'), {
+      classId: 'PHYSICS 101', updatedAt: serverTimestamp(),
     }));
   });
 

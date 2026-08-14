@@ -19,6 +19,8 @@ const {
   friendAcceptedNotificationId,
   friendCleanupPathsForBlock,
   friendRequestNotificationId,
+  formatSessionChangedFields,
+  getSessionChangedFields,
   groupMessageNotificationId,
   isWithinGroupChatFanoutLimit,
   normalizeNotificationPayload,
@@ -674,25 +676,22 @@ exports.onSessionParticipantsUpdated = onDocumentUpdated(
       return; // a cancel edit shouldn't also read as a reschedule
     }
 
-    // 3. Material edits → participants. Only time and place count — joins,
-    //    leaves, capacity, title, and status flips don't wake anyone up.
+    // 3. Material edits → participants. Class, schedule, place, capacity, and
+    //    title changes are attendee-visible; joins, leaves, and status flips
+    //    don't wake everyone up.
     //    Event-ID keyed: retries of one edit dedupe, and every distinct edit
     //    notifies — including reverting to a previously-used time/location.
     if (after?.status === "cancelled") {
       return;
     }
 
-    const timeChanged =
-      before?.startTime?.toMillis?.() !== after?.startTime?.toMillis?.() ||
-      before?.endTime?.toMillis?.() !== after?.endTime?.toMillis?.();
-    const locationChanged = before?.locationId !== after?.locationId;
+    const changedFields = getSessionChangedFields(before, after);
 
-    if (!timeChanged && !locationChanged) {
+    if (changedFields.length === 0) {
       return;
     }
 
-    const changed =
-      timeChanged && locationChanged ? "time and location" : timeChanged ? "time" : "location";
+    const changed = formatSessionChangedFields(changedFields);
 
     await Promise.all(
       audience.map((uid) =>

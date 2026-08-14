@@ -131,9 +131,11 @@ export default function SessionDetailScreen() {
     }
   }, [sessionId]);
 
-  useEffect(() => {
-    loadSession();
-  }, [loadSession]);
+  useFocusEffect(
+    useCallback(() => {
+      loadSession();
+    }, [loadSession]),
+  );
 
   // Refresh the chat read marker every time the screen regains focus, so the
   // unread dot clears right after coming back from the chat.
@@ -360,6 +362,19 @@ export default function SessionDetailScreen() {
   const isParticipant =
     currentUser && session ? session.participantIds.includes(currentUser.uid) : false;
   const isHost = currentUser && session ? session.hostId === currentUser.uid : false;
+  const isCancelled = session?.status === 'cancelled';
+
+  function handleEditSession() {
+    if (!sessionId || !isHost || isCancelled) {
+      return;
+    }
+
+    router.push({
+      pathname: '/create-session',
+      params: { sessionId },
+    } as Href);
+  }
+
   // Oversized legacy sessions (past the group-chat fanout ceiling) get a
   // read-only chat — no unread dot, and the card says so.
   const isChatAvailable = !!session && isGroupChatAvailable(session);
@@ -376,7 +391,6 @@ export default function SessionDetailScreen() {
   // Full is derived from capacity (host included); the legacy manual
   // status === 'full' still counts for pre-capacity sessions.
   const isFull = session?.status === 'full' || (!!session && isSessionAtCapacity(session));
-  const isCancelled = session?.status === 'cancelled';
   const hostName = formatDisplayName(session?.hostProfile?.displayName);
   // Seat math uses the true participant count — blocked users still occupy
   // seats even though they're hidden from the attendee list below.
@@ -712,21 +726,31 @@ export default function SessionDetailScreen() {
           ]}>
           {isHost ? (
             !isCancelled ? (
-              <Button
-                icon="xmark"
-                label="Cancel session"
-                variant="secondary"
-                size="lg"
-                fullWidth
-                loading={isLeaving}
-                onPress={confirmCancelSession}
-              />
+              <View style={styles.hostActionStack}>
+                <Button
+                  icon="square.and.pencil"
+                  label="Edit Session"
+                  variant="secondary"
+                  size="lg"
+                  fullWidth
+                  onPress={handleEditSession}
+                />
+                <Button
+                  icon="xmark"
+                  label="Cancel Session"
+                  variant="secondary"
+                  size="lg"
+                  fullWidth
+                  loading={isLeaving}
+                  onPress={confirmCancelSession}
+                />
+              </View>
             ) : (
               <Button
                 disabled
                 fullWidth
                 icon="xmark.circle.fill"
-                label="Session cancelled"
+                label="Session Cancelled"
                 size="lg"
                 variant="secondary"
               />
@@ -818,6 +842,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: Space.md,
+  },
+  hostActionStack: {
+    gap: Space.sm,
   },
   hostIdentity: {
     alignItems: 'center',

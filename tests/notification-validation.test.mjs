@@ -18,6 +18,8 @@ const {
   friendAcceptedNotificationId,
   friendCleanupPathsForBlock,
   friendRequestNotificationId,
+  formatSessionChangedFields,
+  getSessionChangedFields,
   groupMessageNotificationId,
   isAllowedNotificationUrl,
   isWithinGroupChatFanoutLimit,
@@ -264,6 +266,52 @@ describe('idempotent record IDs (CloudEvent-keyed)', () => {
       friendAcceptedNotificationId('event-1')
     );
     assert.equal(/^[A-Za-z0-9_-]+$/.test(friendRequestNotificationId('e.v/t')), true);
+  });
+});
+
+describe('session edit notification fields', () => {
+  it('describes every attendee-visible host edit', () => {
+    const before = {
+      classId: 'COMPSCI 300',
+      startTime: { seconds: 100, nanoseconds: 0 },
+      endTime: { seconds: 200, nanoseconds: 0 },
+      locationId: 'college-library',
+      capacity: 4,
+      title: 'Study Session',
+    };
+    const after = {
+      ...before,
+      classId: 'MATH 221',
+      startTime: { seconds: 101, nanoseconds: 0 },
+      locationId: 'memorial-library',
+      capacity: 6,
+      title: 'Exam Review',
+    };
+
+    const changed = getSessionChangedFields(before, after);
+    assert.deepEqual(changed, ['class', 'date/time', 'location', 'capacity', 'title']);
+    assert.equal(
+      formatSessionChangedFields(changed),
+      'class, date/time, location, capacity and title'
+    );
+  });
+
+  it('ignores participant and metadata-only writes', () => {
+    const session = {
+      classId: 'COMPSCI 300',
+      startTime: { seconds: 100, nanoseconds: 0 },
+      endTime: { seconds: 200, nanoseconds: 0 },
+      locationId: 'college-library',
+      capacity: 4,
+      title: 'Study Session',
+      participantIds: ['aliceUid'],
+      updatedAt: { seconds: 100, nanoseconds: 0 },
+    };
+
+    assert.deepEqual(
+      getSessionChangedFields(session, { ...session, participantIds: ['aliceUid', 'bobUid'] }),
+      []
+    );
   });
 });
 
