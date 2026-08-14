@@ -26,6 +26,10 @@ import { getStudyLocationDisplayName } from '@/lib/catalog';
 import { getUserLocationRating, submitLocationRating } from '@/lib/firestore';
 import type { User } from 'firebase/auth';
 
+function areTagSelectionsEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((tag) => right.includes(tag));
+}
+
 export default function RateLocationScreen() {
   const router = useRouter();
   const { locationId, locationName } = useLocalSearchParams<{
@@ -44,6 +48,8 @@ export default function RateLocationScreen() {
   const [authResolved, setAuthResolved] = useState(false);
   const [selectedStars, setSelectedStars] = useState(0);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [initialStars, setInitialStars] = useState(0);
+  const [initialTags, setInitialTags] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasExistingRating, setHasExistingRating] = useState(false);
@@ -75,7 +81,15 @@ export default function RateLocationScreen() {
       if (existing) {
         setSelectedStars(existing.stars);
         setSelectedTags(existing.tags);
+        setInitialStars(existing.stars);
+        setInitialTags(existing.tags);
         setHasExistingRating(true);
+      } else {
+        setSelectedStars(0);
+        setSelectedTags([]);
+        setInitialStars(0);
+        setInitialTags([]);
+        setHasExistingRating(false);
       }
     } finally {
       setIsLoading(false);
@@ -92,8 +106,16 @@ export default function RateLocationScreen() {
     );
   }
 
+  const hasRatingChanges =
+    selectedStars !== initialStars || !areTagSelectionsEqual(selectedTags, initialTags);
+
   async function handleSubmit() {
     if (!currentUser || !locationId || selectedStars === 0) return;
+
+    if (hasExistingRating && !hasRatingChanges) {
+      setStatusMessage("You haven't changed your rating, so there's nothing to update.");
+      return;
+    }
 
     setIsSubmitting(true);
     setStatusMessage('');
@@ -136,7 +158,7 @@ export default function RateLocationScreen() {
               {displayName}
             </Text>
             <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-              {hasExistingRating ? 'Update your rating' : 'Rate this spot'}
+              {hasExistingRating ? 'Update Your Rating' : 'Rate This Spot'}
             </Text>
           </View>
           <Pressable
@@ -218,10 +240,16 @@ export default function RateLocationScreen() {
             { borderTopColor: palette.border, paddingBottom: Math.max(insets.bottom, Space.md) },
           ]}>
           <Button
-            label={hasExistingRating ? 'Update rating' : 'Submit rating'}
+            label={
+              hasExistingRating
+                ? hasRatingChanges
+                  ? 'Update Rating'
+                  : 'No Changes to Update'
+                : 'Submit Rating'
+            }
             fullWidth
             loading={isSubmitting}
-            disabled={selectedStars === 0 || isLoading}
+            disabled={selectedStars === 0 || isLoading || (hasExistingRating && !hasRatingChanges)}
             onPress={handleSubmit}
           />
         </View>

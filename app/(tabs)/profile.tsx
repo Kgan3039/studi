@@ -57,7 +57,7 @@ import {
     type StudySession,
     type UserYear,
 } from '@/lib/firestore';
-import { useRouter, type Href } from 'expo-router';
+import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import type { User } from 'firebase/auth';
 
 // How many saved-location rows the board renders (ProfileScreen ~1815).
@@ -110,6 +110,7 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { onPullScroll, pullDistance } = usePullToRefreshDistance();
   const router = useRouter();
+  const { edit } = useLocalSearchParams<{ edit?: string }>();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -238,6 +239,15 @@ export default function ProfileScreen() {
       return () => {};
     }, [loadProfile])
   );
+
+  useEffect(() => {
+    if (edit !== 'profile' || isLoading) {
+      return;
+    }
+
+    setIsEditingName(true);
+    router.setParams({ edit: undefined });
+  }, [edit, isLoading, router]);
 
   async function handleRefresh() {
     setIsRefreshing(true);
