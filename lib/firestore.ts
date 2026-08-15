@@ -61,7 +61,8 @@ type BoundIntervalRateLimitedAction =
   | "createSession"
   | "locationRating"
   | "reportUser"
-  | "sendMessage";
+  | "sendMessage"
+  | "updateSession";
 
 type RateLimitedAction =
   | BoundIntervalRateLimitedAction
@@ -1178,6 +1179,60 @@ export async function cancelSession(sessionId: string) {
     status: "cancelled",
     updatedAt: serverTimestamp(),
   });
+}
+
+/**
+ * Updates the host-controlled session fields. Participant membership, host
+ * ownership, status, and creation metadata stay untouched so Firestore rules
+ * can enforce the edit as a narrow host-only mutation.
+ */
+export async function updateSession(
+  sessionId: string,
+  input: {
+    hostId: string;
+    classId: string;
+    locationId: string;
+    title: string;
+    startTime: Date;
+    endTime: Date;
+    /** Seats including the host, 2–20. Omit to preserve a legacy unlimited session. */
+    capacity?: number;
+  }
+) {
+  if (
+    input.capacity !== undefined &&
+    (!Number.isInteger(input.capacity) ||
+      input.capacity < SESSION_CAPACITY_MIN ||
+      input.capacity > SESSION_CAPACITY_MAX)
+  ) {
+    throw new CreateSessionValidationError(
+      `Choose a capacity between ${SESSION_CAPACITY_MIN} and ${SESSION_CAPACITY_MAX} seats.`
+    );
+  }
+
+  const title = input.title.trim().slice(0, 80);
+  if (!title) {
+    throw new CreateSessionValidationError("Add a title before saving the session.");
+  }
+
+  const update = {
+    classId: input.classId.trim().toUpperCase(),
+    locationId: input.locationId.trim(),
+    title,
+    startTime: Timestamp.fromDate(input.startTime),
+    endTime: Timestamp.fromDate(input.endTime),
+    updatedAt: serverTimestamp(),
+    ...(input.capacity === undefined ? {} : { capacity: input.capacity }),
+  };
+
+  const sessionRef = doc(db, COLLECTIONS.sessions, sessionId);
+  const batch = writeBatch(db);
+
+  batch.update(sessionRef, update);
+  // Material session edits are new in this release and use a strict bound
+  // 30-second limiter. Unlike Phase 1 actions, no legacy unbound shape exists.
+  stageBoundRateLimit(batch, input.hostId, "updateSession", `sessions/${sessionId}`);
+  await batch.commit();
 }
 
 export async function createSession(input: {

@@ -77,10 +77,10 @@ service cloud.firestore {
 
     function isKnownRateLimitedAction(action) {
       return action in ['sendMessage', 'createSession', 'reportUser', 'catalogRequest', 'locationRating',
-                        'friendRequest', 'createConversation'];
+                        'friendRequest', 'createConversation', 'updateSession'];
     }
 
-    // Three rate-limit shapes share the rateLimits/{uid}/actions/{action} path:
+    // Four rate-limit shapes share the rateLimits/{uid}/actions/{action} path:
     //
     //  - INTERVAL: updated clients bind `updatedAt` to one exact resource path
     //    in `lastResourceId`. The legacy `{ updatedAt }` shape remains accepted
@@ -89,6 +89,9 @@ service cloud.firestore {
     //    `updatedAt` plus the exact request
     //    document id authorized by that limiter update. Binding the id prevents
     //    one atomic limiter write from authorizing multiple request creates.
+    //  - STRICT BOUND RESOURCE (updateSession): every material edit requires
+    //    `{ updatedAt, lastResourceId }` atomically bound to that session. This
+    //    feature is unreleased, so there is no legacy unbound compatibility.
     //  - COUNTER (createConversation): a fixed 24h window with a hard cap.
     //    Unsolicited DM threads need total reach bounded, not just slowed, so
     //    an interval throttle is the wrong instrument (security audit H3).
@@ -103,6 +106,10 @@ service cloud.firestore {
 
     function isBoundIntervalRateLimitedAction(action) {
       return action == 'catalogRequest';
+    }
+
+    function isStrictBoundResourceRateLimitedAction(action) {
+      return action == 'updateSession';
     }
 
     // New conversation partners allowed per window. A conversation ID is the
@@ -197,6 +204,39 @@ service cloud.firestore {
             && previousUpdatedAt <= request.time - duration.value(10, 's'))
           || (action == 'friendRequest'
             && previousUpdatedAt <= request.time - duration.value(10, 's'))
+          // Material host edits can fan out to every attendee. Thirty seconds
+          // permits quick corrections while bounding persistent/push spam.
+          || (action == 'updateSession'
+            && previousUpdatedAt <= request.time - duration.value(30, 's'))
+        );
+    }
+
+    function isValidStrictBoundResourceRateLimitWrite(userId, action) {
+      let parts = incoming().lastResourceId is string
+        ? incoming().lastResourceId.split('/')
+        : [];
+      let sessionRef = parts.size() == 2
+        ? /databases/$(database)/documents/sessions/$(parts[1])
+        : /databases/$(database)/documents/sessions/__invalid__;
+      return action == 'updateSession'
+        && incoming().keys().hasOnly(['updatedAt', 'lastResourceId'])
+        && incoming().updatedAt == request.time
+        && hasValidBoundResourceId()
+        && parts.size() == 2
+        && parts[0] == 'sessions'
+        && parts[1].size() > 0
+        && exists(sessionRef)
+        && existsAfter(sessionRef)
+        && get(sessionRef).data.hostId == userId
+        && getAfter(sessionRef).data.diff(get(sessionRef).data).affectedKeys().hasAny([
+             'title', 'classId', 'locationId', 'startTime', 'endTime', 'capacity'
+           ])
+        && (
+          !exists(rateLimitRef(userId, action))
+          || (
+            resource.data.updatedAt is timestamp
+            && respectsRateLimit(userId, action, resource.data.updatedAt)
+          )
         );
     }
 
@@ -250,12 +290,16 @@ service cloud.firestore {
           isCounterRateLimitedAction(action)
             ? isValidQuotaCounterWrite(userId, action)
             : (
-              action == 'friendRequest'
-                ? isValidFriendRequestRateLimitWrite(userId)
+              isStrictBoundResourceRateLimitedAction(action)
+                ? isValidStrictBoundResourceRateLimitWrite(userId, action)
                 : (
-                  isBoundIntervalRateLimitedAction(action)
-                    ? isValidBoundIntervalRateLimitWrite(userId, action)
-                    : isValidIntervalRateLimitWrite(userId, action)
+                  action == 'friendRequest'
+                    ? isValidFriendRequestRateLimitWrite(userId)
+                    : (
+                      isBoundIntervalRateLimitedAction(action)
+                        ? isValidBoundIntervalRateLimitWrite(userId, action)
+                        : isValidIntervalRateLimitWrite(userId, action)
+                    )
                 )
             )
         );
@@ -272,6 +316,11 @@ service cloud.firestore {
           !('lastResourceId' in getAfter(rateLimitRef(userId, action)).data)
           || getAfter(rateLimitRef(userId, action)).data.lastResourceId == resourceId
         );
+    }
+
+    function hasFreshStrictBoundRateLimit(userId, action, resourceId) {
+      return getAfter(rateLimitRef(userId, action)).data.updatedAt == request.time
+        && getAfter(rateLimitRef(userId, action)).data.lastResourceId == resourceId;
     }
 
     function hasFreshDirectMessageMetadataRateLimitPhase1(userId, conversationId) {
@@ -519,7 +568,7 @@ service cloud.firestore {
     }
 
     // ------------------------------------------------------------------
-    // Sessions — validated create; host/join/no-op/leave update branches.
+    // Sessions — validated create; host-edit, join/no-op/leave update branches.
     // Times are Firestore Timestamps (PR 5 client migration).
     // ------------------------------------------------------------------
 
@@ -579,17 +628,29 @@ service cloud.firestore {
         && incoming().updatedAt == request.time;
     }
 
-    function sessionIdentityPinned() {
+    function sessionOwnerPinned() {
       return incoming().hostId == resource.data.hostId
-        && incoming().createdAt == resource.data.createdAt
+        && incoming().createdAt == resource.data.createdAt;
+    }
+
+    function sessionIdentityPinned() {
+      return sessionOwnerPinned()
         && incoming().classId == resource.data.classId;
     }
 
-    function isHostEdit() {
+    function isMaterialSessionEdit() {
+      return affectedKeys().hasAny([
+        'title', 'classId', 'locationId', 'startTime', 'endTime', 'capacity'
+      ]);
+    }
+
+    function isHostEdit(sessionId) {
       return request.auth.uid == resource.data.hostId
-        && sessionIdentityPinned()
+        && sessionOwnerPinned()
         && affectedKeys().hasOnly(['title', 'locationId', 'startTime', 'endTime',
-                                   'status', 'participantIds', 'capacity', 'updatedAt'])
+                                   'status', 'participantIds', 'capacity', 'classId',
+                                   'updatedAt'])
+        && incoming().updatedAt == request.time
         && hasValidCapacity(incoming())
         // Duplicate padding was the one way a host could grow participantIds
         // past the subset test below (duplicates of a seated member collapse in
@@ -605,9 +666,12 @@ service cloud.firestore {
         // (post-state count, so a simultaneous kick + reduce is judged fairly):
         && (!('capacity' in incoming())
             || incoming().capacity >= incoming().participantIds.size())
+        && resource.data.hostId in incoming().participantIds
         && incoming().status in ['open', 'full', 'cancelled']
         && incoming().title is string && incoming().title.size() >= 1
         && incoming().title.size() <= 80
+        && incoming().classId is string
+        && incoming().classId.size() >= 1 && incoming().classId.size() <= 20
         && incoming().locationId is string
         && incoming().locationId.size() >= 1 && incoming().locationId.size() <= 60
         && incoming().startTime is timestamp
@@ -622,7 +686,11 @@ service cloud.firestore {
         // Host may only REMOVE participants (kick), never inject anyone:
         && incoming().participantIds.toSet().intersection(
              resource.data.participantIds.toSet()
-           ) == incoming().participantIds.toSet();
+           ) == incoming().participantIds.toSet()
+        && (!isMaterialSessionEdit()
+            || hasFreshStrictBoundRateLimit(
+                 request.auth.uid, 'updateSession', 'sessions/' + sessionId
+               ));
     }
 
     function isSelfJoin() {
@@ -658,6 +726,7 @@ service cloud.firestore {
 
     function isSelfLeave() {
       return sessionIdentityPinned()
+        && request.auth.uid != resource.data.hostId
         && affectedKeys().hasOnly(['participantIds', 'updatedAt'])
         && request.auth.uid in resource.data.participantIds
         && !(request.auth.uid in incoming().participantIds)
@@ -701,7 +770,7 @@ service cloud.firestore {
              request.auth.uid, 'createSession', 'sessions/' + sessionId
            );
       allow update: if isVerifiedUwUser()
-        && (isHostEdit() || isSelfJoin() || isSelfJoinNoOp() || isSelfLeave());
+        && (isHostEdit(sessionId) || isSelfJoin() || isSelfJoinNoOp() || isSelfLeave());
       allow delete: if isVerifiedUwUser() && request.auth.uid == resource.data.hostId;
 
       // Session group chat (PR: group chat) — participant-gated via the

@@ -134,6 +134,42 @@ function sessionEventNotificationId(kind, eventId) {
   return `${kind}_${sanitizeIdPart(eventId)}`;
 }
 
+function timestampMillis(value) {
+  if (value && typeof value.toMillis === "function") {
+    return value.toMillis();
+  }
+
+  if (value && typeof value.seconds === "number") {
+    return value.seconds * 1000 + Math.floor((value.nanoseconds ?? 0) / 1e6);
+  }
+
+  return value;
+}
+
+/** Returns the attendee-visible session fields changed by one host update. */
+function getSessionChangedFields(before = {}, after = {}) {
+  const scheduleChanged =
+    timestampMillis(before.startTime) !== timestampMillis(after.startTime) ||
+    timestampMillis(before.endTime) !== timestampMillis(after.endTime);
+  const changed = [];
+
+  if (before.classId !== after.classId) changed.push("class");
+  if (scheduleChanged) changed.push("date/time");
+  if (before.locationId !== after.locationId) changed.push("location");
+  if (before.capacity !== after.capacity) changed.push("capacity");
+  if (before.title !== after.title) changed.push("title");
+
+  return changed;
+}
+
+function formatSessionChangedFields(changedFields) {
+  if (changedFields.length === 1) {
+    return changedFields[0];
+  }
+
+  return `${changedFields.slice(0, -1).join(", ")} and ${changedFields.at(-1)}`;
+}
+
 /** Retries of one group-chat message event dedupe; session scoping mirrors dmNotificationId. */
 function groupMessageNotificationId(sessionId, eventId) {
   return `gm_${sanitizeIdPart(sessionId)}_${sanitizeIdPart(eventId)}`;
@@ -233,6 +269,8 @@ module.exports = {
   friendAcceptedNotificationId,
   friendCleanupPathsForBlock,
   friendRequestNotificationId,
+  formatSessionChangedFields,
+  getSessionChangedFields,
   groupMessageNotificationId,
   isAllowedNotificationUrl,
   isSafeId,

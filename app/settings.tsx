@@ -286,7 +286,12 @@ export default function SettingsScreen() {
             divided={false}
             icon="square.and.pencil"
             label="Edit Profile"
-            onPress={() => router.push('/(tabs)/profile')}
+            onPress={() =>
+              router.replace({
+                pathname: '/(tabs)/profile',
+                params: { edit: 'profile' },
+              } as Href)
+            }
           />
         </View>
       </View>

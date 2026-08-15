@@ -129,6 +129,17 @@ function createSessionWithRateLimit(db, uid, sessionId, session) {
   return batch.commit();
 }
 
+function updateSessionWithRateLimit(db, uid, sessionId, update, boundSessionId = sessionId) {
+  const batch = batchWithBoundRateLimit(
+    db,
+    uid,
+    'updateSession',
+    `sessions/${boundSessionId}`
+  );
+  batch.update(doc(db, 'sessions', sessionId), update);
+  return batch.commit();
+}
+
 function createMessageWithRateLimit(db, uid, conversationId, messageId, message) {
   const batch = batchWithRateLimit(db, uid, 'sendMessage');
   batch.set(doc(db, 'conversations', conversationId, 'messages', messageId), message);
@@ -948,31 +959,31 @@ describe('sessions', () => {
     await seed('sessions/s1', validSession(ALICE, {
       createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
     }));
-    // Valid reschedule within the window:
-    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
-      startTime: futureTs(48), endTime: futureTs(50), updatedAt: serverTimestamp(),
-    }));
     // Past startTime:
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       startTime: Timestamp.fromMillis(Date.now() - 3600_000),
       updatedAt: serverTimestamp(),
     }));
     // startTime beyond the 31-day window:
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       startTime: futureTs(24 * 40), endTime: futureTs(24 * 40 + 2),
       updatedAt: serverTimestamp(),
     }));
     // endTime before startTime:
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       endTime: futureTs(47), updatedAt: serverTimestamp(),
     }));
     // Duration over 12 hours:
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       endTime: futureTs(48 + 13), updatedAt: serverTimestamp(),
     }));
     // Non-timestamp times:
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       startTime: 'tomorrow', updatedAt: serverTimestamp(),
+    }));
+    // Valid reschedule within the window:
+    await assertSucceeds(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
+      startTime: futureTs(48), endTime: futureTs(50), updatedAt: serverTimestamp(),
     }));
   });
 
@@ -980,28 +991,32 @@ describe('sessions', () => {
     await seed('sessions/s1', validSession(ALICE, {
       createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
     }));
-    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
-      title: 'Moved to Memorial', locationId: 'memorial-library',
-      updatedAt: serverTimestamp(),
-    }));
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       status: 'archived', updatedAt: serverTimestamp(),
     }));
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       title: '', updatedAt: serverTimestamp(),
     }));
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       title: 'T'.repeat(81), updatedAt: serverTimestamp(),
     }));
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       locationId: '', updatedAt: serverTimestamp(),
     }));
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       locationId: 'L'.repeat(61), updatedAt: serverTimestamp(),
     }));
-    // Identity stays pinned:
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
-      classId: 'MATH 221', updatedAt: serverTimestamp(),
+    // The host may change the class, while ownership and creation metadata
+    // remain pinned for every host edit.
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
+      classId: 'C'.repeat(21), updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateSessionWithRateLimit(ctx(BOB), BOB, 's1', {
+      classId: 'PHYSICS 101', updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
+      title: 'Moved to Memorial', classId: 'MATH 221', locationId: 'memorial-library',
+      updatedAt: serverTimestamp(),
     }));
   });
 
@@ -1011,6 +1026,124 @@ describe('sessions', () => {
     }));
     await assertFails(deleteDoc(doc(ctx(BOB), 'sessions', 's1')));
     await assertSucceeds(deleteDoc(doc(ctx(ALICE), 'sessions', 's1')));
+  });
+});
+
+// ------------------------------------------ strict material session-edit limiter
+describe('material session edit limiter', () => {
+  const seededSession = (host, overrides = {}) =>
+    validSession(host, {
+      capacity: 4,
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      ...overrides,
+    });
+
+  it('allows the first bound material edit and denies another inside 30 seconds', async () => {
+    await seed('sessions/s1', seededSession(ALICE));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      title: 'Missing limiter', updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
+      title: 'First correction', updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
+      title: 'Too soon', updatedAt: serverTimestamp(),
+    }));
+
+    const stored = await getDoc(doc(ctx(ALICE), 'sessions', 's1'));
+    assert.equal(stored.data().title, 'First correction');
+  });
+
+  it('allows a material edit after the 30-second cooldown', async () => {
+    await seed('sessions/s1', seededSession(ALICE));
+    await seed(`rateLimits/${ALICE}/actions/updateSession`, {
+      lastResourceId: 'sessions/s1',
+      updatedAt: Timestamp.fromMillis(Date.now() - 31_000),
+    });
+
+    await assertSucceeds(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
+      locationId: 'memorial-library', updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('denies one limiter reused for two session edits in the same batch', async () => {
+    await seed('sessions/s1', seededSession(ALICE));
+    await seed('sessions/s2', seededSession(ALICE));
+    const db = ctx(ALICE);
+    const batch = batchWithBoundRateLimit(db, ALICE, 'updateSession', 'sessions/s1');
+    batch.update(doc(db, 'sessions', 's1'), {
+      title: 'First edit', updatedAt: serverTimestamp(),
+    });
+    batch.update(doc(db, 'sessions', 's2'), {
+      title: 'Second edit', updatedAt: serverTimestamp(),
+    });
+
+    await assertFails(batch.commit());
+  });
+
+  it('denies mismatched paths, forged hosts, extra limiter fields, and deletion', async () => {
+    await seed('sessions/s1', seededSession(ALICE));
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
+      title: 'Wrong binding', updatedAt: serverTimestamp(),
+    }, 's2'));
+    await assertFails(updateSessionWithRateLimit(ctx(MALLORY), MALLORY, 's1', {
+      title: 'Not the host', updatedAt: serverTimestamp(),
+    }));
+
+    const db = ctx(ALICE);
+    await assertFails(setDoc(doc(db, 'rateLimits', ALICE, 'actions', 'updateSession'), {
+      lastResourceId: 'sessions/s1', updatedAt: serverTimestamp(), extra: true,
+    }));
+    await seed(`rateLimits/${ALICE}/actions/updateSession`, {
+      lastResourceId: 'sessions/s1', updatedAt: Timestamp.fromMillis(0),
+    });
+    await assertFails(deleteDoc(doc(db, 'rateLimits', ALICE, 'actions', 'updateSession')));
+  });
+
+  it('pins host-edit updatedAt to request.time', async () => {
+    await seed('sessions/s1', seededSession(ALICE));
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
+      title: 'Forged timestamp', updatedAt: Timestamp.fromMillis(0),
+    }));
+  });
+
+  it('requires the host to remain in participantIds', async () => {
+    await seed('sessions/s1', seededSession(ALICE, {
+      participantIds: [ALICE, BOB],
+    }));
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
+      title: 'Host removed', participantIds: [BOB], updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('keeps cancel, kick, and metadata-only writes outside the material limiter', async () => {
+    await seed('sessions/s1', seededSession(ALICE, {
+      participantIds: [ALICE, BOB],
+    }));
+    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      participantIds: [ALICE], updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      status: 'cancelled', updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+      updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
+      title: 'COMP SCI 300 Study Session', updatedAt: serverTimestamp(),
+    }));
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', 'updateSession'),
+      { lastResourceId: 'sessions/s1', updatedAt: serverTimestamp() }
+    ));
+
+    await env.withSecurityRulesDisabled(async (context) => {
+      const limiter = await getDoc(
+        doc(context.firestore(), 'rateLimits', ALICE, 'actions', 'updateSession')
+      );
+      assert.equal(limiter.exists(), false);
+    });
   });
 });
 
@@ -1080,20 +1213,17 @@ describe('session capacity', () => {
     await seed('sessions/s1', seededSession(ALICE, {
       capacity: 4, participantIds: [ALICE, BOB, MALLORY],
     }));
-    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
-      capacity: 10, updatedAt: serverTimestamp(),
-    }));
-    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
-      capacity: 3, updatedAt: serverTimestamp(), // == current participant count
-    }));
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       capacity: 2, updatedAt: serverTimestamp(), // below the 3 already seated
     }));
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       capacity: 21, updatedAt: serverTimestamp(),
     }));
-    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       capacity: 1, updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
+      capacity: 3, updatedAt: serverTimestamp(), // == current participant count
     }));
   });
 
@@ -1101,14 +1231,14 @@ describe('session capacity', () => {
     await seed('sessions/s1', seededSession(ALICE, {
       capacity: 4, participantIds: [ALICE, BOB, MALLORY],
     }));
-    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertSucceeds(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       participantIds: [ALICE, BOB], capacity: 2, updatedAt: serverTimestamp(),
     }));
   });
 
   it('host may drop the capacity field entirely (back to unlimited)', async () => {
     await seed('sessions/s1', seededSession(ALICE, { capacity: 2 }));
-    await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 's1'), {
+    await assertSucceeds(updateSessionWithRateLimit(ctx(ALICE), ALICE, 's1', {
       capacity: deleteField(), updatedAt: serverTimestamp(),
     }));
   });
@@ -1117,7 +1247,7 @@ describe('session capacity', () => {
     await seed('sessions/s1', seededSession(ALICE, {
       capacity: 4, participantIds: [ALICE, BOB],
     }));
-    await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 's1'), {
+    await assertFails(updateSessionWithRateLimit(ctx(BOB), BOB, 's1', {
       capacity: 20, updatedAt: serverTimestamp(),
     }));
   });
@@ -2683,7 +2813,7 @@ describe('PR A hardening', () => {
       await seed('sessions/over25', sessionWith(ALICE, [ALICE, ...oversized]));
 
       // Retitle with the roster untouched (26 entries, still over the ceiling).
-      await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 'over25'), {
+      await assertSucceeds(updateSessionWithRateLimit(ctx(ALICE), ALICE, 'over25', {
         title: 'Renamed while oversized',
         updatedAt: serverTimestamp(),
       }));
@@ -2723,7 +2853,7 @@ describe('PR A hardening', () => {
         participantIds: [ALICE], updatedAt: serverTimestamp(),
       }));
       // Host raises capacity to the max.
-      await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 'normal'), {
+      await assertSucceeds(updateSessionWithRateLimit(ctx(ALICE), ALICE, 'normal', {
         capacity: 20, updatedAt: serverTimestamp(),
       }));
     });
@@ -2792,15 +2922,9 @@ describe('PR A hardening', () => {
       }));
     });
 
-    it('rules permit a host to leave their own roster (not exposed in the client)', async () => {
-      // Records current behavior, unchanged by the self-leave fix: the rules
-      // treat the host like any other participant here, while the session
-      // screen renders "Leave session" only for non-hosts
-      // (app/session/[sessionId].tsx). Whether a host SHOULD be able to leave
-      // — and what an open session with a non-participant hostId means — is an
-      // open product question, not a contract this test is asserting.
+    it('denies a host leaving their own roster', async () => {
       await seed('sessions/leaveHost', sessionWith(ALICE, [ALICE, BOB, MALLORY]));
-      await assertSucceeds(updateDoc(doc(ctx(ALICE), 'sessions', 'leaveHost'), {
+      await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 'leaveHost'), {
         participantIds: [BOB, MALLORY],
         updatedAt: serverTimestamp(),
       }));

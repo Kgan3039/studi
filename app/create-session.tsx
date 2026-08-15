@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Timestamp } from 'firebase/firestore';
 import {
@@ -44,17 +44,25 @@ import {
   createSession,
   getLocationRatingAggregates,
   getLocations,
+  getSessionById,
   getUserProfile,
+  SESSION_CAPACITY_MAX,
+  SESSION_CAPACITY_MIN,
   SESSION_CAPACITY_DEFAULT,
+  updateSession,
   type LocationRatingAggregate,
   type StudyLocation,
+  type StudySessionListItem,
 } from '@/lib/firestore';
 import { canonicalStudyLocationId } from '@/lib/catalog';
 import {
   MAX_DAYS_IN_FUTURE,
   validateSessionSchedule,
 } from '@/lib/session-schedule';
-import { getCreateSessionErrorMessage } from '@/lib/session-create-retry';
+import {
+  getCreateSessionErrorMessage,
+  getEditSessionErrorMessage,
+} from '@/lib/session-create-retry';
 import type { User } from 'firebase/auth';
 
 const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
@@ -135,6 +143,16 @@ const DURATION_PRESETS = [
  */
 const CAPACITY_PRESETS = [2, 4, 6, 8, 10, 12, 16, 20];
 
+type SessionEditValues = {
+  capacity: number;
+  classId: string;
+  endTime: string;
+  locationId: string;
+  sessionDate: string;
+  startTime: string;
+  title: string;
+};
+
 /** "HH:MM" + minutes, or null when it would cross midnight (end must be same-day). */
 function addMinutesToTime(time: string, minutes: number): string | null {
   const [hours, mins] = time.split(':').map(Number);
@@ -145,12 +163,22 @@ function addMinutesToTime(time: string, minutes: number): string | null {
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 }
 
+function toTimeInput(date: Date) {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
 export default function CreateSessionScreen() {
   const router = useRouter();
-  const { classId: requestedClassId, locationId: requestedLocationId } = useLocalSearchParams<{
+  const {
+    classId: requestedClassId,
+    locationId: requestedLocationId,
+    sessionId: editSessionId,
+  } = useLocalSearchParams<{
     classId?: string;
     locationId?: string;
+    sessionId?: string;
   }>();
+  const isEditMode = Boolean(editSessionId);
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
@@ -174,6 +202,9 @@ export default function CreateSessionScreen() {
   const [endTime, setEndTime] = useState('');
   const [capacity, setCapacity] = useState(SESSION_CAPACITY_DEFAULT);
   const [focusText, setFocusText] = useState('');
+  const [editingSession, setEditingSession] = useState<StudySessionListItem | null>(null);
+  const [initialEditValues, setInitialEditValues] = useState<SessionEditValues | null>(null);
+  const editInitializedRef = useRef(false);
   const [createdSession, setCreatedSession] = useState<{
     classId: string;
     locationName: string;
@@ -248,16 +279,21 @@ export default function CreateSessionScreen() {
   }, []);
 
   useEffect(() => {
-    track('session_create_started', {
-      ...(requestedClassId ? { fromClassId: requestedClassId } : {}),
-      ...(requestedLocationId ? { fromLocationId: requestedLocationId } : {}),
-    });
-  }, [requestedClassId, requestedLocationId]);
+    if (!isEditMode) {
+      track('session_create_started', {
+        ...(requestedClassId ? { fromClassId: requestedClassId } : {}),
+        ...(requestedLocationId ? { fromLocationId: requestedLocationId } : {}),
+      });
+    }
+  }, [isEditMode, requestedClassId, requestedLocationId]);
 
   const loadSetupData = useCallback(async () => {
     if (!currentUser) {
       setClasses([]);
       setLocations([]);
+      setEditingSession(null);
+      setInitialEditValues(null);
+      editInitializedRef.current = false;
       setStatus('Sign in to create a study session.');
       setIsLoading(false);
       return;
@@ -265,21 +301,42 @@ export default function CreateSessionScreen() {
 
     try {
       setIsLoading(true);
-      const [profile, loadedLocations] = await Promise.all([
+      const [profile, loadedLocations, loadedSession] = await Promise.all([
         getUserProfile(currentUser.uid),
         getLocations(),
+        editSessionId ? getSessionById(editSessionId) : Promise.resolve(null),
       ]);
 
+      if (editSessionId && (!loadedSession || loadedSession.hostId !== currentUser.uid)) {
+        setEditingSession(loadedSession);
+        setInitialEditValues(null);
+        editInitializedRef.current = false;
+        setClasses([]);
+        setLocations(loadedLocations);
+        setStatus('Only the session host can edit this session.');
+        return;
+      }
+
+      const sessionClassId = loadedSession?.classId.trim().toUpperCase() ?? '';
       const profileClasses = [
         ...new Set(
-          (profile?.classes ?? [])
-            .map((classCode) => classCode.trim().toUpperCase())
-            .filter(Boolean)
+          [
+            ...(sessionClassId ? [sessionClassId] : []),
+            ...(profile?.classes ?? []).map((classCode) => classCode.trim().toUpperCase()),
+          ].filter(Boolean)
         ),
       ];
+      const sessionLocation = loadedSession?.location;
+      const availableLocations =
+        sessionLocation &&
+        !loadedLocations.some((location) => location.locationId === sessionLocation.locationId)
+          ? [sessionLocation, ...loadedLocations]
+          : loadedLocations;
       const normalizedRequestedClass = requestedClassId?.trim().toUpperCase() ?? '';
       const defaultClass =
-        normalizedRequestedClass && profileClasses.includes(normalizedRequestedClass)
+        isEditMode && sessionClassId
+          ? sessionClassId
+          : normalizedRequestedClass && profileClasses.includes(normalizedRequestedClass)
           ? normalizedRequestedClass
           : profileClasses[0] ?? '';
       // The picker only lists canonical ids, so resolve alias ids (e.g. a
@@ -287,35 +344,76 @@ export default function CreateSessionScreen() {
       const canonicalRequestedId = requestedLocationId
         ? canonicalStudyLocationId(requestedLocationId)
         : '';
-      const defaultLocationId = loadedLocations.some(
+      const defaultLocationId = availableLocations.some(
         (location) => location.locationId === canonicalRequestedId
       )
         ? canonicalRequestedId
-        : loadedLocations[0]?.locationId ?? '';
+        : availableLocations[0]?.locationId ?? '';
 
       setClasses(profileClasses);
-      setLocations(loadedLocations);
-      setSelectedClass((currentSelectedClass) =>
-        currentSelectedClass && profileClasses.includes(currentSelectedClass)
-          ? currentSelectedClass
-          : defaultClass
-      );
-      setSelectedLocationId((currentSelectedLocationId) =>
-        currentSelectedLocationId &&
-        loadedLocations.some((location) => location.locationId === currentSelectedLocationId)
-          ? currentSelectedLocationId
-          : defaultLocationId
-      );
-      // Only say something when something is actually wrong.
-      setStatus(
-        profileClasses.length > 0 && loadedLocations.length > 0
-          ? ''
-          : 'Add classes on your Profile before creating a session.'
-      );
+      setLocations(availableLocations);
+      if (isEditMode && loadedSession) {
+        setEditingSession(loadedSession);
+        if (!editInitializedRef.current) {
+          const loadedStart = loadedSession.startTime.toDate();
+          const loadedEnd = loadedSession.endTime.toDate();
+          const editCapacity = loadedSession.capacity ?? Math.min(
+            SESSION_CAPACITY_MAX,
+            Math.max(
+              SESSION_CAPACITY_MIN,
+              Math.max(SESSION_CAPACITY_DEFAULT, loadedSession.participantIds.length)
+            )
+          );
+          const editValues = {
+            capacity: editCapacity,
+            classId: sessionClassId,
+            endTime: toTimeInput(loadedEnd),
+            locationId: loadedSession.locationId,
+            sessionDate: toIsoDate(loadedStart),
+            startTime: toTimeInput(loadedStart),
+            title: loadedSession.title.trim() || `${sessionClassId} Study Session`,
+          } satisfies SessionEditValues;
+
+          setInitialEditValues(editValues);
+          setSelectedClass(editValues.classId);
+          setSelectedLocationId(editValues.locationId);
+          setSessionDate(editValues.sessionDate);
+          setSelectedCalendarMonth(startOfMonth(loadedStart));
+          setStartTime(editValues.startTime);
+          setEndTime(editValues.endTime);
+          setCapacity(editValues.capacity);
+          setFocusText(editValues.title);
+          editInitializedRef.current = true;
+        }
+        setStatus('');
+      } else {
+        setEditingSession(null);
+        setInitialEditValues(null);
+        editInitializedRef.current = false;
+        setSelectedClass((currentSelectedClass) =>
+          currentSelectedClass && profileClasses.includes(currentSelectedClass)
+            ? currentSelectedClass
+            : defaultClass
+        );
+        setSelectedLocationId((currentSelectedLocationId) =>
+          currentSelectedLocationId &&
+          availableLocations.some((location) => location.locationId === currentSelectedLocationId)
+            ? currentSelectedLocationId
+            : defaultLocationId
+        );
+        // Only say something when something is actually wrong.
+        setStatus(
+          profileClasses.length > 0 && availableLocations.length > 0
+            ? ''
+            : 'Add classes on your Profile before creating a session.'
+        );
+      }
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to load session setup right now.';
-      setStatus(message);
+      setStatus(
+        isEditMode
+          ? getEditSessionErrorMessage(error)
+          : 'Unable to load session setup right now.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -326,7 +424,7 @@ export default function CreateSessionScreen() {
     } catch {
       // Ratings unavailable — locations still show
     }
-  }, [currentUser, requestedClassId, requestedLocationId]);
+  }, [currentUser, editSessionId, isEditMode, requestedClassId, requestedLocationId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -347,9 +445,34 @@ export default function CreateSessionScreen() {
     }
   }
 
+  const currentEditValues: SessionEditValues = {
+    capacity,
+    classId: selectedClass,
+    endTime,
+    locationId: selectedLocationId,
+    sessionDate,
+    startTime,
+    title: focusText.trim() || `${selectedClass} Study Session`,
+  };
+  const hasEditChanges =
+    !isEditMode ||
+    (initialEditValues !== null &&
+      (currentEditValues.capacity !== initialEditValues.capacity ||
+        currentEditValues.classId !== initialEditValues.classId ||
+        currentEditValues.endTime !== initialEditValues.endTime ||
+        currentEditValues.locationId !== initialEditValues.locationId ||
+        currentEditValues.sessionDate !== initialEditValues.sessionDate ||
+        currentEditValues.startTime !== initialEditValues.startTime ||
+        currentEditValues.title !== initialEditValues.title));
+
   async function handleCreateSession() {
     if (!currentUser) {
       Alert.alert('Sign In Required', 'Sign in before creating a study session.');
+      return;
+    }
+
+    if (isEditMode && !hasEditChanges) {
+      setStatus('No changes to update.');
       return;
     }
 
@@ -358,22 +481,43 @@ export default function CreateSessionScreen() {
       return;
     }
 
-    if (endTime <= startTime) {
-      Alert.alert('Time Error', 'Choose an end time later than the start time.');
-      return;
-    }
+    const scheduleChanged =
+      !isEditMode ||
+      initialEditValues === null ||
+      sessionDate !== initialEditValues.sessionDate ||
+      startTime !== initialEditValues.startTime ||
+      endTime !== initialEditValues.endTime;
+    let startDate: Date;
+    let endDate: Date;
 
-    if (isSessionStartInPast(sessionDate, startTime)) {
-      Alert.alert('Date Error', 'Choose a future date and start time for your session.');
-      return;
-    }
+    if (scheduleChanged) {
+      if (endTime <= startTime) {
+        Alert.alert('Time Error', 'Choose an end time later than the start time.');
+        return;
+      }
 
-    const validatedSchedule = validateSessionSchedule(sessionDate, startTime, endTime);
+      if (isSessionStartInPast(sessionDate, startTime)) {
+        Alert.alert('Date Error', 'Choose a future date and start time for your session.');
+        return;
+      }
 
-    if ('error' in validatedSchedule) {
-      setScheduleHint(validatedSchedule.error);
-      setStatus(validatedSchedule.error);
-      Alert.alert('Invalid Session Time', validatedSchedule.error);
+      const validatedSchedule = validateSessionSchedule(sessionDate, startTime, endTime);
+
+      if ('error' in validatedSchedule) {
+        setScheduleHint(validatedSchedule.error);
+        setStatus(validatedSchedule.error);
+        Alert.alert('Invalid Session Time', validatedSchedule.error);
+        return;
+      }
+
+      startDate = new Date(validatedSchedule.startTimeIso);
+      endDate = new Date(validatedSchedule.endTimeIso);
+    } else if (editingSession) {
+      // Unchanged times remain valid for a host editing an in-progress session.
+      startDate = editingSession.startTime.toDate();
+      endDate = editingSession.endTime.toDate();
+    } else {
+      setStatus('Unable to load the session to update it.');
       return;
     }
 
@@ -382,13 +526,30 @@ export default function CreateSessionScreen() {
 
     try {
       setIsSaving(true);
+      if (isEditMode && editSessionId) {
+        const capacityChanged =
+          initialEditValues === null || capacity !== initialEditValues.capacity;
+        await updateSession(editSessionId, {
+          hostId: currentUser.uid,
+          classId: selectedClass,
+          locationId: selectedLocationId,
+          title: sessionTitle,
+          startTime: startDate,
+          endTime: endDate,
+          ...(editingSession?.capacity === undefined && !capacityChanged ? {} : { capacity }),
+        });
+        setStatus('Session updated. Everyone going will be notified.');
+        router.back();
+        return;
+      }
+
       const sessionId = await createSession({
         classId: selectedClass,
         hostId: currentUser.uid,
         locationId: selectedLocationId,
         title: sessionTitle,
-        startTime: new Date(validatedSchedule.startTimeIso),
-        endTime: new Date(validatedSchedule.endTimeIso),
+        startTime: startDate,
+        endTime: endDate,
         capacity,
       });
 
@@ -397,7 +558,7 @@ export default function CreateSessionScreen() {
         locationId: selectedLocationId,
         capacity,
         hoursUntilStart: Math.round(
-          (new Date(validatedSchedule.startTimeIso).getTime() - Date.now()) / 3_600_000
+          (startDate.getTime() - Date.now()) / 3_600_000
         ),
       });
       setStatus('Your session is live. Classmates can join now.');
@@ -407,9 +568,15 @@ export default function CreateSessionScreen() {
         sessionId,
       });
     } catch (error) {
-      const message = getCreateSessionErrorMessage(error);
-      setStatus(message);
-      Alert.alert('Create Session Error', message);
+      if (isEditMode) {
+        const message = getEditSessionErrorMessage(error);
+        setStatus(message);
+        Alert.alert('Update Session Error', message);
+      } else {
+        const message = getCreateSessionErrorMessage(error);
+        setStatus(message);
+        Alert.alert('Create Session Error', message);
+      }
     } finally {
       setIsSaving(false);
     }
@@ -480,9 +647,13 @@ export default function CreateSessionScreen() {
         ]}>
         <View style={[styles.panelHeader, { borderBottomColor: palette.border }]}>
           <View style={styles.panelHeaderCopy}>
-            <Text style={[TypeScale.h2, { color: palette.text }]}>New session</Text>
+            <Text style={[TypeScale.h2, { color: palette.text }]}>
+              {isEditMode ? 'Edit Session' : 'New Session'}
+            </Text>
             <Text style={[TypeScale.caption, { color: palette.icon }]} numberOfLines={1}>
-              Classmates can join once you post it
+              {isEditMode
+                ? 'Update the details classmates will see'
+                : 'Classmates can join once you post it'}
             </Text>
           </View>
           <Pressable
@@ -818,19 +989,26 @@ export default function CreateSessionScreen() {
           <View style={styles.capacityGrid}>
             {CAPACITY_PRESETS.map((seatCount) => {
               const isSelected = capacity === seatCount;
+              const isBelowAttendance =
+                isEditMode && seatCount < (editingSession?.participantIds.length ?? SESSION_CAPACITY_MIN);
 
               return (
                 <Pressable
                   key={seatCount}
                   accessibilityRole="button"
                   accessibilityLabel={`${seatCount} seats`}
-                  accessibilityState={{ selected: isSelected }}
+                  accessibilityState={{ selected: isSelected, disabled: isBelowAttendance }}
+                  disabled={isBelowAttendance}
                   onPress={() => setCapacity(seatCount)}
                   style={[
                     styles.capacityTile,
                     isSelected
                       ? { backgroundColor: palette.tint, borderColor: palette.tint }
-                      : { backgroundColor: palette.surface, borderColor: palette.border },
+                      : {
+                          backgroundColor: palette.surface,
+                          borderColor: palette.border,
+                          opacity: isBelowAttendance ? 0.4 : 1,
+                        },
                   ]}>
                   <Text
                     style={[
@@ -845,10 +1023,14 @@ export default function CreateSessionScreen() {
           </View>
         </FormSection>
 
-        <FormSection caption="Optional" icon="square.and.pencil" title="Focus">
+        <FormSection
+          caption={isEditMode ? 'What classmates will see' : 'Optional'}
+          icon="square.and.pencil"
+          title={isEditMode ? 'Title' : 'Focus'}>
           <TextInput
+            maxLength={80}
             onChangeText={setFocusText}
-            placeholder="Pset 4: pipelines and caching"
+            placeholder={isEditMode ? 'Session title' : 'Pset 4: pipelines and caching'}
             placeholderTextColor={placeholderColor}
             style={[
               styles.input,
@@ -861,7 +1043,9 @@ export default function CreateSessionScreen() {
             value={focusText}
           />
           <Text style={[TypeScale.caption, { color: palette.icon }]}>
-            Leave blank to use “{selectedClass || 'CLASS'} Study Session”.
+            {isEditMode
+              ? 'Update the title shown on the session.'
+              : `Leave blank to use “${selectedClass || 'CLASS'} Study Session”.`}
           </Text>
         </FormSection>
 
@@ -875,11 +1059,17 @@ export default function CreateSessionScreen() {
         ) : null}
 
         <Button
-          label="Post session"
+          label={
+            isEditMode
+              ? hasEditChanges
+                ? 'Save Session'
+                : 'No Changes to Update'
+              : 'Post Session'
+          }
           size="lg"
           fullWidth
           loading={isSaving}
-          disabled={isLoading}
+          disabled={isLoading || (isEditMode && !hasEditChanges)}
           onPress={handleCreateSession}
         />
         </ScreenTransition>
