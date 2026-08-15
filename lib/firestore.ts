@@ -61,7 +61,8 @@ type BoundIntervalRateLimitedAction =
   | "createSession"
   | "locationRating"
   | "reportUser"
-  | "sendMessage";
+  | "sendMessage"
+  | "updateSession";
 
 type RateLimitedAction =
   | BoundIntervalRateLimitedAction
@@ -1188,6 +1189,7 @@ export async function cancelSession(sessionId: string) {
 export async function updateSession(
   sessionId: string,
   input: {
+    hostId: string;
     classId: string;
     locationId: string;
     title: string;
@@ -1223,7 +1225,14 @@ export async function updateSession(
     ...(input.capacity === undefined ? {} : { capacity: input.capacity }),
   };
 
-  await updateDoc(doc(db, COLLECTIONS.sessions, sessionId), update);
+  const sessionRef = doc(db, COLLECTIONS.sessions, sessionId);
+  const batch = writeBatch(db);
+
+  batch.update(sessionRef, update);
+  // Material session edits are new in this release and use a strict bound
+  // 30-second limiter. Unlike Phase 1 actions, no legacy unbound shape exists.
+  stageBoundRateLimit(batch, input.hostId, "updateSession", `sessions/${sessionId}`);
+  await batch.commit();
 }
 
 export async function createSession(input: {

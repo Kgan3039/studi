@@ -6,8 +6,12 @@ import retryModule from '../lib/session-create-retry.js';
 const {
   CreateSessionValidationError,
   SAFE_CREATE_SESSION_ERROR,
+  SAFE_EDIT_SESSION_AUTH_ERROR,
+  SAFE_EDIT_SESSION_ERROR,
+  SAFE_EDIT_SESSION_NETWORK_ERROR,
   createWithStaleVerificationRetry,
   getCreateSessionErrorMessage,
+  getEditSessionErrorMessage,
 } = retryModule;
 
 const permissionDenied = { code: 'permission-denied' };
@@ -226,11 +230,45 @@ describe('session creation stale-verification retry', () => {
     assert.equal(getCreateSessionErrorMessage(permissionDenied), SAFE_CREATE_SESSION_ERROR);
   });
 
+  it('keeps controlled edit validation messages', () => {
+    const validation = new CreateSessionValidationError('Add a title before saving the session.');
+
+    assert.equal(getEditSessionErrorMessage(validation), validation.message);
+  });
+
+  it('maps edit authentication and verification failures to fixed copy', () => {
+    for (const code of [
+      'unauthenticated',
+      'auth/user-disabled',
+      'auth/user-token-expired',
+      'auth/invalid-user-token',
+    ]) {
+      assert.equal(getEditSessionErrorMessage({ code }), SAFE_EDIT_SESSION_AUTH_ERROR);
+    }
+  });
+
+  it('maps edit network failures to fixed retry copy', () => {
+    for (const code of ['unavailable', 'deadline-exceeded', 'auth/network-request-failed']) {
+      assert.equal(getEditSessionErrorMessage({ code }), SAFE_EDIT_SESSION_NETWORK_ERROR);
+    }
+  });
+
+  it('never exposes arbitrary edit backend messages', () => {
+    assert.equal(
+      getEditSessionErrorMessage({ code: 'permission-denied', message: 'rules line 711' }),
+      SAFE_EDIT_SESSION_ERROR
+    );
+    assert.equal(getEditSessionErrorMessage(new Error('private backend detail')), SAFE_EDIT_SESSION_ERROR);
+    assert.equal(getEditSessionErrorMessage({ code: 'internal', message: 'stack trace' }), SAFE_EDIT_SESSION_ERROR);
+  });
+
   it('is used by session persistence and the create-session error UI', async () => {
     const firestoreSource = await readFile(new URL('../lib/firestore.ts', import.meta.url), 'utf8');
     const screenSource = await readFile(new URL('../app/create-session.tsx', import.meta.url), 'utf8');
 
     assert.match(firestoreSource, /return createWithStaleVerificationRetry\(\{/);
     assert.match(screenSource, /const message = getCreateSessionErrorMessage\(error\)/);
+    assert.equal((screenSource.match(/getEditSessionErrorMessage\(error\)/g) ?? []).length, 2);
+    assert.doesNotMatch(screenSource, /isEditMode[\s\S]{0,300}error\.message/);
   });
 });

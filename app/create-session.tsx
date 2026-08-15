@@ -16,7 +16,6 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { FirebaseError } from 'firebase/app';
 
 import { SessionCard } from '@/components/session-card';
 import { SessionCreatedTransition } from '@/components/session-created-transition';
@@ -60,7 +59,10 @@ import {
   MAX_DAYS_IN_FUTURE,
   validateSessionSchedule,
 } from '@/lib/session-schedule';
-import { getCreateSessionErrorMessage } from '@/lib/session-create-retry';
+import {
+  getCreateSessionErrorMessage,
+  getEditSessionErrorMessage,
+} from '@/lib/session-create-retry';
 import type { User } from 'firebase/auth';
 
 const CALENDAR_WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
@@ -407,9 +409,11 @@ export default function CreateSessionScreen() {
         );
       }
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to load session setup right now.';
-      setStatus(message);
+      setStatus(
+        isEditMode
+          ? getEditSessionErrorMessage(error)
+          : 'Unable to load session setup right now.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -526,6 +530,7 @@ export default function CreateSessionScreen() {
         const capacityChanged =
           initialEditValues === null || capacity !== initialEditValues.capacity;
         await updateSession(editSessionId, {
+          hostId: currentUser.uid,
           classId: selectedClass,
           locationId: selectedLocationId,
           title: sessionTitle,
@@ -564,12 +569,7 @@ export default function CreateSessionScreen() {
       });
     } catch (error) {
       if (isEditMode) {
-        const message =
-          error instanceof FirebaseError && error.code === 'permission-denied'
-            ? 'Unable to update this session. Refresh and try again.'
-            : error instanceof Error
-              ? error.message
-              : 'Unable to update this session right now.';
+        const message = getEditSessionErrorMessage(error);
         setStatus(message);
         Alert.alert('Update Session Error', message);
       } else {
