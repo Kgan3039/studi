@@ -1,6 +1,7 @@
-import { type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   Animated,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -55,6 +56,28 @@ export function Sheet({
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
   const { panelStyle, scrimStyle } = useOverlayEntrance(visible);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    if (!visible) {
+      setKeyboardHeight(0);
+      return;
+    }
+
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSubscription = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [visible]);
 
   return (
     <Modal
@@ -120,8 +143,15 @@ export function Sheet({
 
           {scroll ? (
             <ScrollView
-              contentContainerStyle={styles.body}
-              keyboardShouldPersistTaps="handled"
+              automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+              contentContainerStyle={[
+                styles.body,
+                keyboardHeight > 0 && {
+                  paddingBottom: keyboardHeight + Space.xl,
+                },
+              ]}
+              keyboardDismissMode="none"
+              keyboardShouldPersistTaps="always"
               showsVerticalScrollIndicator={false}>
               {children}
             </ScrollView>
