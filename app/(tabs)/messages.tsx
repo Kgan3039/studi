@@ -7,7 +7,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/ui/Avatar';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { IconButton } from '@/components/ui/IconButton';
 import { LoadingState } from '@/components/ui/LoadingState';
 import {
   PullToRefreshIndicator,
@@ -327,7 +326,7 @@ export default function MessagesScreen() {
         type: "dm" as const,
         id: conversation.conversationId,
         name: conversation.otherParticipant?.displayName || "Student",
-        preview: conversation.lastMessagePreview || "Say hi before you arrive.",
+        preview: conversation.lastMessagePreview || "Say hi to your new study buddy",
         timestamp: conversation.lastMessageAt || conversation.updatedAt,
         conversation,
       })),
@@ -623,12 +622,6 @@ export default function MessagesScreen() {
                           ]}>
                           {rowContents}
                         </Pressable>
-                        <IconButton
-                          accessibilityLabel={`Remove ${otherName} from my Messages`}
-                          disabled={isRemoving}
-                          icon="trash"
-                          onPress={() => confirmRemoveSessionChat(chat.id)}
-                        />
                       </View>
                     </Swipeable>
                   );

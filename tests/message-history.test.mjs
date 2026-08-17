@@ -213,13 +213,13 @@ describe("Messages beta production wiring", () => {
     );
   });
 
-  it("offers an accessible non-swipe removal action with confirmation", () => {
+  it("offers an accessible swipe removal action with confirmation", () => {
     assert.match(messagesSource, /accessibilityLabel={`Remove \$\{otherName\} from my Messages`}/);
     assert.match(confirmationSource, /Remove from my Messages\?/);
     assert.match(confirmationSource, /This hides the chat only for you\./);
     assert.match(confirmationSource, /style: "cancel"/);
     assert.match(confirmationSource, /style: "destructive"/);
-    assert.match(messagesSource, /<IconButton/);
+    assert.doesNotMatch(messagesSource, /<IconButton/);
     assert.match(messagesSource, /platform: Platform\.OS/);
     assert.match(messagesSource, /window\.confirm\(message\)/);
   });
