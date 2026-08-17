@@ -1,0 +1,27 @@
+.git
+.github
+node_modules
+frontend/website
+.expo
+dist
+coverage
+.env
+.env.*
+*.log
+firestore-debug.log
+
+# Secrets / credentials
+*firebase-adminsdk*.json
+*service-account*.json
+*service_account*.json
+
+# Local-only files
+scripts/audit-session-rosters.mjs
+studi-design-system.json
+studi-product-demo-creative-brief.md
+studi-product-demo-spec.json
+
+# OS/editor junk
+.DS_Store
+.vscode
+.idea

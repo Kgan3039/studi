@@ -107,3 +107,18 @@ jobs:
 
       - name: Build website
         run: npm run build
+
+  docker:
+    name: Docker CI Environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Build CI image
+        run: docker build -f Dockerfile.ci -t studi-ci .
+
+      - name: Run CI container
+        run: docker run --rm studi-ci
