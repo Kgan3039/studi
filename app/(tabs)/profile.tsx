@@ -279,6 +279,19 @@ export default function ProfileScreen() {
     setCourseQuery('');
   }
 
+  function discardProfileEdits() {
+    const savedName = splitDisplayName(savedFields.displayName);
+    setFirstName(savedName.firstName);
+    setLastName(savedName.lastName);
+    setMajor(savedFields.major);
+    setYear(savedFields.year);
+    setPronouns(savedFields.pronouns);
+    setBio(savedFields.bio);
+    setIsBioFocused(false);
+    setBioLayout(null);
+    setIsEditingName(false);
+  }
+
   async function handleSaveProfile() {
     if (!currentUser) {
       return;
@@ -561,7 +574,7 @@ export default function ProfileScreen() {
 
       <Sheet
         visible={isEditingName}
-        onClose={() => setIsEditingName(false)}
+        onClose={discardProfileEdits}
         keyboardScrollTarget={isBioFocused ? bioLayout : null}
         title="Edit Profile"
         subtitle={nameStatus}
