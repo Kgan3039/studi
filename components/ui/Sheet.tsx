@@ -30,8 +30,8 @@ export type SheetProps = {
   footer?: ReactNode;
   /** Fires once the panel has finished dismissing (iOS Modal onDismiss). */
   onDismissed?: () => void;
-  /** Scrolls a focused field just above the keyboard when it opens. */
-  scrollToFocusedInputOnKeyboard?: boolean;
+  /** Keeps the focused field just above the pinned footer while the keyboard is open. */
+  keyboardScrollTarget?: { y: number; height: number } | null;
   /** Renders children directly instead of inside a ScrollView. */
   scroll?: boolean;
   children: ReactNode;
@@ -51,7 +51,7 @@ export function Sheet({
   headerAction,
   footer,
   onDismissed,
-  scrollToFocusedInputOnKeyboard = false,
+  keyboardScrollTarget = null,
   scroll = true,
   children,
 }: SheetProps) {
@@ -60,13 +60,12 @@ export function Sheet({
   const insets = useSafeAreaInsets();
   const { panelStyle, scrimStyle } = useOverlayEntrance(visible);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [focusedInputTarget, setFocusedInputTarget] = useState<number | null>(null);
+  const [scrollAreaHeight, setScrollAreaHeight] = useState(0);
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     if (!visible) {
       setKeyboardHeight(0);
-      setFocusedInputTarget(null);
       return;
     }
 
@@ -86,24 +85,20 @@ export function Sheet({
   }, [visible]);
 
   useEffect(() => {
-    if (
-      !scrollToFocusedInputOnKeyboard ||
-      keyboardHeight === 0 ||
-      focusedInputTarget === null
-    ) {
+    if (!keyboardScrollTarget || keyboardHeight === 0 || scrollAreaHeight === 0) {
       return;
     }
 
+    const targetOffset = Math.max(
+      0,
+      keyboardScrollTarget.y + keyboardScrollTarget.height - scrollAreaHeight + Space.md
+    );
     const timeout = setTimeout(() => {
-      scrollViewRef.current?.scrollResponderScrollNativeHandleToKeyboard(
-        focusedInputTarget,
-        Space.md,
-        true
-      );
+      scrollViewRef.current?.scrollTo({ animated: true, x: 0, y: targetOffset });
     }, 120);
 
     return () => clearTimeout(timeout);
-  }, [focusedInputTarget, keyboardHeight, scrollToFocusedInputOnKeyboard]);
+  }, [keyboardHeight, keyboardScrollTarget, scrollAreaHeight]);
 
   return (
     <Modal
@@ -169,11 +164,7 @@ export function Sheet({
 
           {scroll ? (
             <View
-              onFocus={(event) => {
-                if (scrollToFocusedInputOnKeyboard) {
-                  setFocusedInputTarget(event.nativeEvent.target);
-                }
-              }}
+              onLayout={(event) => setScrollAreaHeight(event.nativeEvent.layout.height)}
               style={styles.scrollArea}>
               <ScrollView
                 contentContainerStyle={[

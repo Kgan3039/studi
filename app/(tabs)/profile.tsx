@@ -130,6 +130,8 @@ export default function ProfileScreen() {
   const [year, setYear] = useState<UserYear | null>(null);
   const [pronouns, setPronouns] = useState('');
   const [bio, setBio] = useState('');
+  const [isBioFocused, setIsBioFocused] = useState(false);
+  const [bioLayout, setBioLayout] = useState<{ y: number; height: number } | null>(null);
   const [savedFields, setSavedFields] = useState<SavedProfileFields>(EMPTY_SAVED_FIELDS);
   const [courseQuery, setCourseQuery] = useState('');
   const [classes, setClasses] = useState<string[]>([]);
@@ -560,7 +562,7 @@ export default function ProfileScreen() {
       <Sheet
         visible={isEditingName}
         onClose={() => setIsEditingName(false)}
-        scrollToFocusedInputOnKeyboard
+        keyboardScrollTarget={isBioFocused ? bioLayout : null}
         title="Edit Profile"
         subtitle={nameStatus}
         footer={
@@ -646,12 +648,18 @@ export default function ProfileScreen() {
             value={pronouns}
           />
 
-          <View>
+          <View
+            onLayout={(event) => {
+              const { height, y } = event.nativeEvent.layout;
+              setBioLayout({ height, y });
+            }}>
             <TextInput
               editable={!isSaving}
               maxLength={PROFILE_BIO_MAX_LENGTH}
               multiline
+              onBlur={() => setIsBioFocused(false)}
               onChangeText={setBio}
+              onFocus={() => setIsBioFocused(true)}
               placeholder="What are you studying toward?"
               placeholderTextColor={placeholderColor}
               style={[styles.input, styles.bioInput, inputColors]}
