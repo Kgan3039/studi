@@ -651,7 +651,9 @@ export default function ProfileScreen() {
           <View
             onLayout={(event) => {
               const { height, y } = event.nativeEvent.layout;
-              setBioLayout({ height, y });
+              setBioLayout((current) =>
+                current && current.height === height && current.y === y ? current : { height, y }
+              );
             }}>
             <TextInput
               editable={!isSaving}
