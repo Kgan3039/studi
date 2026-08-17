@@ -173,8 +173,7 @@ export function Sheet({
                     paddingBottom: keyboardHeight + Space.xl,
                   },
                 ]}
-                keyboardDismissMode="none"
-                keyboardShouldPersistTaps="always"
+                keyboardShouldPersistTaps="handled"
                 ref={scrollViewRef}
                 showsVerticalScrollIndicator={false}>
                 {children}
