@@ -30,8 +30,8 @@ export type SheetProps = {
   footer?: ReactNode;
   /** Fires once the panel has finished dismissing (iOS Modal onDismiss). */
   onDismissed?: () => void;
-  /** Scrolls to the end when a focused field opens the keyboard. */
-  scrollToEndOnKeyboard?: boolean;
+  /** Scrolls a focused field just above the keyboard when it opens. */
+  scrollToFocusedInputOnKeyboard?: boolean;
   /** Renders children directly instead of inside a ScrollView. */
   scroll?: boolean;
   children: ReactNode;
@@ -51,7 +51,7 @@ export function Sheet({
   headerAction,
   footer,
   onDismissed,
-  scrollToEndOnKeyboard = false,
+  scrollToFocusedInputOnKeyboard = false,
   scroll = true,
   children,
 }: SheetProps) {
@@ -60,11 +60,13 @@ export function Sheet({
   const insets = useSafeAreaInsets();
   const { panelStyle, scrimStyle } = useOverlayEntrance(visible);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [focusedInputTarget, setFocusedInputTarget] = useState<number | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     if (!visible) {
       setKeyboardHeight(0);
+      setFocusedInputTarget(null);
       return;
     }
 
@@ -84,16 +86,24 @@ export function Sheet({
   }, [visible]);
 
   useEffect(() => {
-    if (!scrollToEndOnKeyboard || keyboardHeight === 0) {
+    if (
+      !scrollToFocusedInputOnKeyboard ||
+      keyboardHeight === 0 ||
+      focusedInputTarget === null
+    ) {
       return;
     }
 
     const timeout = setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
+      scrollViewRef.current?.scrollResponderScrollNativeHandleToKeyboard(
+        focusedInputTarget,
+        Space.md,
+        true
+      );
     }, 120);
 
     return () => clearTimeout(timeout);
-  }, [keyboardHeight, scrollToEndOnKeyboard]);
+  }, [focusedInputTarget, keyboardHeight, scrollToFocusedInputOnKeyboard]);
 
   return (
     <Modal
@@ -158,20 +168,27 @@ export function Sheet({
           </View>
 
           {scroll ? (
-            <ScrollView
-              automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
-              contentContainerStyle={[
-                styles.body,
-                keyboardHeight > 0 && {
-                  paddingBottom: keyboardHeight + Space.xl,
-                },
-              ]}
-              keyboardDismissMode="none"
-              keyboardShouldPersistTaps="always"
-              ref={scrollViewRef}
-              showsVerticalScrollIndicator={false}>
-              {children}
-            </ScrollView>
+            <View
+              onFocus={(event) => {
+                if (scrollToFocusedInputOnKeyboard) {
+                  setFocusedInputTarget(event.nativeEvent.target);
+                }
+              }}
+              style={styles.scrollArea}>
+              <ScrollView
+                contentContainerStyle={[
+                  styles.body,
+                  keyboardHeight > 0 && {
+                    paddingBottom: keyboardHeight + Space.xl,
+                  },
+                ]}
+                keyboardDismissMode="none"
+                keyboardShouldPersistTaps="always"
+                ref={scrollViewRef}
+                showsVerticalScrollIndicator={false}>
+                {children}
+              </ScrollView>
+            </View>
           ) : (
             children
           )}
@@ -229,6 +246,9 @@ const styles = StyleSheet.create({
     height: 32,
     justifyContent: 'center',
     width: 32,
+  },
+  scrollArea: {
+    flexShrink: 1,
   },
   body: {
     gap: Space.lg,
