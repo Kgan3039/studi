@@ -164,7 +164,10 @@ export function Sheet({
 
           {scroll ? (
             <View
-              onLayout={(event) => setScrollAreaHeight(event.nativeEvent.layout.height)}
+              onLayout={(event) => {
+                const height = event.nativeEvent.layout.height;
+                setScrollAreaHeight((current) => (current === height ? current : height));
+              }}
               style={styles.scrollArea}>
               <ScrollView
                 contentContainerStyle={[
