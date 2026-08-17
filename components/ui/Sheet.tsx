@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Animated,
   Keyboard,
@@ -30,6 +30,8 @@ export type SheetProps = {
   footer?: ReactNode;
   /** Fires once the panel has finished dismissing (iOS Modal onDismiss). */
   onDismissed?: () => void;
+  /** Scrolls to the end when a focused field opens the keyboard. */
+  scrollToEndOnKeyboard?: boolean;
   /** Renders children directly instead of inside a ScrollView. */
   scroll?: boolean;
   children: ReactNode;
@@ -49,6 +51,7 @@ export function Sheet({
   headerAction,
   footer,
   onDismissed,
+  scrollToEndOnKeyboard = false,
   scroll = true,
   children,
 }: SheetProps) {
@@ -57,6 +60,7 @@ export function Sheet({
   const insets = useSafeAreaInsets();
   const { panelStyle, scrimStyle } = useOverlayEntrance(visible);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     if (!visible) {
@@ -78,6 +82,18 @@ export function Sheet({
       hideSubscription.remove();
     };
   }, [visible]);
+
+  useEffect(() => {
+    if (!scrollToEndOnKeyboard || keyboardHeight === 0) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 120);
+
+    return () => clearTimeout(timeout);
+  }, [keyboardHeight, scrollToEndOnKeyboard]);
 
   return (
     <Modal
@@ -152,6 +168,7 @@ export function Sheet({
               ]}
               keyboardDismissMode="none"
               keyboardShouldPersistTaps="always"
+              ref={scrollViewRef}
               showsVerticalScrollIndicator={false}>
               {children}
             </ScrollView>
