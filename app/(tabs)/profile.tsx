@@ -104,6 +104,14 @@ function splitDisplayName(displayName: string | undefined) {
   };
 }
 
+// Keep emoji out of profile identity fields while preserving normal Unicode text.
+const PROFILE_IDENTITY_EMOJI_PATTERN =
+  /(?:[0-9#*]\uFE0F?\u20E3|[\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\uFE0F\u200D\u20E3])/gu;
+
+function stripProfileIdentityEmoji(value: string) {
+  return value.replace(PROFILE_IDENTITY_EMOJI_PATTERN, '');
+}
+
 export default function ProfileScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
@@ -274,9 +282,11 @@ export default function ProfileScreen() {
       return;
     }
 
-    const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
+    const cleanFirstName = stripProfileIdentityEmoji(firstName).trim();
+    const cleanLastName = stripProfileIdentityEmoji(lastName).trim();
+    const displayName = `${cleanFirstName} ${cleanLastName}`.trim();
 
-    if (!firstName.trim() || !lastName.trim()) {
+    if (!cleanFirstName || !cleanLastName) {
       setNameStatus('Enter both your first and last name.');
       Alert.alert('Profile Error', 'Please enter both your first and last name.');
       return;
@@ -284,8 +294,8 @@ export default function ProfileScreen() {
 
     const details = {
       year,
-      major: major.trim(),
-      pronouns: pronouns.trim(),
+      major: stripProfileIdentityEmoji(major).trim(),
+      pronouns: stripProfileIdentityEmoji(pronouns).trim(),
       bio: bio.trim(),
     };
     const nameChanged = displayName !== savedFields.displayName;
@@ -314,6 +324,8 @@ export default function ProfileScreen() {
         track('profile_updated', { fieldsChanged });
       }
       setSavedFields({ displayName, ...details });
+      setFirstName(cleanFirstName);
+      setLastName(cleanLastName);
       setMajor(details.major);
       setPronouns(details.pronouns);
       setBio(details.bio);
@@ -562,7 +574,7 @@ export default function ProfileScreen() {
             <TextInput
               autoCapitalize="words"
               editable={!isSaving}
-              onChangeText={setFirstName}
+              onChangeText={(value) => setFirstName(stripProfileIdentityEmoji(value))}
               placeholder="First name"
               placeholderTextColor={placeholderColor}
               style={[styles.input, styles.flexInput, inputColors]}
@@ -572,7 +584,7 @@ export default function ProfileScreen() {
             <TextInput
               autoCapitalize="words"
               editable={!isSaving}
-              onChangeText={setLastName}
+              onChangeText={(value) => setLastName(stripProfileIdentityEmoji(value))}
               placeholder="Last name"
               placeholderTextColor={placeholderColor}
               style={[styles.input, styles.flexInput, inputColors]}
@@ -584,7 +596,7 @@ export default function ProfileScreen() {
             autoCapitalize="words"
             editable={!isSaving}
             maxLength={PROFILE_MAJOR_MAX_LENGTH}
-            onChangeText={setMajor}
+            onChangeText={(value) => setMajor(stripProfileIdentityEmoji(value))}
             placeholder="Major (e.g. Computer Science)"
             placeholderTextColor={placeholderColor}
             style={[styles.input, inputColors]}
@@ -626,7 +638,7 @@ export default function ProfileScreen() {
             autoCapitalize="none"
             editable={!isSaving}
             maxLength={PROFILE_PRONOUNS_MAX_LENGTH}
-            onChangeText={setPronouns}
+            onChangeText={(value) => setPronouns(stripProfileIdentityEmoji(value))}
             placeholder="Pronouns (e.g. she/her)"
             placeholderTextColor={placeholderColor}
             style={[styles.input, inputColors]}
