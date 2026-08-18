@@ -10,7 +10,7 @@ Starting a DM was the only abuse-prone create in the ruleset with no throttle
 at all. Conversation IDs are deterministic sorted pairs, so one account could
 create a thread with every other user; each create pins `lastMessageAt` to the
 server clock and `app/(tabs)/messages.tsx` renders a message-less thread as a
-normal inbox row (`"Say hi before you arrive."`). The payload is a
+normal inbox row (`"Say hi to your new study buddy."`). The payload is a
 top-of-inbox row on every user in the beta, with no message to report.
 
 ## Why a counter, not the usual interval throttle
