@@ -327,7 +327,7 @@ export default function MessagesScreen() {
         type: "dm" as const,
         id: conversation.conversationId,
         name: conversation.otherParticipant?.displayName || "Student",
-        preview: conversation.lastMessagePreview || "Say hi before you arrive.",
+        preview: conversation.lastMessagePreview || "Say hi to your new study buddy.",
         timestamp: conversation.lastMessageAt || conversation.updatedAt,
         conversation,
       })),
