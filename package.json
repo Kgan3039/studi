@@ -27,7 +27,8 @@
     "test:message-history": "mocha tests/message-history.test.mjs",
     "test:analytics-routes": "mocha tests/analytics-routes.test.mjs",
     "test:push-token-ownership": "mocha tests/push-token-ownership.test.mjs",
-    "test:ci": "npm run test:notifications && npm run test:deletion && npm run test:map && npm run test:friends && npm run test:friend-request && npm run test:search && npm run test:session-blocks && npm run test:contact && npm run test:links && npm run test:catalog-requests && npm run test:auth-listener && npm run test:auth-verification && npm run test:session-create-retry && npm run test:message-history && npm run test:analytics-routes && npm run test:push-token-ownership"
+    "test:profile-edit": "mocha tests/profile-edit.test.mjs",
+    "test:ci": "npm run test:notifications && npm run test:deletion && npm run test:map && npm run test:friends && npm run test:friend-request && npm run test:search && npm run test:session-blocks && npm run test:contact && npm run test:links && npm run test:catalog-requests && npm run test:auth-listener && npm run test:auth-verification && npm run test:session-create-retry && npm run test:message-history && npm run test:analytics-routes && npm run test:push-token-ownership && npm run test:profile-edit"
   },
   "dependencies": {
     "@expo-google-fonts/arapey": "^0.4.1",

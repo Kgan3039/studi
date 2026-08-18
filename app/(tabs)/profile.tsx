@@ -31,6 +31,7 @@ import { Sheet } from '@/components/ui/Sheet';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getProfileSaveErrorMessage, stripProfileIdentityEmoji } from '@/lib/profile-edit';
 import { identifyUser, track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
@@ -102,14 +103,6 @@ function splitDisplayName(displayName: string | undefined) {
     firstName,
     lastName: rest.join(' '),
   };
-}
-
-// Keep emoji out of profile identity fields while preserving normal Unicode text.
-const PROFILE_IDENTITY_EMOJI_PATTERN =
-  /(?:[0-9#*]\uFE0F?\u20E3|[\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\uFE0F\u200D\u20E3])/gu;
-
-function stripProfileIdentityEmoji(value: string) {
-  return value.replace(PROFILE_IDENTITY_EMOJI_PATTERN, '');
 }
 
 export default function ProfileScreen() {
@@ -279,14 +272,7 @@ export default function ProfileScreen() {
     setCourseQuery('');
   }
 
-  function discardProfileEdits() {
-    const savedName = splitDisplayName(savedFields.displayName);
-    setFirstName(savedName.firstName);
-    setLastName(savedName.lastName);
-    setMajor(savedFields.major);
-    setYear(savedFields.year);
-    setPronouns(savedFields.pronouns);
-    setBio(savedFields.bio);
+  function closeProfileEditor() {
     setIsBioFocused(false);
     setBioLayout(null);
     setIsEditingName(false);
@@ -345,9 +331,9 @@ export default function ProfileScreen() {
       setPronouns(details.pronouns);
       setBio(details.bio);
       setNameStatus(`Saved as ${displayName}.`);
-      setIsEditingName(false);
+      closeProfileEditor();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to save your profile right now.';
+      const message = getProfileSaveErrorMessage(error);
       setNameStatus(message);
       Alert.alert('Profile Error', message);
     } finally {
@@ -574,7 +560,7 @@ export default function ProfileScreen() {
 
       <Sheet
         visible={isEditingName}
-        onClose={discardProfileEdits}
+        onClose={closeProfileEditor}
         keyboardScrollTarget={isBioFocused ? bioLayout : null}
         title="Edit Profile"
         subtitle={nameStatus}
@@ -591,6 +577,7 @@ export default function ProfileScreen() {
               autoCapitalize="words"
               editable={!isSaving}
               onChangeText={(value) => setFirstName(stripProfileIdentityEmoji(value))}
+              onFocus={() => setIsBioFocused(false)}
               placeholder="First name"
               placeholderTextColor={placeholderColor}
               style={[styles.input, styles.flexInput, inputColors]}
@@ -601,6 +588,7 @@ export default function ProfileScreen() {
               autoCapitalize="words"
               editable={!isSaving}
               onChangeText={(value) => setLastName(stripProfileIdentityEmoji(value))}
+              onFocus={() => setIsBioFocused(false)}
               placeholder="Last name"
               placeholderTextColor={placeholderColor}
               style={[styles.input, styles.flexInput, inputColors]}
@@ -613,6 +601,7 @@ export default function ProfileScreen() {
             editable={!isSaving}
             maxLength={PROFILE_MAJOR_MAX_LENGTH}
             onChangeText={(value) => setMajor(stripProfileIdentityEmoji(value))}
+            onFocus={() => setIsBioFocused(false)}
             placeholder="Major (e.g. Computer Science)"
             placeholderTextColor={placeholderColor}
             style={[styles.input, inputColors]}
@@ -655,6 +644,7 @@ export default function ProfileScreen() {
             editable={!isSaving}
             maxLength={PROFILE_PRONOUNS_MAX_LENGTH}
             onChangeText={(value) => setPronouns(stripProfileIdentityEmoji(value))}
+            onFocus={() => setIsBioFocused(false)}
             placeholder="Pronouns (e.g. she/her)"
             placeholderTextColor={placeholderColor}
             style={[styles.input, inputColors]}

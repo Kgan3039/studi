@@ -17,6 +17,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useOverlayEntrance } from '@/components/ui/overlay-motion';
 import { Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getKeyboardScrollOffset } from '@/lib/sheet-keyboard-scroll';
 
 export type SheetProps = {
   visible: boolean;
@@ -51,7 +52,7 @@ export function Sheet({
   headerAction,
   footer,
   onDismissed,
-  keyboardScrollTarget = null,
+  keyboardScrollTarget,
   scroll = true,
   children,
 }: SheetProps) {
@@ -62,9 +63,10 @@ export function Sheet({
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [scrollAreaHeight, setScrollAreaHeight] = useState(0);
   const scrollViewRef = useRef<ScrollView>(null);
+  const keyboardScrollingEnabled = keyboardScrollTarget !== undefined;
 
   useEffect(() => {
-    if (!visible) {
+    if (!visible || !keyboardScrollingEnabled) {
       setKeyboardHeight(0);
       return;
     }
@@ -82,17 +84,19 @@ export function Sheet({
       showSubscription.remove();
       hideSubscription.remove();
     };
-  }, [visible]);
+  }, [keyboardScrollingEnabled, visible]);
 
   useEffect(() => {
     if (!keyboardScrollTarget || keyboardHeight === 0 || scrollAreaHeight === 0) {
       return;
     }
 
-    const targetOffset = Math.max(
-      0,
-      keyboardScrollTarget.y + keyboardScrollTarget.height - scrollAreaHeight + Space.md
-    );
+    const targetOffset = getKeyboardScrollOffset({
+      gap: Space.md,
+      targetHeight: keyboardScrollTarget.height,
+      targetY: keyboardScrollTarget.y,
+      viewportHeight: scrollAreaHeight,
+    });
     const timeout = setTimeout(() => {
       scrollViewRef.current?.scrollTo({ animated: true, x: 0, y: targetOffset });
     }, 120);
@@ -162,7 +166,7 @@ export function Sheet({
             </Pressable>
           </View>
 
-          {scroll ? (
+          {scroll && keyboardScrollingEnabled ? (
             <View
               onLayout={(event) => {
                 const height = event.nativeEvent.layout.height;
@@ -182,6 +186,13 @@ export function Sheet({
                 {children}
               </ScrollView>
             </View>
+          ) : scroll ? (
+            <ScrollView
+              contentContainerStyle={styles.body}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}>
+              {children}
+            </ScrollView>
           ) : (
             children
           )}
