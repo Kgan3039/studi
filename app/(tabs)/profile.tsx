@@ -31,6 +31,7 @@ import { Sheet } from '@/components/ui/Sheet';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getProfileSaveErrorMessage, stripProfileIdentityEmoji } from '@/lib/profile-edit';
 import { identifyUser, track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
@@ -122,6 +123,8 @@ export default function ProfileScreen() {
   const [year, setYear] = useState<UserYear | null>(null);
   const [pronouns, setPronouns] = useState('');
   const [bio, setBio] = useState('');
+  const [isBioFocused, setIsBioFocused] = useState(false);
+  const [bioLayout, setBioLayout] = useState<{ y: number; height: number } | null>(null);
   const [savedFields, setSavedFields] = useState<SavedProfileFields>(EMPTY_SAVED_FIELDS);
   const [courseQuery, setCourseQuery] = useState('');
   const [classes, setClasses] = useState<string[]>([]);
@@ -269,14 +272,22 @@ export default function ProfileScreen() {
     setCourseQuery('');
   }
 
+  function closeProfileEditor() {
+    setIsBioFocused(false);
+    setBioLayout(null);
+    setIsEditingName(false);
+  }
+
   async function handleSaveProfile() {
     if (!currentUser) {
       return;
     }
 
-    const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
+    const cleanFirstName = stripProfileIdentityEmoji(firstName).trim();
+    const cleanLastName = stripProfileIdentityEmoji(lastName).trim();
+    const displayName = `${cleanFirstName} ${cleanLastName}`.trim();
 
-    if (!firstName.trim() || !lastName.trim()) {
+    if (!cleanFirstName || !cleanLastName) {
       setNameStatus('Enter both your first and last name.');
       Alert.alert('Profile Error', 'Please enter both your first and last name.');
       return;
@@ -284,8 +295,8 @@ export default function ProfileScreen() {
 
     const details = {
       year,
-      major: major.trim(),
-      pronouns: pronouns.trim(),
+      major: stripProfileIdentityEmoji(major).trim(),
+      pronouns: stripProfileIdentityEmoji(pronouns).trim(),
       bio: bio.trim(),
     };
     const nameChanged = displayName !== savedFields.displayName;
@@ -314,13 +325,15 @@ export default function ProfileScreen() {
         track('profile_updated', { fieldsChanged });
       }
       setSavedFields({ displayName, ...details });
+      setFirstName(cleanFirstName);
+      setLastName(cleanLastName);
       setMajor(details.major);
       setPronouns(details.pronouns);
       setBio(details.bio);
       setNameStatus(`Saved as ${displayName}.`);
-      setIsEditingName(false);
+      closeProfileEditor();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to save your profile right now.';
+      const message = getProfileSaveErrorMessage(error);
       setNameStatus(message);
       Alert.alert('Profile Error', message);
     } finally {
@@ -547,7 +560,8 @@ export default function ProfileScreen() {
 
       <Sheet
         visible={isEditingName}
-        onClose={() => setIsEditingName(false)}
+        onClose={closeProfileEditor}
+        keyboardScrollTarget={isBioFocused ? bioLayout : null}
         title="Edit Profile"
         subtitle={nameStatus}
         footer={
@@ -562,7 +576,8 @@ export default function ProfileScreen() {
             <TextInput
               autoCapitalize="words"
               editable={!isSaving}
-              onChangeText={setFirstName}
+              onChangeText={(value) => setFirstName(stripProfileIdentityEmoji(value))}
+              onFocus={() => setIsBioFocused(false)}
               placeholder="First name"
               placeholderTextColor={placeholderColor}
               style={[styles.input, styles.flexInput, inputColors]}
@@ -572,7 +587,8 @@ export default function ProfileScreen() {
             <TextInput
               autoCapitalize="words"
               editable={!isSaving}
-              onChangeText={setLastName}
+              onChangeText={(value) => setLastName(stripProfileIdentityEmoji(value))}
+              onFocus={() => setIsBioFocused(false)}
               placeholder="Last name"
               placeholderTextColor={placeholderColor}
               style={[styles.input, styles.flexInput, inputColors]}
@@ -584,7 +600,8 @@ export default function ProfileScreen() {
             autoCapitalize="words"
             editable={!isSaving}
             maxLength={PROFILE_MAJOR_MAX_LENGTH}
-            onChangeText={setMajor}
+            onChangeText={(value) => setMajor(stripProfileIdentityEmoji(value))}
+            onFocus={() => setIsBioFocused(false)}
             placeholder="Major (e.g. Computer Science)"
             placeholderTextColor={placeholderColor}
             style={[styles.input, inputColors]}
@@ -626,19 +643,28 @@ export default function ProfileScreen() {
             autoCapitalize="none"
             editable={!isSaving}
             maxLength={PROFILE_PRONOUNS_MAX_LENGTH}
-            onChangeText={setPronouns}
+            onChangeText={(value) => setPronouns(stripProfileIdentityEmoji(value))}
+            onFocus={() => setIsBioFocused(false)}
             placeholder="Pronouns (e.g. she/her)"
             placeholderTextColor={placeholderColor}
             style={[styles.input, inputColors]}
             value={pronouns}
           />
 
-          <View>
+          <View
+            onLayout={(event) => {
+              const { height, y } = event.nativeEvent.layout;
+              setBioLayout((current) =>
+                current && current.height === height && current.y === y ? current : { height, y }
+              );
+            }}>
             <TextInput
               editable={!isSaving}
               maxLength={PROFILE_BIO_MAX_LENGTH}
               multiline
+              onBlur={() => setIsBioFocused(false)}
               onChangeText={setBio}
+              onFocus={() => setIsBioFocused(true)}
               placeholder="What are you studying toward?"
               placeholderTextColor={placeholderColor}
               style={[styles.input, styles.bioInput, inputColors]}

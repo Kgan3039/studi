@@ -1,6 +1,7 @@
-import { type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Animated,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,6 +17,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useOverlayEntrance } from '@/components/ui/overlay-motion';
 import { Colors, Elevation, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getKeyboardScrollOffset } from '@/lib/sheet-keyboard-scroll';
 
 export type SheetProps = {
   visible: boolean;
@@ -29,6 +31,8 @@ export type SheetProps = {
   footer?: ReactNode;
   /** Fires once the panel has finished dismissing (iOS Modal onDismiss). */
   onDismissed?: () => void;
+  /** Keeps the focused field just above the pinned footer while the keyboard is open. */
+  keyboardScrollTarget?: { y: number; height: number } | null;
   /** Renders children directly instead of inside a ScrollView. */
   scroll?: boolean;
   children: ReactNode;
@@ -48,6 +52,7 @@ export function Sheet({
   headerAction,
   footer,
   onDismissed,
+  keyboardScrollTarget,
   scroll = true,
   children,
 }: SheetProps) {
@@ -55,6 +60,49 @@ export function Sheet({
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
   const { panelStyle, scrimStyle } = useOverlayEntrance(visible);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [scrollAreaHeight, setScrollAreaHeight] = useState(0);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const keyboardScrollingEnabled = keyboardScrollTarget !== undefined;
+
+  useEffect(() => {
+    if (!visible || !keyboardScrollingEnabled) {
+      setKeyboardHeight(0);
+      return;
+    }
+
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSubscription = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [keyboardScrollingEnabled, visible]);
+
+  useEffect(() => {
+    if (!keyboardScrollTarget || keyboardHeight === 0 || scrollAreaHeight === 0) {
+      return;
+    }
+
+    const targetOffset = getKeyboardScrollOffset({
+      gap: Space.md,
+      targetHeight: keyboardScrollTarget.height,
+      targetY: keyboardScrollTarget.y,
+      viewportHeight: scrollAreaHeight,
+    });
+    const timeout = setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ animated: true, x: 0, y: targetOffset });
+    }, 120);
+
+    return () => clearTimeout(timeout);
+  }, [keyboardHeight, keyboardScrollTarget, scrollAreaHeight]);
 
   return (
     <Modal
@@ -118,7 +166,27 @@ export function Sheet({
             </Pressable>
           </View>
 
-          {scroll ? (
+          {scroll && keyboardScrollingEnabled ? (
+            <View
+              onLayout={(event) => {
+                const height = event.nativeEvent.layout.height;
+                setScrollAreaHeight((current) => (current === height ? current : height));
+              }}
+              style={styles.scrollArea}>
+              <ScrollView
+                contentContainerStyle={[
+                  styles.body,
+                  keyboardHeight > 0 && {
+                    paddingBottom: keyboardHeight + Space.xl,
+                  },
+                ]}
+                keyboardShouldPersistTaps="handled"
+                ref={scrollViewRef}
+                showsVerticalScrollIndicator={false}>
+                {children}
+              </ScrollView>
+            </View>
+          ) : scroll ? (
             <ScrollView
               contentContainerStyle={styles.body}
               keyboardShouldPersistTaps="handled"
@@ -182,6 +250,9 @@ const styles = StyleSheet.create({
     height: 32,
     justifyContent: 'center',
     width: 32,
+  },
+  scrollArea: {
+    flexShrink: 1,
   },
   body: {
     gap: Space.lg,
