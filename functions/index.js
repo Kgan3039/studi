@@ -12,6 +12,7 @@ const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
 const { Expo } = require("expo-server-sdk");
+const { loadPushPreference } = require("./notification-preferences");
 const {
   blockPairIdsFor,
   dmNotificationId,
@@ -193,36 +194,27 @@ async function sendPushToUsers(userIds, payload) {
 
 const NOTIFICATION_RETENTION_DAYS = 60;
 
-// group_message / friend_request / friend_accepted are reserved for future
-// PRs — mapped here so the pipeline needs no changes when they land.
-const PREF_KEY_BY_NOTIFICATION_TYPE = {
-  dm_message: "dmMessages",
-  session_joined: "sessionActivity",
-  session_updated: "sessionActivity",
-  session_cancelled: "sessionActivity",
-  session_reminder: "sessionReminders",
-  group_message: "groupMessages",
-  friend_request: "friendRequests",
-  friend_accepted: "friendRequests",
-};
-
-// Missing settings doc, missing key, or an unreadable value all mean enabled —
-// only an explicit `false` suppresses push (matches the client default).
+// Missing settings doc/key means enabled. A real read failure is different:
+// fail closed for push because the user may have opted out. The persistent
+// in-app record is created before this check and remains available.
 async function isPushEnabled(uid, notificationType) {
-  const prefKey = PREF_KEY_BY_NOTIFICATION_TYPE[notificationType];
-
-  try {
-    const snap = await db
-      .collection("users")
-      .doc(uid)
-      .collection("private")
-      .doc("settings")
-      .get();
-    return snap.data()?.notificationPrefs?.[prefKey] !== false;
-  } catch (error) {
-    console.warn("Notification pref read failed; defaulting to enabled", error);
-    return true;
-  }
+  return loadPushPreference({
+    notificationType,
+    readSettings: async () => {
+      const snap = await db
+        .collection("users")
+        .doc(uid)
+        .collection("private")
+        .doc("settings")
+        .get();
+      return snap.exists ? snap.data() : undefined;
+    },
+    onReadError: (error) => {
+      console.warn("Notification pref read failed; suppressing push", {
+        code: typeof error?.code === "string" ? error.code : "unknown",
+      });
+    },
+  });
 }
 
 /**

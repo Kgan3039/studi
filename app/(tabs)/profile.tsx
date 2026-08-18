@@ -31,6 +31,7 @@ import { Sheet } from '@/components/ui/Sheet';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import { getProfileSaveErrorMessage, stripProfileIdentityEmoji } from '@/lib/profile-edit';
 import { identifyUser, track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -209,7 +210,7 @@ export default function ProfileScreen() {
             : 'No classes saved yet.'
         );
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unable to load your profile.';
+        const message = getUserFacingErrorMessage(error, 'profileLoad');
         setNameStatus(message);
         setClassesStatus(message);
       }
@@ -358,7 +359,7 @@ export default function ProfileScreen() {
       );
       setIsEditing(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to save classes right now.';
+      const message = getUserFacingErrorMessage(error, 'classes');
       setClassesStatus(message);
       Alert.alert('Classes Error', message);
     } finally {

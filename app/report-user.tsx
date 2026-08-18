@@ -24,6 +24,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import { blockUser, reportUser } from '@/lib/firestore';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import { rememberReportedUser } from '@/lib/reported-users';
 import type { User } from 'firebase/auth';
 
@@ -31,10 +32,13 @@ const REPORT_REASONS = ['Spam', 'Harassment', 'Unsafe behavior', 'Impersonation'
 
 export default function ReportUserScreen() {
   const router = useRouter();
-  const { reportedUserId, reportedUserName, context } = useLocalSearchParams<{
+  const { reportedUserId, reportedUserName, context, contentType, contentId, threadId } = useLocalSearchParams<{
     context?: string;
+    contentId?: string;
+    contentType?: 'direct_message' | 'session_message';
     reportedUserId?: string;
     reportedUserName?: string;
+    threadId?: string;
   }>();
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
@@ -44,6 +48,8 @@ export default function ReportUserScreen() {
   const [details, setDetails] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [confirmSubmit, setConfirmSubmit] = useState(false);
+  const [blockRetryNeeded, setBlockRetryNeeded] = useState(false);
+  const [isRetryingBlock, setIsRetryingBlock] = useState(false);
 
   const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
   // Presented as a transparentModal route, so it drives its own entrance.
@@ -58,6 +64,9 @@ export default function ReportUserScreen() {
   }, []);
 
   async function handleSubmitReport() {
+    if (isSubmitting || blockRetryNeeded) {
+      return;
+    }
     if (!currentUser || !reportedUserId) {
       Alert.alert('Report Error', 'You need to be signed in to submit a report.');
       return;
@@ -65,31 +74,64 @@ export default function ReportUserScreen() {
 
     try {
       setIsSubmitting(true);
-      await reportUser(currentUser.uid, reportedUserId, selectedReason, details, context || 'general');
+      await reportUser(
+        currentUser.uid,
+        reportedUserId,
+        selectedReason,
+        details,
+        context || 'general',
+        contentType && contentId && threadId ? { contentType, contentId, threadId } : undefined
+      );
       track('report_submitted', { reason: selectedReason, context: context || 'general' });
       await rememberReportedUser(reportedUserId);
 
       // Reporting someone always blocks them too: nobody wants to keep hearing
       // from a person they just reported while the review is pending.
+      let didBlock = false;
       try {
         await blockUser(currentUser.uid, reportedUserId);
         track('user_blocked', { context: 'report' });
+        didBlock = true;
       } catch {
-        // The report is filed either way — a failed block must not look like a
-        // failed report.
+        setBlockRetryNeeded(true);
       }
 
       setConfirmSubmit(false);
-      Alert.alert(
-        'Report sent',
-        `Thanks for flagging this. ${reportedUserName || 'This student'} has been blocked while our team reviews it.`
-      );
-      router.back();
+      if (didBlock) {
+        Alert.alert(
+          'Report Sent',
+          `Thanks for flagging this. ${reportedUserName || 'This student'} has been blocked while our team reviews it.`
+        );
+        router.back();
+      } else {
+        Alert.alert(
+          'Report Sent',
+          "Your report was sent, but we couldn't block this student. Use Try Blocking Again below."
+        );
+      }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to submit report right now.';
-      Alert.alert('Report Error', message);
+      Alert.alert('Report Error', getUserFacingErrorMessage(error, 'report'));
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleRetryBlock() {
+    if (!currentUser || !reportedUserId || isRetryingBlock) {
+      return;
+    }
+
+    try {
+      setIsRetryingBlock(true);
+      await blockUser(currentUser.uid, reportedUserId);
+      track('user_blocked', { context: 'report_retry' });
+      setBlockRetryNeeded(false);
+      Alert.alert('Student Blocked', `${reportedUserName || 'This student'} has been blocked.`);
+      router.back();
+    } catch {
+      Alert.alert('Unable to Block', 'Unable to block this student right now. Please try again.');
+    } finally {
+      setIsRetryingBlock(false);
     }
   }
 
@@ -150,6 +192,19 @@ export default function ReportUserScreen() {
             </Text>
           </View>
 
+          {blockRetryNeeded ? (
+            <View style={styles.fieldGroup}>
+              <Text style={[TypeScale.body, { color: palette.text }]}>Your report was sent.</Text>
+              <Text style={[TypeScale.caption, { color: palette.icon }]}>Blocking did not complete.</Text>
+              <Button
+                label="Try Blocking Again"
+                loading={isRetryingBlock}
+                onPress={handleRetryBlock}
+                variant="secondary"
+              />
+            </View>
+          ) : null}
+
           <View style={styles.fieldGroup}>
             <Text style={[TypeScale.heading, { color: palette.text }]}>What happened?</Text>
             <View style={styles.chipRow}>
@@ -190,6 +245,7 @@ export default function ReportUserScreen() {
           </View>
 
           <Button
+            disabled={blockRetryNeeded}
             fullWidth
             label="Submit report"
             loading={isSubmitting}

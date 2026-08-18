@@ -19,6 +19,8 @@ using an owner/editor account.
     `Impersonation`, `Other`
   - `details` — free text from the reporter (≤ 1000 chars)
   - `context` — where the report came from (e.g. `conversation`, `session`)
+  - optional `contentType`, `contentId`, and `threadId` — private pointers to
+    the specific DM or session-chat message selected by the reporter
   - `createdAt` — server timestamp
 
 ## Who reviews, and how often
@@ -55,15 +57,22 @@ In roughly escalating order:
 3. **Recommend blocking** — reply to the reporter suggesting they block the
    user in-app. Blocks are enforced server-side: they stop new conversations,
    message sends, conversation metadata bumps, and session joins.
-4. **Manually remove abusive content** — delete the offending message doc(s)
-   under `conversations/{id}/messages`, or delete/cancel an abusive session
-   doc, directly in the console. Clients cannot do this, but admin console
-   access bypasses the rules.
-5. **Disable or delete the account (severe cases)** — Firebase Console →
-   Authentication → find the user → **Disable account** (reversible,
-   preferred) or **Delete account**. If deleting, also clean up their
-   `users/{uid}` doc and `users/{uid}/private` subcollection so no orphaned
-   profile remains.
+4. **Remove abusive content** — preserve the report, then use authorized Admin
+   access to remove only the identified message or cancel the identified
+   session. Do not hard-delete a session merely to hide it; cancellation keeps
+   participant history coherent.
+5. **Suspend an account (severe or urgent cases)** — Firebase Console →
+   Authentication → find the user → **Disable account**. This is reversible
+   and is the correct immediate containment action. Record the uid, reason,
+   acting moderator, and time in the private moderation log.
+6. **Permanently delete an account** — never manually delete only the Auth user
+   or `users/{uid}` profile. That bypasses Studi's resumable deletion state
+   machine and can orphan messages, friendships, tokens, and subcollections.
+   Permanent deletion must run through the existing account-deletion runner:
+   an active `accountDeletionJobs/{uid}` marker followed by
+   `scripts/resume-account-deletion.js <uid>` using approved production Admin
+   credentials. Escalate to the app owner before creating or resuming a job.
+   The runner deletes Auth last and records failure/resume state.
 
 ## Escalation cases
 
@@ -85,6 +94,18 @@ Treat these as same-day, act-first-investigate-later:
 
 When in doubt, **disable** (reversible) rather than delete, and keep the
 report docs intact.
+
+## Report retention and operational escalation
+
+- Reports are moderation evidence and are not removed by ordinary client
+  account deletion. The exact retention period, deletion authority, and legal
+  hold process are a **HUMAN POLICY DECISION**; do not invent or apply a period
+  ad hoc in the console.
+- Escalate credible imminent threats to the app owner immediately and follow
+  UW–Madison/emergency procedures appropriate to the situation. This runbook
+  does not replace legal or campus-safety guidance.
+- Any failed deletion job, uncertain ownership transfer, or cleanup error must
+  be escalated rather than worked around with manual Auth/profile deletion.
 
 ## Known gaps (post-launch work)
 

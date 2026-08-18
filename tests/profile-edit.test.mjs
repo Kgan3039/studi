@@ -8,6 +8,7 @@ const {
   SAFE_PROFILE_SAVE_AUTH_ERROR,
   SAFE_PROFILE_SAVE_ERROR,
   SAFE_PROFILE_SAVE_NETWORK_ERROR,
+  SAFE_PROFILE_MODERATION_ERROR,
   getProfileSaveErrorMessage,
   stripProfileIdentityEmoji,
 } = profileEditModule;
@@ -41,6 +42,12 @@ describe('profile identity emoji sanitizer', () => {
 });
 
 describe('profile save error mapping', () => {
+  it('uses fixed copy for moderated profile text', () => {
+    assert.equal(
+      getProfileSaveErrorMessage({ name: 'ObjectionableContentError', message: 'raw content' }),
+      SAFE_PROFILE_MODERATION_ERROR
+    );
+  });
   it('uses fixed authentication and verification guidance', () => {
     for (const code of [
       'unauthenticated',

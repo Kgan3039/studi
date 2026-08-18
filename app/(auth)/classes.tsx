@@ -25,6 +25,7 @@ import { identifyUser, track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import { UW_COURSE_CATALOG, formatCourseTitle, searchCourses } from '@/lib/catalog';
 import { getUserProfile, invalidateProfileCache, updateUserClasses } from '@/lib/firestore';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import type { User } from 'firebase/auth';
 
 export default function OnboardingClassesScreen() {
@@ -111,8 +112,7 @@ export default function OnboardingClassesScreen() {
       identifyUser(currentUser.uid, { classCount: classes.length });
       router.replace('/profile-setup');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to save classes right now.';
-      Alert.alert('Classes Error', message);
+      Alert.alert('Classes Error', getUserFacingErrorMessage(error, 'classes'));
     } finally {
       setIsSaving(false);
     }

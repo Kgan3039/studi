@@ -28,7 +28,11 @@
     "test:analytics-routes": "mocha tests/analytics-routes.test.mjs",
     "test:push-token-ownership": "mocha tests/push-token-ownership.test.mjs",
     "test:profile-edit": "mocha tests/profile-edit.test.mjs",
-    "test:ci": "npm run test:notifications && npm run test:deletion && npm run test:map && npm run test:friends && npm run test:friend-request && npm run test:search && npm run test:session-blocks && npm run test:contact && npm run test:links && npm run test:catalog-requests && npm run test:auth-listener && npm run test:auth-verification && npm run test:session-create-retry && npm run test:message-history && npm run test:analytics-routes && npm run test:push-token-ownership && npm run test:profile-edit"
+    "test:content-moderation": "mocha tests/content-moderation.test.mjs",
+    "test:user-facing-errors": "mocha tests/user-facing-errors.test.mjs",
+    "test:notification-preferences": "mocha tests/notification-preferences.test.mjs",
+    "test:release-safety": "mocha tests/release-safety.test.mjs",
+    "test:ci": "npm run test:notifications && npm run test:deletion && npm run test:map && npm run test:friends && npm run test:friend-request && npm run test:search && npm run test:session-blocks && npm run test:contact && npm run test:links && npm run test:catalog-requests && npm run test:auth-listener && npm run test:auth-verification && npm run test:session-create-retry && npm run test:message-history && npm run test:analytics-routes && npm run test:push-token-ownership && npm run test:profile-edit && npm run test:content-moderation && npm run test:user-facing-errors && npm run test:notification-preferences && npm run test:release-safety"
   },
   "dependencies": {
     "@expo-google-fonts/arapey": "^0.4.1",
@@ -39,11 +43,11 @@
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
     "@sentry/react-native": "~7.2.0",
-    "expo": "~54.0.34",
+    "expo": "~54.0.37",
     "expo-application": "~7.0.8",
-    "expo-constants": "~18.0.13",
+    "expo-constants": "~18.0.14",
     "expo-device": "~8.0.10",
-    "expo-file-system": "~19.0.23",
+    "expo-file-system": "~19.0.24",
     "expo-font": "~14.0.12",
     "expo-haptics": "~15.0.8",
     "expo-image": "~3.0.11",

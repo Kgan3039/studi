@@ -20,7 +20,9 @@ import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
+import { ObjectionableContentError } from '@/lib/content-moderation';
 import { invalidateProfileCache, updateUserDisplayName } from '@/lib/firestore';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import type { User } from 'firebase/auth';
 
 function splitDisplayName(displayName: string | null | undefined) {
@@ -92,7 +94,10 @@ export default function ProfileSetupScreen() {
       track('onboarding_complete');
       router.replace('/');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to save your name right now.';
+      const message =
+        error instanceof ObjectionableContentError
+          ? error.message
+          : getUserFacingErrorMessage(error, 'profile');
       Alert.alert('Name Error', message);
     } finally {
       setIsSaving(false);

@@ -39,6 +39,7 @@ import {
 } from "@/lib/catalog-request";
 import { auth, db } from "../firebaseConfig";
 import { track } from "./analytics";
+import { assertAllowedUserGeneratedText } from "./content-moderation";
 import {
   CreateSessionValidationError,
   createWithStaleVerificationRetry,
@@ -74,12 +75,7 @@ function rateLimitDoc(userId: string, action: RateLimitedAction) {
   return doc(db, COLLECTIONS.rateLimits, userId, "actions", action);
 }
 
-/**
- * Phase 1 bound interval limiter. Updated clients bind the limiter advance to
- * one exact Firestore resource path. Rules temporarily accept the legacy
- * `{ updatedAt }` shape until the rollout in docs/rate-limit-rollout.md reaches
- * its Phase 2 cutover.
- */
+/** Bind one limiter advance to exactly one Firestore resource path. */
 function stageBoundRateLimit(
   batch: ReturnType<typeof writeBatch>,
   userId: string,
@@ -92,11 +88,7 @@ function stageBoundRateLimit(
   });
 }
 
-/**
- * Phase 1 friend-request limiter. The request id binds this limiter advance to
- * one deterministic request create; legacy clients still write only updatedAt
- * until the Phase 2 rules cutover documented in docs/friend-request-cooldown-rollout.md.
- */
+/** Bind one friend-request limiter advance to one deterministic request id. */
 export function stageFriendRequestRateLimit(
   batch: ReturnType<typeof writeBatch>,
   userId: string,
@@ -420,6 +412,9 @@ export async function createOrUpdateUserProfile(
   userId: string,
   data: { email: string; displayName?: string }
 ) {
+  if (data.displayName) {
+    assertAllowedUserGeneratedText(data.displayName);
+  }
   const publicRef = doc(db, COLLECTIONS.users, userId);
   const privateRef = doc(db, COLLECTIONS.users, userId, "private", "profile");
   const existing = await getDoc(publicRef);
@@ -542,6 +537,7 @@ export async function updateUserDisplayName(userId: string, displayName: string)
   if (!trimmed || trimmed.length > 60) {
     throw new Error("Display name must be 1–60 characters.");
   }
+  assertAllowedUserGeneratedText(trimmed);
 
   await updateDoc(doc(db, COLLECTIONS.users, userId), {
     displayName: trimmed,
@@ -575,6 +571,10 @@ export async function updateUserProfileDetails(userId: string, details: UserProf
   const major = details.major.trim();
   const pronouns = details.pronouns.trim();
   const bio = details.bio.trim();
+
+  assertAllowedUserGeneratedText(major);
+  assertAllowedUserGeneratedText(pronouns);
+  assertAllowedUserGeneratedText(bio);
 
   if (major.length > PROFILE_MAJOR_MAX_LENGTH) {
     throw new Error(`Major must be ${PROFILE_MAJOR_MAX_LENGTH} characters or fewer.`);
@@ -1214,6 +1214,7 @@ export async function updateSession(
   if (!title) {
     throw new CreateSessionValidationError("Add a title before saving the session.");
   }
+  assertAllowedUserGeneratedText(title);
 
   const update = {
     classId: input.classId.trim().toUpperCase(),
@@ -1245,6 +1246,7 @@ export async function createSession(input: {
   /** Seats including the host, 2–20. */
   capacity: number;
 }): Promise<string> {
+  assertAllowedUserGeneratedText(input.title);
   if (
     !Number.isInteger(input.capacity) ||
     input.capacity < SESSION_CAPACITY_MIN ||
@@ -1320,6 +1322,7 @@ export class ConversationQuotaError extends Error {
 type ConversationQuotaDoc = {
   windowStart: unknown;
   count: unknown;
+  lastConversationId?: unknown;
 };
 
 /**
@@ -1434,6 +1437,7 @@ export async function getOrCreateDirectConversation(
       windowStart:
         nextCount === 1 ? serverTimestamp() : (quotaSnap.data() as ConversationQuotaDoc).windowStart,
       count: nextCount,
+      lastConversationId: conversationId,
       updatedAt: serverTimestamp(),
       expiresAt: Timestamp.fromMillis(Date.now() + CONVERSATION_QUOTA_TTL_MS),
     });
@@ -1475,6 +1479,7 @@ export async function sendDirectMessage(
   if (!trimmedText) {
     throw new Error("Write a message before sending.");
   }
+  assertAllowedUserGeneratedText(trimmedText);
 
   const batch = writeBatch(db);
   const messageRef = doc(collection(db, COLLECTIONS.conversations, conversationId, "messages"));
@@ -1584,6 +1589,7 @@ export async function sendSessionMessage(
   if (!trimmedText) {
     throw new Error("Write a message before sending.");
   }
+  assertAllowedUserGeneratedText(trimmedText);
 
   const batch = writeBatch(db);
   batch.set(doc(db, COLLECTIONS.sessions, sessionId, "messages", messageId), {
@@ -1935,7 +1941,8 @@ export async function reportUser(
   reportedUserId: string,
   reason: string,
   details: string,
-  context: string
+  context: string,
+  target?: { contentType: "direct_message" | "session_message"; contentId: string; threadId: string }
 ) {
   const batch = writeBatch(db);
   const reportRef = doc(collection(db, COLLECTIONS.reports));
@@ -1946,6 +1953,13 @@ export async function reportUser(
     reason: reason.trim(),
     details: details.trim().slice(0, 1000),
     context,
+    ...(target
+      ? {
+          contentType: target.contentType,
+          contentId: target.contentId.slice(0, 128),
+          threadId: target.threadId.slice(0, 128),
+        }
+      : {}),
     createdAt: serverTimestamp(),
   });
   stageBoundRateLimit(batch, reporterUserId, "reportUser", `reports/${reportRef.id}`);

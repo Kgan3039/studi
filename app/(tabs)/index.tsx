@@ -29,6 +29,7 @@ import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
@@ -423,8 +424,7 @@ export default function HomeScreen() {
         }))
       );
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to load sessions right now.';
+      const message = getUserFacingErrorMessage(error, 'sessionLoad');
       setSessionsError(message);
     }
   }, [currentUser, profileClasses]);
@@ -573,8 +573,7 @@ export default function HomeScreen() {
         Alert.alert('Session Full', error.message);
         return;
       }
-      const message =
-        error instanceof Error ? error.message : 'Unable to join this session right now.';
+      const message = getUserFacingErrorMessage(error, 'sessionJoin');
       Alert.alert('Join Session Error', message);
     }
   }

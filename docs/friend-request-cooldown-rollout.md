@@ -1,15 +1,21 @@
 # Friend-request cooldown bound-limiter rollout
 
+## First public release status
+
+Phase 2 is active. Rules require `{ updatedAt, lastRequestId }`; the legacy
+shape and its same-batch bypass are rejected. Studi has no earlier public App
+Store client, so internal development/TestFlight builds must be upgraded before
+the Phase-2 rules deployment.
+
 The 10-second friend-request throttle uses
 `rateLimits/{uid}/actions/friendRequest`. Older clients write only
 `updatedAt`. Updated clients also write `lastRequestId`, the exact deterministic
 `friendRequests/{fromUid}__{toUid}` document id created in the same batch.
 
-This is a two-phase rollout because Studi has no minimum-version enforcement.
-Deploying the final rule immediately would reject every request from an
-already-installed client.
+The two-phase rollout below is retained as historical context. The current
+rules accept only the bound shape.
 
-## Phase 1: this PR
+## Historical Phase 1
 
 - Updated clients write `{ updatedAt, lastRequestId }` atomically with the
   request.
@@ -25,7 +31,7 @@ The server remains authoritative for the 10-second interval in both shapes.
 The Phase 1 residual risk is that a modified client can deliberately choose the
 legacy shape and reuse one limiter update for more than one create in a batch.
 
-### Phase 1 deployment order
+### Historical Phase 1 deployment order
 
 1. Deploy `firestore.rules` first. Current clients keep working because the
    legacy shape remains accepted.
@@ -34,7 +40,7 @@ legacy shape and reuse one limiter update for more than one create in a batch.
 3. Observe the adoption signal below. No Functions, indexes, migration, or
    dependency deployment is required.
 
-## Deployment gate for Phase 2
+## Historical deployment gate for Phase 2
 
 Cut over only when all of the following are true:
 
@@ -44,7 +50,7 @@ Cut over only when all of the following are true:
 2. TestFlight/App Store adoption confirms active users are on the updated build.
 3. Support and error telemetry show no unexpected bound-limiter denials.
 
-## Phase 2: exact enforcement change
+## Completed Phase 2 enforcement change
 
 1. In `isValidFriendRequestRateLimitWrite`, remove the
    `incoming().keys().hasOnly(['updatedAt'])` compatibility branch. Require only
@@ -70,14 +76,13 @@ create compares its own document id to that value through `getAfter()`. Two
 different request creates therefore cannot both be authorized by one limiter
 write: at most one id can match, and an atomic batch fails if any create fails.
 
-## Phase 2 deployment order
+## Current deployment order
 
-1. Confirm the adoption gate.
-2. Deploy the Phase 2 Firestore rules and tests together.
-3. Monitor friend-request permission failures.
-4. Keep the updated client unchanged; it already emits the required bound
+1. Confirm every internal/TestFlight build in active use writes the bound shape.
+2. Deploy the Firestore rules and tests together.
+3. Release the current client and monitor friend-request permission failures.
+4. Keep the client unchanged; it already emits the required bound
    shape.
 
-Rollback is the Phase 1 rules only. No data migration is required because both
-limiter shapes use the same document and the next valid write replaces the old
-shape.
+Restoring the Phase-1 rules would reopen the documented same-batch bypass and
+requires an explicit security decision. No data migration is required.

@@ -11,6 +11,7 @@ export declare const SAFE_CREATE_SESSION_ERROR: string;
 export declare const SAFE_EDIT_SESSION_AUTH_ERROR: string;
 export declare const SAFE_EDIT_SESSION_ERROR: string;
 export declare const SAFE_EDIT_SESSION_NETWORK_ERROR: string;
+export declare const SAFE_SESSION_MODERATION_ERROR: string;
 
 export declare function createWithStaleVerificationRetry<TResult>(options: {
   attempt(): Promise<TResult>;

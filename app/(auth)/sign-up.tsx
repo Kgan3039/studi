@@ -20,6 +20,7 @@ import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { signUp } from '@/lib/auth';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 
 export default function SignUpScreen() {
   const router = useRouter();
@@ -39,8 +40,7 @@ export default function SignUpScreen() {
       await signUp(email, password, firstName, lastName);
       router.replace('/verify-email');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to continue right now.';
-      Alert.alert('Sign Up Error', message);
+      Alert.alert('Sign Up Error', getUserFacingErrorMessage(error, 'auth'));
     } finally {
       setIsBusy(false);
     }

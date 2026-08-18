@@ -9,6 +9,7 @@ const {
   SAFE_EDIT_SESSION_AUTH_ERROR,
   SAFE_EDIT_SESSION_ERROR,
   SAFE_EDIT_SESSION_NETWORK_ERROR,
+  SAFE_SESSION_MODERATION_ERROR,
   createWithStaleVerificationRetry,
   getCreateSessionErrorMessage,
   getEditSessionErrorMessage,
@@ -228,6 +229,10 @@ describe('session creation stale-verification retry', () => {
     assert.equal(getCreateSessionErrorMessage(validation), validation.message);
     assert.equal(getCreateSessionErrorMessage(new Error('backend detail')), SAFE_CREATE_SESSION_ERROR);
     assert.equal(getCreateSessionErrorMessage(permissionDenied), SAFE_CREATE_SESSION_ERROR);
+    assert.equal(
+      getCreateSessionErrorMessage({ name: 'ObjectionableContentError', message: 'raw' }),
+      SAFE_SESSION_MODERATION_ERROR
+    );
   });
 
   it('keeps controlled edit validation messages', () => {
@@ -259,6 +264,10 @@ describe('session creation stale-verification retry', () => {
       SAFE_EDIT_SESSION_ERROR
     );
     assert.equal(getEditSessionErrorMessage(new Error('private backend detail')), SAFE_EDIT_SESSION_ERROR);
+    assert.equal(
+      getEditSessionErrorMessage({ name: 'ObjectionableContentError', message: 'raw' }),
+      SAFE_SESSION_MODERATION_ERROR
+    );
     assert.equal(getEditSessionErrorMessage({ code: 'internal', message: 'stack trace' }), SAFE_EDIT_SESSION_ERROR);
   });
 
