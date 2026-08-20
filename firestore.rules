@@ -304,25 +304,6 @@ service cloud.firestore {
         && getAfter(rateLimitRef(userId, action)).data.lastResourceId == resourceId;
     }
 
-    function hasFreshDirectMessageMetadataRateLimit(userId, conversationId) {
-      let limiter = getAfter(rateLimitRef(userId, 'sendMessage')).data;
-      let parts = limiter.lastResourceId is string ? limiter.lastResourceId.split('/') : [];
-      return limiter.updatedAt == request.time
-        && parts.size() == 4
-        && parts[0] == 'conversations'
-        && parts[1] == conversationId
-        && parts[2] == 'messages'
-        && existsAfter(
-          /databases/$(database)/documents/conversations/$(conversationId)/messages/$(parts[3])
-        )
-        && getAfter(
-          /databases/$(database)/documents/conversations/$(conversationId)/messages/$(parts[3])
-        ).data.senderId == userId
-        && getAfter(
-          /databases/$(database)/documents/conversations/$(conversationId)/messages/$(parts[3])
-        ).data.createdAt == request.time;
-    }
-
     function hasFreshCatalogRequestRateLimit(userId, requestId) {
       return getAfter(rateLimitRef(userId, 'catalogRequest')).data.updatedAt == request.time
         && getAfter(rateLimitRef(userId, 'catalogRequest')).data.lastRequestId == requestId;
@@ -339,14 +320,14 @@ service cloud.firestore {
              == conversationId;
     }
 
-    // High-confidence launch filter. It intentionally targets only explicit
-    // slurs and direct threats; reports are exempt so users can quote abuse as
-    // evidence. The client mirrors this with Unicode normalization and a
-    // friendlier controlled validation error.
+    // High-confidence launch filter. It rejects complete hostile utterances,
+    // not words embedded in quoted, academic, historical, or mental-health
+    // discussion. The client mirrors this exact finite whitespace/fullwidth
+    // contract; reports are exempt so users can quote abuse as evidence.
     function isAllowedUserGeneratedText(value) {
       return value is string
         && !value.lower().matches(
-          '.*(^|[^a-z])(kys|kill[ \\t\\r\\n]+yourself|i[ \\t\\r\\n]+(am[ \\t\\r\\n]+going[ \\t\\r\\n]+to|will)[ \\t\\r\\n]+kill[ \\t\\r\\n]+you|nigger|nigga|faggot)([^a-z]|$).*'
+          "^[ \\t\\r\\n 　]*[.!?]*(((go|please|you[ \\t\\r\\n 　]+should|hey,?)[ \\t\\r\\n 　]+)?kill[ \\t\\r\\n 　]+yourself|kys|i[ \\t\\r\\n 　]+(am[ \\t\\r\\n 　]+going[ \\t\\r\\n 　]+to|will)[ \\t\\r\\n 　]+kill[ \\t\\r\\n 　]+you|i('|’)(m[ \\t\\r\\n 　]+going[ \\t\\r\\n 　]+to|ll)[ \\t\\r\\n 　]+kill[ \\t\\r\\n 　]+you|nigg(er|a)s?|fagg?ots?|ｋｙｓ|ｋｉｌｌ[ \\t\\r\\n 　]+ｙｏｕｒｓｅｌｆ|ｎｉｇｇ(ｅｒ|ａ)ｓ?|ｆａｇｇ?ｏｔｓ?)[.!?]*[ \\t\\r\\n 　]*$"
         );
     }
 
@@ -871,21 +852,9 @@ service cloud.firestore {
       allow create: if isVerifiedUwUser()
         && isValidNewConversation(conversationId)
         && hasFreshConversationQuota(request.auth.uid, conversationId);
-      // Metadata bumps are only valid as part of the send-message batch: they
-      // must ride the same fresh sendMessage rate-limit write as the message
-      // itself, and blocks stop them just like message creation.
-      allow update: if isVerifiedUwUser()
-        && request.auth.uid in resource.data.participantIds
-        && affectedKeys().hasOnly(['lastMessagePreview', 'lastMessageAt', 'updatedAt'])
-        && incoming().lastMessagePreview is string
-        && incoming().lastMessagePreview.size() <= 200
-        && incoming().lastMessageAt == request.time
-        && incoming().updatedAt == request.time
-        && !isBlockedEitherWay(
-             resource.data.participantIds[0],
-             resource.data.participantIds[1]
-           )
-        && hasFreshDirectMessageMetadataRateLimit(request.auth.uid, conversationId);
+      // Direct-message metadata is derived from the persisted message by the
+      // Admin SDK trigger. Clients cannot forge inbox previews or timestamps.
+      allow update: if false;
       allow delete: if false;
 
       match /messages/{messageId} {
@@ -1062,10 +1031,45 @@ service cloud.firestore {
     // ------------------------------------------------------------------
 
     match /reports/{reportId} {
+      function isSafeContentId(value) {
+        return value is string && value.matches('^[A-Za-z0-9_-]{1,128}$');
+      }
+
+      function directMessageReportIsAuthentic() {
+        let conversation = get(
+          /databases/$(database)/documents/conversations/$(incoming().threadId)
+        ).data;
+        let message = get(
+          /databases/$(database)/documents/conversations/$(incoming().threadId)/messages/$(incoming().contentId)
+        ).data;
+        return isDeterministicPairMember(incoming().threadId)
+          && request.auth.uid in conversation.participantIds
+          && message.senderId == incoming().reportedUserId
+          && message.text == incoming().messageText;
+      }
+
+      function sessionMessageReportIsAuthentic() {
+        let session = get(
+          /databases/$(database)/documents/sessions/$(incoming().threadId)
+        ).data;
+        let message = get(
+          /databases/$(database)/documents/sessions/$(incoming().threadId)/messages/$(incoming().contentId)
+        ).data;
+        return request.auth.uid in session.participantIds
+          && (
+            request.time < session.endTime + duration.value(2, 'h')
+            || exists(
+              /databases/$(database)/documents/users/$(request.auth.uid)/keptSessionChats/$(incoming().threadId)
+            )
+          )
+          && message.senderId == incoming().reportedUserId
+          && message.text == incoming().messageText;
+      }
+
       allow create: if isVerifiedUwUser()
         && incoming().keys().hasOnly([
              'reporterUserId', 'reportedUserId', 'reason', 'details',
-             'context', 'contentType', 'contentId', 'threadId', 'createdAt'
+             'context', 'contentType', 'contentId', 'threadId', 'messageText', 'createdAt'
            ])
         && incoming().reporterUserId == request.auth.uid
         && incoming().reportedUserId is string
@@ -1077,15 +1081,25 @@ service cloud.firestore {
         && incoming().context.size() <= 40
         && (!('contentType' in incoming()) || (
              incoming().contentType in ['direct_message', 'session_message']
-             && incoming().contentId is string
-             && incoming().contentId.size() >= 1
-             && incoming().contentId.size() <= 128
+             && isSafeContentId(incoming().contentId)
              && incoming().threadId is string
              && incoming().threadId.size() >= 1
              && incoming().threadId.size() <= 128
+             && incoming().messageText is string
+             && incoming().messageText.size() >= 1
+             && incoming().messageText.size() <= 2000
+             && (
+               (incoming().contentType == 'direct_message'
+                 && directMessageReportIsAuthentic())
+               || (incoming().contentType == 'session_message'
+                 && isSafeContentId(incoming().threadId)
+                 && sessionMessageReportIsAuthentic())
+             )
            ))
         && (('contentType' in incoming())
-             || (!('contentId' in incoming()) && !('threadId' in incoming())))
+             || (!('contentId' in incoming())
+               && !('threadId' in incoming())
+               && !('messageText' in incoming())))
         && incoming().createdAt == request.time
         && hasFreshBoundRateLimit(
              request.auth.uid, 'reportUser', 'reports/' + reportId

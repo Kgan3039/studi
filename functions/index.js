@@ -13,6 +13,7 @@ const admin = require("firebase-admin");
 const crypto = require("crypto");
 const { Expo } = require("expo-server-sdk");
 const { loadPushPreference } = require("./notification-preferences");
+const { deriveDirectMessageMetadata } = require("./direct-message-metadata");
 const {
   blockPairIdsFor,
   dmNotificationId,
@@ -458,21 +459,39 @@ exports.onDirectMessageCreated = onDocumentCreated(
   async (event) => {
     const message = event.data?.data();
     const senderId = message?.senderId;
-    const text = normalizePreview(message?.text);
+    const rawText = typeof message?.text === "string" ? message.text.trim() : "";
+    const text = normalizePreview(rawText);
     const conversationId = event.params.conversationId;
 
-    if (!senderId || !conversationId || !text) {
+    if (
+      !senderId
+      || !conversationId
+      || !text
+      || typeof message?.createdAt?.toMillis !== "function"
+    ) {
       return;
     }
 
-    const conversationSnap = await db.collection("conversations").doc(conversationId).get();
-    if (!conversationSnap.exists) {
-      return;
-    }
-
-    const participantIds = Array.isArray(conversationSnap.data()?.participantIds)
-      ? conversationSnap.data().participantIds.filter((id) => typeof id === "string")
-      : [];
+    const conversationRef = db.collection("conversations").doc(conversationId);
+    const participantIds = await db.runTransaction(async (transaction) => {
+      const conversationSnap = await transaction.get(conversationRef);
+      if (!conversationSnap.exists) {
+        return [];
+      }
+      const data = conversationSnap.data();
+      const participants = Array.isArray(data?.participantIds)
+        ? data.participantIds.filter((id) => typeof id === "string")
+        : [];
+      if (!participants.includes(senderId)) {
+        return [];
+      }
+      const metadata = deriveDirectMessageMetadata(message, data?.lastMessageAt);
+      if (!metadata) {
+        return participants;
+      }
+      transaction.update(conversationRef, metadata);
+      return participants;
+    });
     const recipients = participantIds.filter((uid) => uid !== senderId);
 
     if (recipients.length === 0) {

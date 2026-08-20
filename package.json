@@ -30,9 +30,11 @@
     "test:profile-edit": "mocha tests/profile-edit.test.mjs",
     "test:content-moderation": "mocha tests/content-moderation.test.mjs",
     "test:user-facing-errors": "mocha tests/user-facing-errors.test.mjs",
+    "test:report-safety": "mocha tests/report-safety.test.mjs",
+    "test:dm-metadata": "mocha tests/direct-message-metadata.test.mjs",
     "test:notification-preferences": "mocha tests/notification-preferences.test.mjs",
     "test:release-safety": "mocha tests/release-safety.test.mjs",
-    "test:ci": "npm run test:notifications && npm run test:deletion && npm run test:map && npm run test:friends && npm run test:friend-request && npm run test:search && npm run test:session-blocks && npm run test:contact && npm run test:links && npm run test:catalog-requests && npm run test:auth-listener && npm run test:auth-verification && npm run test:session-create-retry && npm run test:message-history && npm run test:analytics-routes && npm run test:push-token-ownership && npm run test:profile-edit && npm run test:content-moderation && npm run test:user-facing-errors && npm run test:notification-preferences && npm run test:release-safety"
+    "test:ci": "npm run test:notifications && npm run test:deletion && npm run test:map && npm run test:friends && npm run test:friend-request && npm run test:search && npm run test:session-blocks && npm run test:contact && npm run test:links && npm run test:catalog-requests && npm run test:auth-listener && npm run test:auth-verification && npm run test:session-create-retry && npm run test:message-history && npm run test:analytics-routes && npm run test:push-token-ownership && npm run test:profile-edit && npm run test:content-moderation && npm run test:user-facing-errors && npm run test:report-safety && npm run test:dm-metadata && npm run test:notification-preferences && npm run test:release-safety"
   },
   "dependencies": {
     "@expo-google-fonts/arapey": "^0.4.1",

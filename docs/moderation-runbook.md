@@ -21,6 +21,9 @@ using an owner/editor account.
   - `context` — where the report came from (e.g. `conversation`, `session`)
   - optional `contentType`, `contentId`, and `threadId` — private pointers to
     the specific DM or session-chat message selected by the reporter
+  - optional `messageText` — a rule-verified private snapshot of that exact
+    message, retained so the evidence remains reviewable if the sender later
+    deletes the source message or account
   - `createdAt` — server timestamp
 
 ## Who reviews, and how often
@@ -39,7 +42,8 @@ using an owner/editor account.
 3. Read `reason`, `details`, and `context` first. Then look up the two uids:
    - `users/{uid}` — public profile (display name, classes)
    - Authentication tab → search by uid for the account email
-4. If the report references a conversation, the thread is at
+4. If the report references a conversation, compare the private `messageText`
+   snapshot with the source message when it still exists. The thread is at
    `conversations/{uidA__uidB}` (uids sorted, joined with `__`) with messages
    in its `messages` subcollection.
 5. **Do not** modify the report doc itself, and do not paste report contents

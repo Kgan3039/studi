@@ -40,6 +40,7 @@ import {
 import { auth, db } from "../firebaseConfig";
 import { track } from "./analytics";
 import { assertAllowedUserGeneratedText } from "./content-moderation";
+import { createBlockIdempotently } from "./idempotent-block";
 import {
   CreateSessionValidationError,
   createWithStaleVerificationRetry,
@@ -1459,10 +1460,8 @@ export async function getOrCreateDirectConversation(
   }
 
   if (created) {
-    // Rollout signal: presence of quota_written distinguishes updated clients
-    // (which write the counter) from legacy ones (which do not). Phase 2 is
-    // gated on this reaching ~100% of conversation_started events — see
-    // docs/conversation-quota-rollout.md.
+    // Phase 2 is active. Retain the property as an operational assertion that
+    // every successful new thread used the enforced counter transaction.
     track("conversation_started", { quota_written: true });
   }
 
@@ -1490,12 +1489,6 @@ export async function sendDirectMessage(
     createdAt: serverTimestamp(),
   });
 
-  batch.update(doc(db, COLLECTIONS.conversations, conversationId), {
-    // Rules cap the preview at 200 chars; messages themselves go up to 2000.
-    lastMessagePreview: trimmedText.slice(0, 200),
-    lastMessageAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
   stageBoundRateLimit(
     batch,
     senderId,
@@ -1905,12 +1898,21 @@ export async function removeSessionChatFromUserHistory(
 
 export async function blockUser(blockerUserId: string, blockedUserId: string) {
   const blockId = `${blockerUserId}__${blockedUserId}`;
+  const blockRef = doc(db, COLLECTIONS.userBlocks, blockId);
 
-  await setDoc(doc(db, COLLECTIONS.userBlocks, blockId), {
+  await createBlockIdempotently({
     blockerUserId,
     blockedUserId,
-    createdAt: serverTimestamp(),
-  } satisfies UserBlock);
+    writeBlock: () => setDoc(blockRef, {
+      blockerUserId,
+      blockedUserId,
+      createdAt: serverTimestamp(),
+    } satisfies UserBlock),
+    readBlock: async () => {
+      const snapshot = await getDoc(blockRef);
+      return snapshot.exists() ? snapshot.data() : null;
+    },
+  });
 }
 
 export async function unblockUser(blockerUserId: string, blockedUserId: string) {
@@ -1944,6 +1946,24 @@ export async function reportUser(
   context: string,
   target?: { contentType: "direct_message" | "session_message"; contentId: string; threadId: string }
 ) {
+  let messageText: string | undefined;
+  if (target) {
+    const messageRef = target.contentType === "direct_message"
+      ? doc(db, COLLECTIONS.conversations, target.threadId, "messages", target.contentId)
+      : doc(db, COLLECTIONS.sessions, target.threadId, "messages", target.contentId);
+    const messageSnapshot = await getDoc(messageRef);
+    const message = messageSnapshot.data();
+    if (
+      !messageSnapshot.exists()
+      || typeof message?.senderId !== "string"
+      || message.senderId !== reportedUserId
+      || typeof message?.text !== "string"
+    ) {
+      throw new Error("Invalid report target.");
+    }
+    messageText = message.text;
+  }
+
   const batch = writeBatch(db);
   const reportRef = doc(collection(db, COLLECTIONS.reports));
 
@@ -1958,6 +1978,7 @@ export async function reportUser(
           contentType: target.contentType,
           contentId: target.contentId.slice(0, 128),
           threadId: target.threadId.slice(0, 128),
+          messageText,
         }
       : {}),
     createdAt: serverTimestamp(),

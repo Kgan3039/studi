@@ -14,6 +14,7 @@ import {
 
 import { auth } from "../firebaseConfig";
 import { identifyUser, resetAnalyticsIdentity, track } from "./analytics";
+import { TrustedAuthError } from "./auth-errors";
 import { subscribeToIdTokenState } from "./auth-listener";
 import { createOrUpdateUserProfile } from "./firestore";
 import {
@@ -61,12 +62,15 @@ export async function syncUserProfile(user: User, displayNameOverride?: string) 
 export async function signIn(email: string, password: string) {
   const normalizedEmail = normalizeEmail(email);
 
+  if (!normalizedEmail) {
+    throw new TrustedAuthError("Enter your @wisc.edu email.");
+  }
   if (!isValidUwEmail(normalizedEmail)) {
-    throw new Error("Please use your @wisc.edu email.");
+    throw new TrustedAuthError("Please use your @wisc.edu email.");
   }
 
   if (!password) {
-    throw new Error("Enter your password.");
+    throw new TrustedAuthError("Enter your password.");
   }
 
   try {
@@ -85,13 +89,13 @@ export async function signIn(email: string, password: string) {
       authError.code === "auth/user-not-found" ||
       authError.code === "auth/wrong-password"
     ) {
-      throw new Error(
+      throw new TrustedAuthError(
         "Incorrect email or password. If you forgot your password, use “Forgot password?” below."
       );
     }
 
     if (authError.code === "auth/too-many-requests") {
-      throw new Error("Too many attempts. Wait a few minutes or reset your password.");
+      throw new TrustedAuthError("Too many attempts. Wait a few minutes or reset your password.");
     }
 
     throw authError;
@@ -107,16 +111,19 @@ export async function signUp(
   const normalizedEmail = normalizeEmail(email);
   const displayName = buildDisplayName(firstName, lastName);
 
+  if (!normalizedEmail) {
+    throw new TrustedAuthError("Enter your @wisc.edu email.");
+  }
   if (!isValidUwEmail(normalizedEmail)) {
-    throw new Error("Please use your @wisc.edu email.");
+    throw new TrustedAuthError("Please use your @wisc.edu email.");
   }
 
   if (password.length < 8) {
-    throw new Error("Password must be at least 8 characters.");
+    throw new TrustedAuthError("Password must be at least 8 characters.");
   }
 
   if (!normalizeNamePart(firstName) || !normalizeNamePart(lastName)) {
-    throw new Error("Enter your first and last name.");
+    throw new TrustedAuthError("Enter your first and last name.");
   }
 
   try {
@@ -133,13 +140,13 @@ export async function signUp(
     const authError = error as AuthError;
 
     if (authError.code === "auth/email-already-in-use") {
-      throw new Error(
-        "An account with this email already exists. Sign in instead — or use “Forgot password?” if you can't get in."
+      throw new TrustedAuthError(
+        "Unable to create this account. Try signing in or resetting your password."
       );
     }
 
     if (authError.code === "auth/weak-password") {
-      throw new Error("Choose a stronger password (at least 8 characters).");
+      throw new TrustedAuthError("Choose a stronger password (at least 8 characters).");
     }
 
     throw authError;
@@ -150,7 +157,7 @@ export async function resendVerificationEmail() {
   const user = auth.currentUser;
 
   if (!user) {
-    throw new Error("Sign in first to resend the verification email.");
+    throw new TrustedAuthError("Sign in first to resend the verification email.");
   }
 
   await sendEmailVerification(user);
@@ -187,8 +194,11 @@ export async function refreshVerificationState() {
 export async function requestPasswordReset(email: string) {
   const normalizedEmail = normalizeEmail(email);
 
+  if (!normalizedEmail) {
+    throw new TrustedAuthError("Enter your @wisc.edu email to reset your password.");
+  }
   if (!isValidUwEmail(normalizedEmail)) {
-    throw new Error("Enter your @wisc.edu email to reset your password.");
+    throw new TrustedAuthError("Enter your @wisc.edu email to reset your password.");
   }
 
   try {
@@ -272,11 +282,11 @@ function isRecentLoginRequiredError(error: unknown) {
 
 async function reauthenticateForDelete(user: User, options: DeleteAccountOptions) {
   if (!user.email) {
-    throw new Error("Unable to verify your account email for re-authentication.");
+    throw new TrustedAuthError("Unable to verify your account email for re-authentication.");
   }
 
   if (!options.password) {
-    throw new Error("Please enter your password to confirm account deletion.");
+    throw new TrustedAuthError("Please enter your password to confirm account deletion.");
   }
 
   const credential = EmailAuthProvider.credential(user.email, options.password);
@@ -290,7 +300,7 @@ export async function deleteCurrentUserAccount(
   const currentUser = auth.currentUser;
 
   if (!currentUser) {
-    throw new Error("You must be signed in to delete your account.");
+    throw new TrustedAuthError("You must be signed in to delete your account.");
   }
 
   const email = currentUser.email ?? "";

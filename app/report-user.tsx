@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
@@ -26,6 +26,7 @@ import { subscribeToAuthState } from '@/lib/auth';
 import { blockUser, reportUser } from '@/lib/firestore';
 import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import { rememberReportedUser } from '@/lib/reported-users';
+import { createReportSubmitGuard } from '@/lib/report-submit-guard';
 import type { User } from 'firebase/auth';
 
 const REPORT_REASONS = ['Spam', 'Harassment', 'Unsafe behavior', 'Impersonation', 'Other'];
@@ -50,6 +51,7 @@ export default function ReportUserScreen() {
   const [confirmSubmit, setConfirmSubmit] = useState(false);
   const [blockRetryNeeded, setBlockRetryNeeded] = useState(false);
   const [isRetryingBlock, setIsRetryingBlock] = useState(false);
+  const submitGuard = useRef(createReportSubmitGuard());
 
   const placeholderColor = colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle;
   // Presented as a transparentModal route, so it drives its own entrance.
@@ -64,14 +66,16 @@ export default function ReportUserScreen() {
   }, []);
 
   async function handleSubmitReport() {
-    if (isSubmitting || blockRetryNeeded) {
+    if (blockRetryNeeded || !submitGuard.current.acquire()) {
       return;
     }
     if (!currentUser || !reportedUserId) {
+      submitGuard.current.releaseAfterFailure();
       Alert.alert('Report Error', 'You need to be signed in to submit a report.');
       return;
     }
 
+    let reportSubmitted = false;
     try {
       setIsSubmitting(true);
       await reportUser(
@@ -82,6 +86,8 @@ export default function ReportUserScreen() {
         context || 'general',
         contentType && contentId && threadId ? { contentType, contentId, threadId } : undefined
       );
+      reportSubmitted = true;
+      submitGuard.current.markSubmitted();
       track('report_submitted', { reason: selectedReason, context: context || 'general' });
       await rememberReportedUser(reportedUserId);
 
@@ -110,6 +116,9 @@ export default function ReportUserScreen() {
         );
       }
     } catch (error) {
+      if (!reportSubmitted) {
+        submitGuard.current.releaseAfterFailure();
+      }
       Alert.alert('Report Error', getUserFacingErrorMessage(error, 'report'));
     } finally {
       setIsSubmitting(false);
