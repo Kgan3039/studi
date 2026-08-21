@@ -25,6 +25,7 @@ import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
@@ -122,8 +123,7 @@ export default function SessionDetailScreen() {
       setStatus('Session details loaded.');
       track('session_viewed', { classId: loadedSession.classId });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to load session details right now.';
+      const message = getUserFacingErrorMessage(error, 'sessionLoad');
       setStatus(message);
     } finally {
       setIsLoading(false);
@@ -247,7 +247,7 @@ export default function SessionDetailScreen() {
         Alert.alert('Session Full', error.message);
         return;
       }
-      const message = error instanceof Error ? error.message : 'Unable to join this session.';
+      const message = getUserFacingErrorMessage(error, 'sessionJoin');
       setStatus(message);
       Alert.alert('Join Session Error', message);
     }
@@ -257,7 +257,7 @@ export default function SessionDetailScreen() {
     if (error instanceof FirebaseError && error.code === 'permission-denied') {
       return 'You don’t have permission to do that. Refresh and try again.';
     }
-    return error instanceof Error ? error.message : fallback;
+    return fallback;
   }
 
   async function handleLeaveSession() {

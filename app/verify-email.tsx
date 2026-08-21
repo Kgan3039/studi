@@ -21,6 +21,7 @@ import {
     resendVerificationEmail,
     subscribeToAuthState,
 } from '@/lib/auth';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import type { User } from 'firebase/auth';
 
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -89,9 +90,7 @@ export default function VerifyEmailScreen() {
         'Not verified yet. Open the link in the email we sent, then tap “I verified my email” again. Check spam if you don\'t see it.'
       );
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to check verification right now.';
-      Alert.alert('Verification Error', message);
+      Alert.alert('Verification Error', getUserFacingErrorMessage(error, 'verification'));
     } finally {
       setIsChecking(false);
       setIsRefreshing(false);
@@ -110,9 +109,7 @@ export default function VerifyEmailScreen() {
       startCooldown();
       setStatus('Verification email sent again. Give it a minute, and check spam.');
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to resend the email right now.';
-      Alert.alert('Resend Error', message);
+      Alert.alert('Resend Error', getUserFacingErrorMessage(error, 'verificationEmail'));
     } finally {
       setIsResending(false);
     }

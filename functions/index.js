@@ -12,6 +12,8 @@ const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
 const { Expo } = require("expo-server-sdk");
+const { loadPushPreference } = require("./notification-preferences");
+const { deriveDirectMessageMetadata } = require("./direct-message-metadata");
 const {
   blockPairIdsFor,
   dmNotificationId,
@@ -193,36 +195,27 @@ async function sendPushToUsers(userIds, payload) {
 
 const NOTIFICATION_RETENTION_DAYS = 60;
 
-// group_message / friend_request / friend_accepted are reserved for future
-// PRs — mapped here so the pipeline needs no changes when they land.
-const PREF_KEY_BY_NOTIFICATION_TYPE = {
-  dm_message: "dmMessages",
-  session_joined: "sessionActivity",
-  session_updated: "sessionActivity",
-  session_cancelled: "sessionActivity",
-  session_reminder: "sessionReminders",
-  group_message: "groupMessages",
-  friend_request: "friendRequests",
-  friend_accepted: "friendRequests",
-};
-
-// Missing settings doc, missing key, or an unreadable value all mean enabled —
-// only an explicit `false` suppresses push (matches the client default).
+// Missing settings doc/key means enabled. A real read failure is different:
+// fail closed for push because the user may have opted out. The persistent
+// in-app record is created before this check and remains available.
 async function isPushEnabled(uid, notificationType) {
-  const prefKey = PREF_KEY_BY_NOTIFICATION_TYPE[notificationType];
-
-  try {
-    const snap = await db
-      .collection("users")
-      .doc(uid)
-      .collection("private")
-      .doc("settings")
-      .get();
-    return snap.data()?.notificationPrefs?.[prefKey] !== false;
-  } catch (error) {
-    console.warn("Notification pref read failed; defaulting to enabled", error);
-    return true;
-  }
+  return loadPushPreference({
+    notificationType,
+    readSettings: async () => {
+      const snap = await db
+        .collection("users")
+        .doc(uid)
+        .collection("private")
+        .doc("settings")
+        .get();
+      return snap.exists ? snap.data() : undefined;
+    },
+    onReadError: (error) => {
+      console.warn("Notification pref read failed; suppressing push", {
+        code: typeof error?.code === "string" ? error.code : "unknown",
+      });
+    },
+  });
 }
 
 /**
@@ -466,21 +459,46 @@ exports.onDirectMessageCreated = onDocumentCreated(
   async (event) => {
     const message = event.data?.data();
     const senderId = message?.senderId;
-    const text = normalizePreview(message?.text);
+    const rawText = typeof message?.text === "string" ? message.text.trim() : "";
+    const text = normalizePreview(rawText);
     const conversationId = event.params.conversationId;
+    const messageId = event.params.messageId;
 
-    if (!senderId || !conversationId || !text) {
+    if (
+      !senderId
+      || !conversationId
+      || !messageId
+      || !text
+      || typeof message?.createdAt?.toMillis !== "function"
+    ) {
       return;
     }
 
-    const conversationSnap = await db.collection("conversations").doc(conversationId).get();
-    if (!conversationSnap.exists) {
-      return;
-    }
-
-    const participantIds = Array.isArray(conversationSnap.data()?.participantIds)
-      ? conversationSnap.data().participantIds.filter((id) => typeof id === "string")
-      : [];
+    const conversationRef = db.collection("conversations").doc(conversationId);
+    const participantIds = await db.runTransaction(async (transaction) => {
+      const conversationSnap = await transaction.get(conversationRef);
+      if (!conversationSnap.exists) {
+        return [];
+      }
+      const data = conversationSnap.data();
+      const participants = Array.isArray(data?.participantIds)
+        ? data.participantIds.filter((id) => typeof id === "string")
+        : [];
+      if (!participants.includes(senderId)) {
+        return [];
+      }
+      const metadata = deriveDirectMessageMetadata(
+        message,
+        messageId,
+        data?.lastMessageAt,
+        data?.lastMessageId
+      );
+      if (!metadata) {
+        return participants;
+      }
+      transaction.update(conversationRef, metadata);
+      return participants;
+    });
     const recipients = participantIds.filter((uid) => uid !== senderId);
 
     if (recipients.length === 0) {

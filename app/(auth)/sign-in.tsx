@@ -19,6 +19,7 @@ import { Colors, FontFamily, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { requestPasswordReset, signIn } from '@/lib/auth';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 
 export default function SignInScreen() {
   const router = useRouter();
@@ -36,8 +37,7 @@ export default function SignInScreen() {
       track('sign_in_completed');
       router.replace(user.emailVerified ? '/' : '/verify-email');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to continue right now.';
-      Alert.alert('Sign In Error', message);
+      Alert.alert('Sign In Error', getUserFacingErrorMessage(error, 'auth'));
     } finally {
       setIsBusy(false);
     }
@@ -52,8 +52,7 @@ export default function SignInScreen() {
         'If an account exists for that address, a password reset link is on its way.'
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to send a reset email.';
-      Alert.alert('Reset Error', message);
+      Alert.alert('Reset Error', getUserFacingErrorMessage(error, 'passwordReset'));
     } finally {
       setIsBusy(false);
     }

@@ -28,6 +28,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
@@ -196,7 +197,7 @@ export default function SessionsScreen() {
           : 'No upcoming sessions yet'
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to load sessions right now.';
+      const message = getUserFacingErrorMessage(error, 'sessionLoad');
       setStatus(message);
     } finally {
       setIsLoading(false);
@@ -308,7 +309,7 @@ export default function SessionsScreen() {
         Alert.alert('Session Full', error.message);
         return;
       }
-      const message = error instanceof Error ? error.message : 'Unable to join this session right now.';
+      const message = getUserFacingErrorMessage(error, 'sessionJoin');
       setStatus(message);
       Alert.alert('Join Session Error', message);
     }

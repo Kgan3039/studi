@@ -51,6 +51,7 @@ import {
   type LocationAtmosphereFilter,
 } from '@/data/location-rating-options';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import { track } from '@/lib/analytics';
 import { shouldOfferLocationRequest } from '@/lib/catalog-request';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -345,7 +346,7 @@ export default function StudyLocationsScreen() {
         return;
       }
 
-      setLoadMessage(error instanceof Error ? error.message : 'The campus map could not load.');
+      setLoadMessage(getUserFacingErrorMessage(error, 'spots'));
     } finally {
       if (isMountedRef.current && loadRequestRef.current === requestId) {
         setIsLoading(false);

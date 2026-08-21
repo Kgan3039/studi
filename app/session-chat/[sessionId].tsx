@@ -23,6 +23,7 @@ import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
+import { ObjectionableContentError } from '@/lib/content-moderation';
 import {
   createSessionMessageId,
   getBlockedUserIds,
@@ -428,6 +429,11 @@ export default function SessionChatScreen() {
       setIsSending(true);
       await sendSessionMessage(sessionId, currentUser.uid, text, messageId);
     } catch (error) {
+      if (error instanceof ObjectionableContentError) {
+        setDraft(text);
+        Alert.alert('Message Not Sent', error.message);
+        return;
+      }
       // Keep the message; the bubble flips to a failed state with a retry.
       setFailedSends((current) => [{ messageId, text, isRetrying: false }, ...current]);
       refreshSessionOnDenied(error);
@@ -762,6 +768,27 @@ export default function SessionChatScreen() {
                   {message.pending ? 'Sending…' : formatTimestamp(message.createdAt)}
                 </Text>
               ) : null}
+              {!isCurrentUser ? (
+                <Pressable
+                  accessibilityLabel={`Report message from ${senderName(message.senderId)}`}
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/report-user',
+                      params: {
+                        reportedUserId: message.senderId,
+                        reportedUserName: senderName(message.senderId),
+                        context: 'session_chat',
+                        contentType: 'session_message',
+                        contentId: message.messageId,
+                        threadId: sessionId,
+                      },
+                    })
+                  }>
+                  <Text style={[styles.reportMessage, { color: palette.icon }]}>Report message</Text>
+                </Pressable>
+              ) : null}
             </View>
           );
         }}
@@ -938,6 +965,10 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 13,
     paddingHorizontal: Space.xs,
+  },
+  reportMessage: {
+    ...TypeScale.caption,
+    textDecorationLine: 'underline',
   },
   emptyThread: {
     alignItems: 'center',

@@ -49,22 +49,17 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 **Never** put message text, emails, names, or any PII in properties. uid is the identity
 key (PostHog `identify`), traits limited to `classCount`.
 
-### Conversation-quota rollout query
+### Conversation-quota enforcement health
 
-`quota_written` exists for exactly one purpose: proving client adoption before the
-new-conversation quota starts being enforced. Full context in
-`docs/conversation-quota-rollout.md`.
+Phase 2 is active for the first public release. `quota_written` is now an
+operational assertion that every successful new conversation used the enforced
+counter transaction. Full context is in `docs/conversation-quota-rollout.md`.
 
-- **Adoption (the Phase 2 gate)** — `conversation_started` where `quota_written = true`,
-  ÷ all `conversation_started`, over a rolling 48h with ≥20 events in the denominator.
-  Must be **100%**. The property is absent (not `false`) on pre-quota builds, so anything
-  under 100% is a still-installed client that Phase 2 would break.
+- **Transaction health** — `conversation_started` where `quota_written = true`,
+  ÷ all `conversation_started`, over a rolling 48h. This must remain **100%**.
 - **Cap sanity** — count of `conversation_quota_blocked` over the same window. Must be ~0.
-  A non-trivial count means real users hit the cap and it should be retuned *before*
-  enforcement turns a client-side soft stop into a hard server denial.
-
-Both are pre-enforcement signals. Once Phase 2 ships, a spent quota is denied by rules and
-`conversation_quota_blocked` becomes an ordinary abuse/cap-tuning metric instead of a gate.
+  A non-trivial count means real users are reaching the enforced cap and the
+  policy should be reviewed.
 
 ## Derived metrics (the resume numbers)
 

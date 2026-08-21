@@ -82,10 +82,9 @@ service cloud.firestore {
 
     // Four rate-limit shapes share the rateLimits/{uid}/actions/{action} path:
     //
-    //  - INTERVAL: updated clients bind `updatedAt` to one exact resource path
-    //    in `lastResourceId`. The legacy `{ updatedAt }` shape remains accepted
-    //    during Phase 1; see docs/rate-limit-rollout.md.
-    //  - BOUND INTERVAL (catalogRequest and updated friendRequest clients):
+    //  - INTERVAL: `updatedAt` is bound to one exact resource path in
+    //    `lastResourceId`.
+    //  - BOUND INTERVAL (catalogRequest and friendRequest):
     //    `updatedAt` plus the exact request
     //    document id authorized by that limiter update. Binding the id prevents
     //    one atomic limiter write from authorizing multiple request creates.
@@ -96,10 +95,6 @@ service cloud.firestore {
     //    Unsolicited DM threads need total reach bounded, not just slowed, so
     //    an interval throttle is the wrong instrument (security audit H3).
     //
-    // Friend requests are in a compatibility rollout: Phase 1 accepts both the
-    // old interval shape and the new bound shape. Phase 2 removes the legacy
-    // branch and requires the id-bound proof on every request create. See
-    // docs/friend-request-cooldown-rollout.md.
     function isCounterRateLimitedAction(action) {
       return action == 'createConversation';
     }
@@ -135,8 +130,12 @@ service cloud.firestore {
     // Writing this doc without creating a conversation only burns the caller's
     // own quota, so there is nothing to gain by it.
     function isValidQuotaCounterWrite(userId, action) {
-      return incoming().keys().hasOnly(['windowStart', 'count', 'updatedAt', 'expiresAt'])
+      return incoming().keys().hasOnly([
+          'windowStart', 'count', 'lastConversationId', 'updatedAt', 'expiresAt'
+        ])
         && incoming().updatedAt == request.time
+        && incoming().lastConversationId is string
+        && isDeterministicPairMember(incoming().lastConversationId)
         && incoming().windowStart is timestamp
         && incoming().count is int
         && incoming().count >= 1
@@ -174,16 +173,9 @@ service cloud.firestore {
         && incoming().lastResourceId.size() <= 500;
     }
 
-    // Phase 1 accepts the released legacy shape and the resource-bound shape.
-    // Phase 2 removes the first branch after adoption is confirmed.
     function isValidIntervalRateLimitWrite(userId, action) {
-      return (
-          incoming().keys().hasOnly(['updatedAt'])
-          || (
-            incoming().keys().hasOnly(['updatedAt', 'lastResourceId'])
-            && hasValidBoundResourceId()
-          )
-        )
+      return incoming().keys().hasOnly(['updatedAt', 'lastResourceId'])
+        && hasValidBoundResourceId()
         && incoming().updatedAt == request.time
         && (
           !exists(rateLimitRef(userId, action))
@@ -271,15 +263,8 @@ service cloud.firestore {
           !exists(rateLimitRef(userId, 'friendRequest'))
           || respectsRateLimit(userId, 'friendRequest', resource.data.updatedAt)
         )
-        && (
-          // PHASE 1 compatibility only. Already-installed clients write this
-          // shape. Remove this branch during the Phase 2 rules cutover.
-          incoming().keys().hasOnly(['updatedAt'])
-          || (
-            incoming().keys().hasOnly(['updatedAt', 'lastRequestId'])
-            && isValidBoundFriendRequestId(userId)
-          )
-        );
+        && incoming().keys().hasOnly(['updatedAt', 'lastRequestId'])
+        && isValidBoundFriendRequestId(userId);
     }
 
     function isValidRateLimitWrite(userId, action) {
@@ -309,42 +294,14 @@ service cloud.firestore {
       return getAfter(rateLimitRef(userId, action)).data.updatedAt == request.time;
     }
 
-    function hasFreshBoundRateLimitPhase1(userId, action, resourceId) {
+    function hasFreshBoundRateLimit(userId, action, resourceId) {
       return getAfter(rateLimitRef(userId, action)).data.updatedAt == request.time
-        && (
-          // Phase 1 compatibility: released clients write no binding.
-          !('lastResourceId' in getAfter(rateLimitRef(userId, action)).data)
-          || getAfter(rateLimitRef(userId, action)).data.lastResourceId == resourceId
-        );
+        && getAfter(rateLimitRef(userId, action)).data.lastResourceId == resourceId;
     }
 
     function hasFreshStrictBoundRateLimit(userId, action, resourceId) {
       return getAfter(rateLimitRef(userId, action)).data.updatedAt == request.time
         && getAfter(rateLimitRef(userId, action)).data.lastResourceId == resourceId;
-    }
-
-    function hasFreshDirectMessageMetadataRateLimitPhase1(userId, conversationId) {
-      let limiter = getAfter(rateLimitRef(userId, 'sendMessage')).data;
-      let parts = 'lastResourceId' in limiter ? limiter.lastResourceId.split('/') : [];
-      return limiter.updatedAt == request.time
-        && (
-          !('lastResourceId' in limiter)
-          || (
-            parts.size() == 4
-            && parts[0] == 'conversations'
-            && parts[1] == conversationId
-            && parts[2] == 'messages'
-            && existsAfter(
-              /databases/$(database)/documents/conversations/$(conversationId)/messages/$(parts[3])
-            )
-            && getAfter(
-              /databases/$(database)/documents/conversations/$(conversationId)/messages/$(parts[3])
-            ).data.senderId == userId
-            && getAfter(
-              /databases/$(database)/documents/conversations/$(conversationId)/messages/$(parts[3])
-            ).data.createdAt == request.time
-          )
-        );
     }
 
     function hasFreshCatalogRequestRateLimit(userId, requestId) {
@@ -357,13 +314,20 @@ service cloud.firestore {
         && getAfter(rateLimitRef(userId, 'friendRequest')).data.lastRequestId == requestId;
     }
 
-    function hasFreshFriendRequestRateLimitPhase1(userId, requestId) {
-      return getAfter(rateLimitRef(userId, 'friendRequest')).data.updatedAt == request.time
-        && (
-          // PHASE 1 compatibility only. The legacy shape remains a documented
-          // direct-write bypass until adoption permits the Phase 2 cutover.
-          !('lastRequestId' in getAfter(rateLimitRef(userId, 'friendRequest')).data)
-          || hasFreshBoundFriendRequestRateLimit(userId, requestId)
+    function hasFreshConversationQuota(userId, conversationId) {
+      return getAfter(rateLimitRef(userId, 'createConversation')).data.updatedAt == request.time
+        && getAfter(rateLimitRef(userId, 'createConversation')).data.lastConversationId
+             == conversationId;
+    }
+
+    // High-confidence launch filter. It rejects complete hostile utterances,
+    // not words embedded in quoted, academic, historical, or mental-health
+    // discussion. The client mirrors this exact finite whitespace/fullwidth
+    // contract; reports are exempt so users can quote abuse as evidence.
+    function isAllowedUserGeneratedText(value) {
+      return value is string
+        && !value.lower().matches(
+          "^[ \\t\\r\\n 　]*[.!?]*(((go|please|you[ \\t\\r\\n 　]+should|hey,?)[ \\t\\r\\n 　]+)?kill[ \\t\\r\\n 　]+yourself|kys|i[ \\t\\r\\n 　]+(am[ \\t\\r\\n 　]+going[ \\t\\r\\n 　]+to|will)[ \\t\\r\\n 　]+kill[ \\t\\r\\n 　]+you|i('|’)(m[ \\t\\r\\n 　]+going[ \\t\\r\\n 　]+to|ll)[ \\t\\r\\n 　]+kill[ \\t\\r\\n 　]+you|nigg(er|a)s?|fagg?ots?|ｋｙｓ|ｋｉｌｌ[ \\t\\r\\n 　]+ｙｏｕｒｓｅｌｆ|ｎｉｇｇ(ｅｒ|ａ)ｓ?|ｆａｇｇ?ｏｔｓ?)[.!?]*[ \\t\\r\\n 　]*$"
         );
     }
 
@@ -381,6 +345,7 @@ service cloud.firestore {
         && (!('displayName' in incoming()) ||
               (incoming().displayName is string
                && incoming().displayName.size() <= 60))
+        && (!('displayName' in incoming()) || isAllowedUserGeneratedText(incoming().displayName))
         // displayNameLower powers case-insensitive prefix search (Firestore
         // range queries are case-sensitive, so a normalized shadow field is
         // required). Optional — legacy docs predate it — but when present it
@@ -400,15 +365,18 @@ service cloud.firestore {
         && (!('major' in incoming()) ||
               (incoming().major is string
                && incoming().major.size() >= 1
-               && incoming().major.size() <= 60))
+               && incoming().major.size() <= 60
+               && isAllowedUserGeneratedText(incoming().major)))
         && (!('pronouns' in incoming()) ||
               (incoming().pronouns is string
                && incoming().pronouns.size() >= 1
-               && incoming().pronouns.size() <= 20))
+               && incoming().pronouns.size() <= 20
+               && isAllowedUserGeneratedText(incoming().pronouns)))
         && (!('bio' in incoming()) ||
               (incoming().bio is string
                && incoming().bio.size() >= 1
-               && incoming().bio.size() <= 140));
+               && incoming().bio.size() <= 140
+               && isAllowedUserGeneratedText(incoming().bio)));
     }
 
     // Notification preferences (users/{uid}/private/settings, PR: settings).
@@ -618,6 +586,7 @@ service cloud.firestore {
         && incoming().locationId.size() >= 1 && incoming().locationId.size() <= 60
         && incoming().title is string
         && incoming().title.size() >= 1 && incoming().title.size() <= 80
+        && isAllowedUserGeneratedText(incoming().title)
         && incoming().startTime is timestamp
         && incoming().endTime is timestamp
         && incoming().startTime > request.time
@@ -670,6 +639,7 @@ service cloud.firestore {
         && incoming().status in ['open', 'full', 'cancelled']
         && incoming().title is string && incoming().title.size() >= 1
         && incoming().title.size() <= 80
+        && isAllowedUserGeneratedText(incoming().title)
         && incoming().classId is string
         && incoming().classId.size() >= 1 && incoming().classId.size() <= 20
         && incoming().locationId is string
@@ -766,12 +736,14 @@ service cloud.firestore {
       allow read: if isVerifiedUwUser();
       allow create: if isVerifiedUwUser()
         && isValidNewSession()
-        && hasFreshBoundRateLimitPhase1(
+        && hasFreshBoundRateLimit(
              request.auth.uid, 'createSession', 'sessions/' + sessionId
            );
       allow update: if isVerifiedUwUser()
         && (isHostEdit(sessionId) || isSelfJoin() || isSelfJoinNoOp() || isSelfLeave());
-      allow delete: if isVerifiedUwUser() && request.auth.uid == resource.data.hostId;
+      // Hosts cancel sessions. Permanent recursive cleanup is Admin-only via
+      // the resumable account-deletion runner.
+      allow delete: if false;
 
       // Session group chat (PR: group chat) — participant-gated via the
       // parent session doc, message shape identical to DM messages. The
@@ -811,8 +783,9 @@ service cloud.firestore {
           && incoming().text is string
           && incoming().text.size() >= 1
           && incoming().text.size() <= 2000
+          && isAllowedUserGeneratedText(incoming().text)
           && incoming().createdAt == request.time
-          && hasFreshBoundRateLimitPhase1(
+          && hasFreshBoundRateLimit(
                request.auth.uid,
                'sendMessage',
                'sessions/' + sessionId + '/messages/' + messageId
@@ -876,31 +849,12 @@ service cloud.firestore {
         && isDeterministicPairMember(conversationId);
       allow list: if isVerifiedUwUser()
         && request.auth.uid in resource.data.participantIds;
-      // createConversation quota — PHASE 1 (this release): the counter doc is
-      // validated wherever it is written (see isValidQuotaCounterWrite) and the
-      // updated client writes it inside the creation transaction, but create
-      // does NOT yet require it — already-installed clients write no counter
-      // and must keep working. There is therefore NO enforcement yet.
-      // PHASE 2 (deploy promptly after the client rollout is verified — see
-      // docs/conversation-quota-rollout.md) adds exactly one line here:
-      //     && hasFreshRateLimit(request.auth.uid, 'createConversation')
-      // which is the same helper every other throttled create already uses.
-      allow create: if isVerifiedUwUser() && isValidNewConversation(conversationId);
-      // Metadata bumps are only valid as part of the send-message batch: they
-      // must ride the same fresh sendMessage rate-limit write as the message
-      // itself, and blocks stop them just like message creation.
-      allow update: if isVerifiedUwUser()
-        && request.auth.uid in resource.data.participantIds
-        && affectedKeys().hasOnly(['lastMessagePreview', 'lastMessageAt', 'updatedAt'])
-        && incoming().lastMessagePreview is string
-        && incoming().lastMessagePreview.size() <= 200
-        && incoming().lastMessageAt == request.time
-        && incoming().updatedAt == request.time
-        && !isBlockedEitherWay(
-             resource.data.participantIds[0],
-             resource.data.participantIds[1]
-           )
-        && hasFreshDirectMessageMetadataRateLimitPhase1(request.auth.uid, conversationId);
+      allow create: if isVerifiedUwUser()
+        && isValidNewConversation(conversationId)
+        && hasFreshConversationQuota(request.auth.uid, conversationId);
+      // Direct-message metadata is derived from the persisted message by the
+      // Admin SDK trigger. Clients cannot forge inbox previews or timestamps.
+      allow update: if false;
       allow delete: if false;
 
       match /messages/{messageId} {
@@ -917,8 +871,9 @@ service cloud.firestore {
           && incoming().text is string
           && incoming().text.size() >= 1
           && incoming().text.size() <= 2000
+          && isAllowedUserGeneratedText(incoming().text)
           && incoming().createdAt == request.time
-          && hasFreshBoundRateLimitPhase1(
+          && hasFreshBoundRateLimit(
                request.auth.uid,
                'sendMessage',
                'conversations/' + conversationId + '/messages/' + messageId
@@ -979,13 +934,13 @@ service cloud.firestore {
         && resource.data.userId == request.auth.uid;
       allow create: if isVerifiedUwUser()
         && hasValidLocationRating(ratingId)
-        && hasFreshBoundRateLimitPhase1(
+        && hasFreshBoundRateLimit(
              request.auth.uid, 'locationRating', 'locationRatings/' + ratingId
            );
       allow update: if isVerifiedUwUser()
         && hasValidLocationRating(ratingId)
         && incoming().createdAt == resource.data.createdAt
-        && hasFreshBoundRateLimitPhase1(
+        && hasFreshBoundRateLimit(
              request.auth.uid, 'locationRating', 'locationRatings/' + ratingId
            );
       allow delete: if isVerifiedUwUser() && resource.data.userId == request.auth.uid;
@@ -1076,10 +1031,45 @@ service cloud.firestore {
     // ------------------------------------------------------------------
 
     match /reports/{reportId} {
+      function isSafeContentId(value) {
+        return value is string && value.matches('^[A-Za-z0-9_-]{1,128}$');
+      }
+
+      function directMessageReportIsAuthentic() {
+        let conversation = get(
+          /databases/$(database)/documents/conversations/$(incoming().threadId)
+        ).data;
+        let message = get(
+          /databases/$(database)/documents/conversations/$(incoming().threadId)/messages/$(incoming().contentId)
+        ).data;
+        return isDeterministicPairMember(incoming().threadId)
+          && request.auth.uid in conversation.participantIds
+          && message.senderId == incoming().reportedUserId
+          && message.text == incoming().messageText;
+      }
+
+      function sessionMessageReportIsAuthentic() {
+        let session = get(
+          /databases/$(database)/documents/sessions/$(incoming().threadId)
+        ).data;
+        let message = get(
+          /databases/$(database)/documents/sessions/$(incoming().threadId)/messages/$(incoming().contentId)
+        ).data;
+        return request.auth.uid in session.participantIds
+          && (
+            request.time < session.endTime + duration.value(2, 'h')
+            || exists(
+              /databases/$(database)/documents/users/$(request.auth.uid)/keptSessionChats/$(incoming().threadId)
+            )
+          )
+          && message.senderId == incoming().reportedUserId
+          && message.text == incoming().messageText;
+      }
+
       allow create: if isVerifiedUwUser()
         && incoming().keys().hasOnly([
              'reporterUserId', 'reportedUserId', 'reason', 'details',
-             'context', 'createdAt'
+             'context', 'contentType', 'contentId', 'threadId', 'messageText', 'createdAt'
            ])
         && incoming().reporterUserId == request.auth.uid
         && incoming().reportedUserId is string
@@ -1089,8 +1079,29 @@ service cloud.firestore {
         && incoming().details.size() <= 1000
         && incoming().context is string
         && incoming().context.size() <= 40
+        && (!('contentType' in incoming()) || (
+             incoming().contentType in ['direct_message', 'session_message']
+             && isSafeContentId(incoming().contentId)
+             && incoming().threadId is string
+             && incoming().threadId.size() >= 1
+             && incoming().threadId.size() <= 128
+             && incoming().messageText is string
+             && incoming().messageText.size() >= 1
+             && incoming().messageText.size() <= 2000
+             && (
+               (incoming().contentType == 'direct_message'
+                 && directMessageReportIsAuthentic())
+               || (incoming().contentType == 'session_message'
+                 && isSafeContentId(incoming().threadId)
+                 && sessionMessageReportIsAuthentic())
+             )
+           ))
+        && (('contentType' in incoming())
+             || (!('contentId' in incoming())
+               && !('threadId' in incoming())
+               && !('messageText' in incoming())))
         && incoming().createdAt == request.time
-        && hasFreshBoundRateLimitPhase1(
+        && hasFreshBoundRateLimit(
              request.auth.uid, 'reportUser', 'reports/' + reportId
            );
       allow read, update, delete: if false;
@@ -1173,7 +1184,7 @@ service cloud.firestore {
         // Already friends — nothing to request.
         && !exists(friendshipRef(incoming().fromUid, incoming().toUid))
         && !isBlockedEitherWay(incoming().fromUid, incoming().toUid)
-        && hasFreshFriendRequestRateLimitPhase1(request.auth.uid, requestId);
+        && hasFreshBoundFriendRequestRateLimit(request.auth.uid, requestId);
       allow update: if false;
       // Sender cancels; recipient declines (or deletes as part of accepting).
       allow delete: if isVerifiedUwUser()

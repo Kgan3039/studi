@@ -24,6 +24,8 @@ import {
 } from '@/components/ui/PullToRefreshIndicator';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { ObjectionableContentError } from '@/lib/content-moderation';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import { track } from '@/lib/analytics';
 import { useFriendRequestCooldown } from '@/lib/friend-request-cooldown';
 import {
@@ -271,7 +273,10 @@ export default function ConversationScreen() {
       await sendDirectMessage(conversationId, currentUser.uid, draft);
       setDraft('');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to send message right now.';
+      const message =
+        error instanceof ObjectionableContentError
+          ? error.message
+          : getUserFacingErrorMessage(error, 'message');
       setStatus(message);
       Alert.alert('Message Error', message);
     } finally {
@@ -296,8 +301,7 @@ export default function ConversationScreen() {
       // `navigate` reuses the tab route instead of appending a duplicate.
       router.navigate('/messages');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to block this user.';
-      Alert.alert('Block Error', message);
+      Alert.alert('Block Error', getUserFacingErrorMessage(error, 'conversation'));
     } finally {
       setIsBlocking(false);
     }
@@ -315,8 +319,7 @@ export default function ConversationScreen() {
       setBlockedUserIds((currentIds) => currentIds.filter((id) => id !== partnerId));
       setConfirmUnblock(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to unblock this user.';
-      Alert.alert('Unblock Error', message);
+      Alert.alert('Unblock Error', getUserFacingErrorMessage(error, 'conversation'));
     } finally {
       setIsUnblocking(false);
     }
@@ -351,9 +354,7 @@ export default function ConversationScreen() {
         track('friend_request_cancelled', { source: 'conversation' });
       }
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to update this study buddy.';
-      Alert.alert('Study Buddy Error', message);
+      Alert.alert('Study Buddy Error', getUserFacingErrorMessage(error, 'friend'));
     } finally {
       setIsFriendActionPending(false);
     }
@@ -393,9 +394,7 @@ export default function ConversationScreen() {
       setConfirmRemoveFriend(false);
       track('friend_removed', { source: 'conversation' });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to remove this study buddy.';
-      Alert.alert('Study Buddy Error', message);
+      Alert.alert('Study Buddy Error', getUserFacingErrorMessage(error, 'friend'));
     } finally {
       setIsFriendActionPending(false);
     }
@@ -574,6 +573,27 @@ export default function ConversationScreen() {
                   <Text style={[styles.bubbleTime, { color: palette.icon }]}>
                     {formatTimestamp(message.createdAt)}
                   </Text>
+                ) : null}
+                {!isCurrentUser && partnerId ? (
+                  <Pressable
+                    accessibilityLabel={`Report message from ${partnerName || 'student'}`}
+                    accessibilityRole="button"
+                    hitSlop={8}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/report-user',
+                        params: {
+                          reportedUserId: partnerId,
+                          reportedUserName: partnerName,
+                          context: 'conversation',
+                          contentType: 'direct_message',
+                          contentId: message.messageId,
+                          threadId: conversationId,
+                        },
+                      })
+                    }>
+                    <Text style={[styles.reportMessage, { color: palette.icon }]}>Report message</Text>
+                  </Pressable>
                 ) : null}
               </View>
             );
@@ -759,6 +779,10 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 13,
     paddingHorizontal: Space.xs,
+  },
+  reportMessage: {
+    ...TypeScale.caption,
+    textDecorationLine: 'underline',
   },
   emptyThread: {
     alignItems: 'center',

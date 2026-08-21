@@ -27,6 +27,10 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
+import {
+  ALLOWED_CONTENT_CASES,
+  BLOCKED_CONTENT_CASES,
+} from './fixtures/content-moderation-cases.mjs';
 
 const PROJECT_ID = 'studi-rules-test';
 let env;
@@ -80,6 +84,20 @@ function validConversation(a, b) {
   };
 }
 
+function createConversationWithQuota(db, uid, otherUid) {
+  const cid = convoId(uid, otherUid);
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'conversations', cid), validConversation(uid, otherUid));
+  batch.set(doc(db, 'rateLimits', uid, 'actions', 'createConversation'), {
+    windowStart: serverTimestamp(),
+    count: 1,
+    lastConversationId: cid,
+    updatedAt: serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 48 * 3600 * 1000),
+  });
+  return batch.commit();
+}
+
 before(async () => {
   env = await initializeTestEnvironment({
     projectId: PROJECT_ID,
@@ -124,7 +142,7 @@ function batchWithBoundFriendRequestRateLimit(db, uid, requestId) {
 }
 
 function createSessionWithRateLimit(db, uid, sessionId, session) {
-  const batch = batchWithRateLimit(db, uid, 'createSession');
+  const batch = batchWithBoundRateLimit(db, uid, 'createSession', `sessions/${sessionId}`);
   batch.set(doc(db, 'sessions', sessionId), session);
   return batch.commit();
 }
@@ -141,7 +159,9 @@ function updateSessionWithRateLimit(db, uid, sessionId, update, boundSessionId =
 }
 
 function createMessageWithRateLimit(db, uid, conversationId, messageId, message) {
-  const batch = batchWithRateLimit(db, uid, 'sendMessage');
+  const batch = batchWithBoundRateLimit(
+    db, uid, 'sendMessage', `conversations/${conversationId}/messages/${messageId}`
+  );
   batch.set(doc(db, 'conversations', conversationId, 'messages', messageId), message);
   return batch.commit();
 }
@@ -155,28 +175,27 @@ function updateConversationWithRateLimit(db, uid, conversationId, data) {
 // Mirrors sendSessionMessage in lib/firestore.ts: session-chat message +
 // sendMessage rate-limit write in a single batch.
 function createSessionChatMessage(db, uid, sessionId, messageId, message) {
-  const batch = batchWithRateLimit(db, uid, 'sendMessage');
+  const batch = batchWithBoundRateLimit(
+    db, uid, 'sendMessage', `sessions/${sessionId}/messages/${messageId}`
+  );
   batch.set(doc(db, 'sessions', sessionId, 'messages', messageId), message);
   return batch.commit();
 }
 
-// Mirrors sendDirectMessage in lib/firestore.ts: message + metadata bump +
-// sendMessage rate-limit write in a single batch.
+// Mirrors sendDirectMessage in lib/firestore.ts: message + bound sendMessage
+// limiter. Conversation metadata is Admin-trigger-authored from this message.
 function clientSendFlow(db, uid, conversationId, messageId, text) {
-  const batch = batchWithRateLimit(db, uid, 'sendMessage');
+  const batch = batchWithBoundRateLimit(
+    db, uid, 'sendMessage', `conversations/${conversationId}/messages/${messageId}`
+  );
   batch.set(doc(db, 'conversations', conversationId, 'messages', messageId), {
     senderId: uid, text, createdAt: serverTimestamp(),
-  });
-  batch.update(doc(db, 'conversations', conversationId), {
-    lastMessagePreview: text.slice(0, 200),
-    lastMessageAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
   });
   return batch.commit();
 }
 
 function createReportWithRateLimit(db, uid, reportId, report) {
-  const batch = batchWithRateLimit(db, uid, 'reportUser');
+  const batch = batchWithBoundRateLimit(db, uid, 'reportUser', `reports/${reportId}`);
   batch.set(doc(db, 'reports', reportId), report);
   return batch.commit();
 }
@@ -192,7 +211,9 @@ function createCatalogRequestWithRateLimit(db, uid, requestId, request) {
 }
 
 function setRatingWithRateLimit(db, uid, ratingId, rating) {
-  const batch = batchWithRateLimit(db, uid, 'locationRating');
+  const batch = batchWithBoundRateLimit(
+    db, uid, 'locationRating', `locationRatings/${ratingId}`
+  );
   batch.set(doc(db, 'locationRatings', ratingId), rating);
   return batch.commit();
 }
@@ -1020,12 +1041,12 @@ describe('sessions', () => {
     }));
   });
 
-  it('host can delete; others cannot', async () => {
+  it('denies client session hard-delete for hosts and non-hosts', async () => {
     await seed('sessions/s1', validSession(ALICE, {
       createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
     }));
     await assertFails(deleteDoc(doc(ctx(BOB), 'sessions', 's1')));
-    await assertSucceeds(deleteDoc(doc(ctx(ALICE), 'sessions', 's1')));
+    await assertFails(deleteDoc(doc(ctx(ALICE), 'sessions', 's1')));
   });
 });
 
@@ -1300,8 +1321,7 @@ describe('conversations + messages', () => {
     // doc must exist (mirrors the friendRequests exists(users/{toUid}) check).
     await seed(`users/${BOB}`, { displayName: 'Bob', classes: [] });
     await assertSucceeds(
-      setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
-        validConversation(ALICE, BOB))
+      createConversationWithQuota(ctx(ALICE), ALICE, BOB)
     );
   });
 
@@ -1357,7 +1377,7 @@ describe('conversations + messages', () => {
       validConversation(ALICE, BOB)));
   });
 
-  it('participants cannot mutate participantIds; preview capped at 200', async () => {
+  it('clients cannot mutate conversation metadata or participants', async () => {
     const cid = convoId(ALICE, BOB);
     await seed(`conversations/${cid}`, {
       ...validConversation(ALICE, BOB),
@@ -1372,13 +1392,13 @@ describe('conversations + messages', () => {
       lastMessagePreview: 'x'.repeat(201),
       lastMessageAt: serverTimestamp(), updatedAt: serverTimestamp(),
     }));
-    await assertSucceeds(updateConversationWithRateLimit(ctx(ALICE), ALICE, cid, {
+    await assertFails(updateConversationWithRateLimit(ctx(ALICE), ALICE, cid, {
       lastMessagePreview: 'hey', lastMessageAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     }));
   });
 
-  it('metadata bump requires the fresh sendMessage rate-limit write', async () => {
+  it('denies forged metadata even with a fresh sendMessage limiter', async () => {
     const cid = convoId(ALICE, BOB);
     await seed(`conversations/${cid}`, {
       ...validConversation(ALICE, BOB),
@@ -1398,7 +1418,21 @@ describe('conversations + messages', () => {
       lastMessagePreview: 'hey', lastMessageAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     }));
-    // Metadata timestamps must be server time (consistent with a real send):
+    // A client cannot forge a preview by coupling it to a real message write.
+    const db = ctx(ALICE);
+    const forgedBatch = batchWithBoundRateLimit(
+      db, ALICE, 'sendMessage', `conversations/${cid}/messages/m-forged`
+    );
+    forgedBatch.set(doc(db, 'conversations', cid, 'messages', 'm-forged'), {
+      senderId: ALICE, text: 'ordinary study message', createdAt: serverTimestamp(),
+    });
+    forgedBatch.update(doc(db, 'conversations', cid), {
+      lastMessagePreview: 'kill yourself',
+      lastMessageAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    await assertFails(forgedBatch.commit());
+
     await assertFails(updateConversationWithRateLimit(ctx(ALICE), ALICE, cid, {
       lastMessagePreview: 'hey',
       lastMessageAt: Timestamp.fromMillis(Date.now() + 86_400_000),
@@ -1428,7 +1462,7 @@ describe('conversations + messages', () => {
     }));
   });
 
-  it('full client send batch (message + metadata + rate limit) passes', async () => {
+  it('full client send batch (message + bound limiter) passes', async () => {
     const cid = convoId(ALICE, BOB);
     await seed(`conversations/${cid}`, {
       ...validConversation(ALICE, BOB),
@@ -1440,10 +1474,7 @@ describe('conversations + messages', () => {
     await assertFails(clientSendFlow(ctx(MALLORY), MALLORY, cid, 'm2', 'intruder'));
   });
 
-  it('client send flow for a max-length message: sliced preview passes, full text does not', async () => {
-    // Regression: sendDirectMessage must write lastMessagePreview as
-    // text.slice(0, 200) — a 2000-char message is a valid message but an
-    // invalid preview, so the unsliced shape strands the conversation update.
+  it('client send flow accepts a max-length message without client metadata writes', async () => {
     const cid = convoId(ALICE, BOB);
     const longText = 'x'.repeat(2000);
     await seed(`conversations/${cid}`, {
@@ -1451,25 +1482,9 @@ describe('conversations + messages', () => {
       createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
       lastMessageAt: Timestamp.now(),
     });
-    await assertSucceeds(createMessageWithRateLimit(ctx(ALICE), ALICE, cid, 'm1', {
-      senderId: ALICE, text: longText, createdAt: serverTimestamp(),
-    }));
+    await assertSucceeds(clientSendFlow(ctx(ALICE), ALICE, cid, 'm1', longText));
     await assertFails(setDoc(doc(ctx(ALICE), 'conversations', cid, 'messages', 'm1b'), {
       senderId: ALICE, text: 'missing rate limit', createdAt: serverTimestamp(),
-    }));
-    await seed(`rateLimits/${ALICE}/actions/sendMessage`, {
-      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
-    });
-    await assertFails(updateConversationWithRateLimit(ctx(ALICE), ALICE, cid, {
-      lastMessagePreview: longText, lastMessageAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    }));
-    await seed(`rateLimits/${ALICE}/actions/sendMessage`, {
-      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
-    });
-    await assertSucceeds(updateConversationWithRateLimit(ctx(ALICE), ALICE, cid, {
-      lastMessagePreview: longText.slice(0, 200), lastMessageAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
     }));
   });
 
@@ -1973,9 +1988,9 @@ describe('friend requests (friendRequests/{from}__{to})', () => {
     await assertSucceeds(sendRequest(ctx(ALICE), ALICE, ALICE, BOB));
   });
 
-  it('PHASE 1: temporarily accepts the legacy updatedAt-only client shape', async () => {
+  it('rejects the legacy updatedAt-only client shape', async () => {
     await seedUser(BOB);
-    await assertSucceeds(sendLegacyRequest(ctx(ALICE), ALICE, ALICE, BOB));
+    await assertFails(sendLegacyRequest(ctx(ALICE), ALICE, ALICE, BOB));
   });
 
   it('rejects a second request inside the ten-second cooldown', async () => {
@@ -2074,9 +2089,7 @@ describe('friend requests (friendRequests/{from}__{to})', () => {
     );
   });
 
-  it('PHASE 1 GAP: a legacy limiter can still authorize two creates in one batch', async () => {
-    // This assertion deliberately flips to assertFails in Phase 2. Keeping it
-    // visible prevents the compatibility bypass from looking fixed early.
+  it('rejects the legacy same-batch bypass', async () => {
     await seedUser(BOB);
     await seedUser(MALLORY);
     const db = ctx(ALICE);
@@ -2087,7 +2100,7 @@ describe('friend requests (friendRequests/{from}__{to})', () => {
     batch.set(doc(db, 'friendRequests', reqId(ALICE, MALLORY)), {
       fromUid: ALICE, toUid: MALLORY, createdAt: serverTimestamp(),
     });
-    await assertSucceeds(batch.commit());
+    await assertFails(batch.commit());
   });
 
   it('requires the fresh rate-limit write', async () => {
@@ -2461,6 +2474,51 @@ describe('locationRatings', () => {
   });
 });
 
+// ------------------------------------------------ launch UGC moderation gate
+describe('high-confidence UGC moderation', () => {
+  const moderationParityCases = [
+    ...BLOCKED_CONTENT_CASES.map((text) => [text, false]),
+    ...ALLOWED_CONTENT_CASES.map((text) => [text, true]),
+  ];
+
+  for (const [text, allowed] of moderationParityCases) {
+    it(`${allowed ? 'allows' : 'rejects'} parity case: ${text}`, async () => {
+      const write = setDoc(doc(ctx(ALICE), 'users', ALICE), {
+        displayName: 'Alice', classes: [], bio: text,
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      });
+      await (allowed ? assertSucceeds(write) : assertFails(write));
+    });
+  }
+
+  it('rejects objectionable profile text while preserving normal Unicode', async () => {
+    await assertFails(setDoc(doc(ctx(ALICE), 'users', ALICE), {
+      displayName: 'Alice', classes: [], bio: 'kill yourself',
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    }));
+    await assertFails(setDoc(doc(ctx(ALICE), 'users', ALICE), {
+      displayName: 'Alice', classes: [], bio: 'I will kill you',
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(setDoc(doc(ctx(ALICE), 'users', ALICE), {
+      displayName: 'José 王', classes: [], bio: 'Studying violence prevention 📚',
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('rejects objectionable session titles and chat messages', async () => {
+    await assertFails(createSessionWithRateLimit(
+      ctx(ALICE), ALICE, 'bad-title', validSession(ALICE, { title: 'kys' })
+    ));
+    await seed('sessions/chat-moderation', validSession(ALICE, {
+      participantIds: [ALICE, BOB], createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+    }));
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 'chat-moderation', 'bad-message', {
+      senderId: BOB, text: 'kill yourself', createdAt: serverTimestamp(),
+    }));
+  });
+});
+
 // ---------------------------------------------------------------- reports
 describe('reports (immutable, write-only)', () => {
   const valid = (reporter) => ({
@@ -2474,6 +2532,121 @@ describe('reports (immutable, write-only)', () => {
     await assertFails(setDoc(doc(ctx(ALICE), 'reports', 'r1b'), valid(ALICE)));
     await assertFails(getDoc(doc(ctx(ALICE), 'reports', 'r1')));
     await assertFails(deleteDoc(doc(ctx(ALICE), 'reports', 'r1')));
+  });
+
+  async function seedDirectReportTarget() {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB),
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/message123`, {
+      senderId: BOB, text: 'reported direct message', createdAt: Timestamp.now(),
+    });
+    return cid;
+  }
+
+  async function seedSessionReportTarget() {
+    await seed('sessions/session123', validSession(ALICE, {
+      participantIds: [ALICE, BOB], createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+    }));
+    await seed('sessions/session123/messages/message123', {
+      senderId: BOB, text: 'reported session message', createdAt: Timestamp.now(),
+    });
+  }
+
+  it('accepts authentic DM and session message evidence without making reports readable', async () => {
+    const cid = await seedDirectReportTarget();
+    await assertSucceeds(createReportWithRateLimit(ctx(ALICE), ALICE, 'message-report', {
+      ...valid(ALICE),
+      context: 'conversation',
+      contentType: 'direct_message',
+      contentId: 'message123',
+      threadId: cid,
+      messageText: 'reported direct message',
+    }));
+    await assertFails(getDoc(doc(ctx(ALICE), 'reports', 'message-report')));
+
+    await seed(`rateLimits/${ALICE}/actions/reportUser`, {
+      lastResourceId: 'reports/message-report',
+      updatedAt: Timestamp.fromMillis(Date.now() - 11 * 60 * 1000),
+    });
+    await seedSessionReportTarget();
+    await assertSucceeds(createReportWithRateLimit(ctx(ALICE), ALICE, 'session-message-report', {
+      ...valid(ALICE),
+      context: 'session_chat', contentType: 'session_message',
+      contentId: 'message123', threadId: 'session123',
+      messageText: 'reported session message',
+    }));
+    await env.withSecurityRulesDisabled(async (adminContext) => {
+      const adminDb = adminContext.firestore();
+      await deleteDoc(doc(adminDb, 'sessions', 'session123', 'messages', 'message123'));
+      const report = await getDoc(doc(adminDb, 'reports', 'session-message-report'));
+      assert.equal(report.data().messageText, 'reported session message');
+    });
+  });
+
+  it('rejects partial or malformed message references', async () => {
+    await assertFails(createReportWithRateLimit(ctx(ALICE), ALICE, 'partial-report', {
+      ...valid(ALICE), contentType: 'session_message', contentId: 'message123',
+    }));
+  });
+
+  it('rejects nonexistent messages and forged message ids', async () => {
+    await seedSessionReportTarget();
+    await assertFails(createReportWithRateLimit(ctx(ALICE), ALICE, 'missing-message', {
+      ...valid(ALICE), context: 'session_chat', contentType: 'session_message',
+      contentId: 'does-not-exist', threadId: 'session123', messageText: 'invented',
+    }));
+    await assertFails(createReportWithRateLimit(ctx(ALICE), ALICE, 'forged-id', {
+      ...valid(ALICE), context: 'session_chat', contentType: 'session_message',
+      contentId: '../message123', threadId: 'session123', messageText: 'reported session message',
+    }));
+  });
+
+  it('rejects a message reference substituted from another session', async () => {
+    await seedSessionReportTarget();
+    await seed('sessions/session456', validSession(ALICE, {
+      participantIds: [ALICE, BOB], createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+    }));
+    await seed('sessions/session456/messages/other-message', {
+      senderId: BOB, text: 'message from a different session', createdAt: Timestamp.now(),
+    });
+    await assertFails(createReportWithRateLimit(ctx(ALICE), ALICE, 'mismatched-thread', {
+      ...valid(ALICE), context: 'session_chat', contentType: 'session_message',
+      contentId: 'other-message', threadId: 'session123',
+      messageText: 'message from a different session',
+    }));
+  });
+
+  it('rejects a sender mismatch or altered evidence snapshot', async () => {
+    await seedSessionReportTarget();
+    await assertFails(createReportWithRateLimit(ctx(ALICE), ALICE, 'wrong-sender', {
+      ...valid(ALICE), reportedUserId: MALLORY,
+      context: 'session_chat', contentType: 'session_message',
+      contentId: 'message123', threadId: 'session123', messageText: 'reported session message',
+    }));
+    await assertFails(createReportWithRateLimit(ctx(ALICE), ALICE, 'altered-evidence', {
+      ...valid(ALICE), context: 'session_chat', contentType: 'session_message',
+      contentId: 'message123', threadId: 'session123', messageText: 'different text',
+    }));
+  });
+
+  it('rejects outsiders and self-reports for referenced messages', async () => {
+    await seedSessionReportTarget();
+    await assertFails(createReportWithRateLimit(ctx(MALLORY), MALLORY, 'outsider-report', {
+      ...valid(MALLORY), context: 'session_chat', contentType: 'session_message',
+      contentId: 'message123', threadId: 'session123', messageText: 'reported session message',
+    }));
+    await seed('sessions/self-report-session', validSession(ALICE));
+    await seed('sessions/self-report-session/messages/own-message', {
+      senderId: ALICE, text: 'my message', createdAt: Timestamp.now(),
+    });
+    await assertFails(createReportWithRateLimit(ctx(ALICE), ALICE, 'self-message-report', {
+      ...valid(ALICE), reportedUserId: ALICE,
+      context: 'session_chat', contentType: 'session_message',
+      contentId: 'own-message', threadId: 'self-report-session', messageText: 'my message',
+    }));
   });
 
   it('report create is throttled per reporter', async () => {
@@ -2692,8 +2865,7 @@ describe('PR A hardening', () => {
       await seedUser(BOB);
 
       await assertSucceeds(
-        setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
-          validConversation(ALICE, BOB))
+        createConversationWithQuota(ctx(ALICE), ALICE, BOB)
       );
       await env.clearFirestore();
 
@@ -2702,8 +2874,7 @@ describe('PR A hardening', () => {
       await seedUser(ALICE);
       await seedUser(BOB);
       await assertSucceeds(
-        setDoc(doc(ctx(BOB), 'conversations', convoId(ALICE, BOB)),
-          validConversation(ALICE, BOB))
+        createConversationWithQuota(ctx(BOB), BOB, ALICE)
       );
     });
 
@@ -2961,7 +3132,7 @@ describe('PR A hardening', () => {
 });
 
 // -------------------------------------- bound generic interval limiters (H1)
-describe('bound generic interval limiters (phase 1)', () => {
+describe('bound generic interval limiters', () => {
   const adapters = [
     {
       name: 'createSession',
@@ -2990,10 +3161,6 @@ describe('bound generic interval limiters (phase 1)', () => {
         const cid = convoId(ALICE, BOB);
         batch.set(doc(db, 'conversations', cid, 'messages', id), {
           senderId: actor, text: 'hello', createdAt: serverTimestamp(),
-        });
-        batch.update(doc(db, 'conversations', cid), {
-          lastMessagePreview: 'hello', lastMessageAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
         });
       },
     },
@@ -3101,13 +3268,12 @@ describe('bound generic interval limiters (phase 1)', () => {
     }
   });
 
-  it('documents released-client old-shape compatibility during Phase 1', async () => {
+  it('rejects the legacy unbound shape and its same-batch bypass', async () => {
     for (const adapter of adapters) {
       await resetFor(adapter);
-      await assertSucceeds(commit(adapter, ctx(ALICE), ALICE, ['one'], 'one', true));
+      await assertFails(commit(adapter, ctx(ALICE), ALICE, ['one'], 'one', true));
       await resetFor(adapter);
-      // Intentional compatibility gap: this assertion must invert at Phase 2.
-      await assertSucceeds(commit(adapter, ctx(ALICE), ALICE, ['one', 'two'], 'one', true));
+      await assertFails(commit(adapter, ctx(ALICE), ALICE, ['one', 'two'], 'one', true));
     }
   });
 
@@ -3127,17 +3293,14 @@ describe('bound generic interval limiters (phase 1)', () => {
 });
 
 // ------------------------------------------- PR B: new-conversation quota
-// Phase 1 coverage. The counter doc is fully validated wherever it is written,
-// but conversation create does NOT yet require it (old clients write none).
-// The Phase 2 flip adds one clause to the create rule; the tests that will
-// change are called out in docs/conversation-quota-rollout.md.
-describe('PR B conversation quota (phase 1)', () => {
+describe('conversation quota enforcement', () => {
   const QUOTA_MAX = 10;
   const quotaPath = (uid) => `rateLimits/${uid}/actions/createConversation`;
   const quotaRef = (db, uid) => doc(db, 'rateLimits', uid, 'actions', 'createConversation');
   const ttl = (hours = 48) => Timestamp.fromMillis(Date.now() + hours * 3600 * 1000);
-  const liveWindow = (count) => ({
-    windowStart: Timestamp.now(), count, updatedAt: Timestamp.now(), expiresAt: ttl(),
+  const liveWindow = (count, lastConversationId = convoId(ALICE, BOB)) => ({
+    windowStart: Timestamp.now(), count, lastConversationId,
+    updatedAt: Timestamp.now(), expiresAt: ttl(),
   });
   const seedUser = (uid) => seed(`users/${uid}`, { displayName: uid, classes: [] });
   // The five pre-existing minimum-interval actions. Friend requests become
@@ -3149,8 +3312,9 @@ describe('PR B conversation quota (phase 1)', () => {
                                     'locationRating'];
 
   // A fresh-window counter write, as the client transaction emits it.
-  const openWindow = () => ({
+  const openWindow = (lastConversationId = convoId(ALICE, BOB)) => ({
     windowStart: serverTimestamp(), count: 1,
+    lastConversationId,
     updatedAt: serverTimestamp(), expiresAt: ttl(),
   });
 
@@ -3161,7 +3325,8 @@ describe('PR B conversation quota (phase 1)', () => {
       await env.clearFirestore();
       await seed(quotaPath(ALICE), liveWindow(1));
       await assertSucceeds(setDoc(quotaRef(ctx(ALICE), ALICE), {
-        windowStart: (await getDocAsOwner(ALICE)).windowStart,
+          windowStart: (await getDocAsOwner(ALICE)).windowStart,
+          lastConversationId: convoId(ALICE, BOB),
         count: 2, updatedAt: serverTimestamp(), expiresAt: ttl(),
       }));
     });
@@ -3170,7 +3335,8 @@ describe('PR B conversation quota (phase 1)', () => {
       await seed(quotaPath(ALICE), liveWindow(QUOTA_MAX));
       const stored = await getDocAsOwner(ALICE);
       await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), {
-        windowStart: stored.windowStart, count: QUOTA_MAX + 1,
+          windowStart: stored.windowStart, count: QUOTA_MAX + 1,
+          lastConversationId: convoId(ALICE, BOB),
         updatedAt: serverTimestamp(), expiresAt: ttl(),
       }));
     });
@@ -3199,6 +3365,7 @@ describe('PR B conversation quota (phase 1)', () => {
       for (const count of [5, 3, 2]) {
         await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), {
           windowStart: stored.windowStart, count,
+          lastConversationId: convoId(ALICE, BOB),
           updatedAt: serverTimestamp(), expiresAt: ttl(),
         }));
       }
@@ -3206,6 +3373,7 @@ describe('PR B conversation quota (phase 1)', () => {
       // Carrying a different windowStart on an increment.
       await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), {
         windowStart: Timestamp.fromMillis(Date.now() - 60 * 1000), count: 4,
+        lastConversationId: convoId(ALICE, BOB),
         updatedAt: serverTimestamp(), expiresAt: ttl(),
       }));
 
@@ -3213,6 +3381,7 @@ describe('PR B conversation quota (phase 1)', () => {
       await env.clearFirestore();
       await assertFails(setDoc(quotaRef(ctx(ALICE), ALICE), {
         windowStart: Timestamp.fromMillis(Date.now() - 23 * 3600 * 1000), count: 1,
+        lastConversationId: convoId(ALICE, BOB),
         updatedAt: serverTimestamp(), expiresAt: ttl(),
       }));
     });
@@ -3292,17 +3461,12 @@ describe('PR B conversation quota (phase 1)', () => {
       }
     });
 
-    it('interval actions keep their original behavior', async () => {
-      // Regression guard on the shared isValidRateLimitWrite branch.
+    it('interval actions reject unbound writes', async () => {
       for (const action of INTERVAL_ACTIONS) {
-        await assertSucceeds(setDoc(
+        await assertFails(setDoc(
           doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', action),
           { updatedAt: serverTimestamp() }));
       }
-      // ...and still throttle: an immediate second write is denied.
-      await assertFails(setDoc(
-        doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', 'createSession'),
-        { updatedAt: serverTimestamp() }));
     });
 
     it('rejects an unknown action name in either shape', async () => {
@@ -3311,10 +3475,10 @@ describe('PR B conversation quota (phase 1)', () => {
     });
   });
 
-  describe('conversation create during phase 1', () => {
-    it('still succeeds WITHOUT a counter (already-installed clients)', async () => {
+  describe('conversation create with enforced quota', () => {
+    it('fails without a counter transaction', async () => {
       await seedUser(BOB);
-      await assertSucceeds(setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
+      await assertFails(setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
         validConversation(ALICE, BOB)));
     });
 
@@ -3323,15 +3487,27 @@ describe('PR B conversation quota (phase 1)', () => {
       const db = ctx(ALICE);
       const batch = writeBatch(db);
       batch.set(doc(db, 'conversations', convoId(ALICE, BOB)), validConversation(ALICE, BOB));
-      batch.set(quotaRef(db, ALICE), openWindow());
+      batch.set(quotaRef(db, ALICE), openWindow(convoId(ALICE, BOB)));
       await assertSucceeds(batch.commit());
     });
 
-    it('a spent quota does not block create yet (phase 1 has no enforcement)', async () => {
-      // Documents the deliberate Phase 1 gap. This assertion INVERTS at Phase 2.
+    it('one counter update cannot authorize two conversation creates', async () => {
+      await seedUser(BOB);
+      await seedUser(MALLORY);
+      const db = ctx(ALICE);
+      const firstId = convoId(ALICE, BOB);
+      const secondId = convoId(ALICE, MALLORY);
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'conversations', firstId), validConversation(ALICE, BOB));
+      batch.set(doc(db, 'conversations', secondId), validConversation(ALICE, MALLORY));
+      batch.set(quotaRef(db, ALICE), openWindow(firstId));
+      await assertFails(batch.commit());
+    });
+
+    it('a spent quota blocks conversation creation', async () => {
       await seedUser(BOB);
       await seed(quotaPath(ALICE), liveWindow(QUOTA_MAX));
-      await assertSucceeds(setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
+      await assertFails(setDoc(doc(ctx(ALICE), 'conversations', convoId(ALICE, BOB)),
         validConversation(ALICE, BOB)));
     });
   });
@@ -3361,6 +3537,7 @@ describe('PR B conversation quota (phase 1)', () => {
         tx.set(quotaRef(db, uid), {
           windowStart: live ? stored.windowStart : serverTimestamp(),
           count: nextCount,
+          lastConversationId: cid,
           updatedAt: serverTimestamp(),
           expiresAt: Timestamp.fromMillis(Date.now() + TTL_MS),
         });

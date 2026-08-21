@@ -30,6 +30,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
 import { CONTACT_EMAIL_SUBJECT, openContactEmail } from '@/lib/contact-email';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import {
     DEFAULT_NOTIFICATION_PREFS,
     getNotificationPrefs,
@@ -178,8 +179,7 @@ export default function SettingsScreen() {
       setIsSigningOut(true);
       await logOut();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to sign out right now.';
-      Alert.alert('Sign Out Error', message);
+      Alert.alert('Sign Out Error', getUserFacingErrorMessage(error, 'signOut'));
     } finally {
       setIsSigningOut(false);
     }
@@ -238,9 +238,7 @@ export default function SettingsScreen() {
       setShowDeleteReauthModal(false);
       setDeleteReauthPassword('');
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to verify your password right now.';
-      Alert.alert('Delete Account Error', message);
+      Alert.alert('Delete Account Error', getUserFacingErrorMessage(error, 'accountDeletion'));
     } finally {
       setIsReauthenticatingDelete(false);
     }
