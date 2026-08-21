@@ -462,10 +462,12 @@ exports.onDirectMessageCreated = onDocumentCreated(
     const rawText = typeof message?.text === "string" ? message.text.trim() : "";
     const text = normalizePreview(rawText);
     const conversationId = event.params.conversationId;
+    const messageId = event.params.messageId;
 
     if (
       !senderId
       || !conversationId
+      || !messageId
       || !text
       || typeof message?.createdAt?.toMillis !== "function"
     ) {
@@ -485,7 +487,12 @@ exports.onDirectMessageCreated = onDocumentCreated(
       if (!participants.includes(senderId)) {
         return [];
       }
-      const metadata = deriveDirectMessageMetadata(message, data?.lastMessageAt);
+      const metadata = deriveDirectMessageMetadata(
+        message,
+        messageId,
+        data?.lastMessageAt,
+        data?.lastMessageId
+      );
       if (!metadata) {
         return participants;
       }

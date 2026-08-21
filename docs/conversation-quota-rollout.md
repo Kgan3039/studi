@@ -91,6 +91,7 @@ decision; restoring Phase 1 would reopen the direct-write bypass.
 
 1. Configure the Firestore TTL policy on collection group `actions`, field
    `expiresAt`. Interval limiter documents lack this field and are unaffected.
-2. Deploy the enforcing rules only with a client build containing the current
-   transaction.
+2. Follow `docs/first-public-release-cutover.md`. In particular, retire every
+   old internal/TestFlight build before enabling strict rules; there is no public
+   Phase-1 compatibility period.
 3. Verify a real new DM, an existing DM reopen, and quota denial end to end.

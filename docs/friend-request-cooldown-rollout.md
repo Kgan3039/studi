@@ -78,11 +78,10 @@ write: at most one id can match, and an atomic batch fails if any create fails.
 
 ## Current deployment order
 
-1. Confirm every internal/TestFlight build in active use writes the bound shape.
-2. Deploy the Firestore rules and tests together.
-3. Release the current client and monitor friend-request permission failures.
-4. Keep the client unchanged; it already emits the required bound
-   shape.
+Follow `docs/first-public-release-cutover.md`. The release candidate already
+emits the bound shape. Every old internal/TestFlight build must be retired before
+strict rules are enabled, and the public release happens only after the strict
+backend passes the cutover smoke test.
 
 Restoring the Phase-1 rules would reopen the documented same-batch bypass and
 requires an explicit security decision. No data migration is required.

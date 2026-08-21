@@ -84,7 +84,7 @@ service cloud.firestore {
     //
     //  - INTERVAL: `updatedAt` is bound to one exact resource path in
     //    `lastResourceId`.
-    //  - BOUND INTERVAL (catalogRequest and updated friendRequest clients):
+    //  - BOUND INTERVAL (catalogRequest and friendRequest):
     //    `updatedAt` plus the exact request
     //    document id authorized by that limiter update. Binding the id prevents
     //    one atomic limiter write from authorizing multiple request creates.

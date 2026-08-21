@@ -26,14 +26,18 @@ clients without claiming to close the bypass globally.
 | `reportUser` | `reports/{reportId}` |
 | `locationRating` | `locationRatings/{locationId}__{uid}` |
 
-`catalogRequest` and updated `friendRequest` clients retain their existing
+`catalogRequest` and `friendRequest` retain their existing
 `lastRequestId` designs. `createConversation` retains its fixed-window counter.
 
 ## Completed Phase 2 cutover
 
-The legacy branches have been removed. No additional client change is needed.
+The legacy branches have been removed. The release candidate already contains
+every required bound write; old internal/TestFlight builds are unsupported once
+strict rules are enabled.
 
 Before deploying the current rules, verify the build on iOS and Android for session create,
 DM send, session-chat send, report submission, and rating create/edit. These
 actions do not emit a limiter-shape adoption property, so use the minimum
 supported version policy and release telemetry rather than unrelated events.
+The exact first-public-release order and rollback plan are in
+`docs/first-public-release-cutover.md`.

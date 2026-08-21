@@ -227,6 +227,7 @@ export type DirectConversation = {
   conversationId: string;
   createdAt?: unknown;
   lastMessageAt?: unknown;
+  lastMessageId?: string;
   lastMessagePreview: string;
   participantIds: string[];
   participantKey: string;
