@@ -417,3 +417,23 @@ describe('group-message lifecycle notification wiring', () => {
     assert.match(groupTrigger, /body: `\$\{senderName\}: \$\{currentText\}`/);
   });
 });
+
+describe('Cloud Functions runtime wiring', () => {
+  const firebaseConfig = JSON.parse(readFileSync('firebase.json', 'utf8'));
+  const functionsPackage = JSON.parse(readFileSync('functions/package.json', 'utf8'));
+  const functionSource = readFileSync('functions/index.js', 'utf8');
+
+  it('uses the supported Node.js 22 runtime consistently', () => {
+    assert.equal(firebaseConfig.functions[0].runtime, 'nodejs22');
+    assert.equal(functionsPackage.engines.node, '22');
+  });
+
+  it('uses current Functions and Admin SDK versions with modular Admin imports', () => {
+    assert.equal(functionsPackage.dependencies['firebase-functions'], '^7.3.2');
+    assert.equal(functionsPackage.dependencies['firebase-admin'], '^14.3.0');
+    assert.match(functionSource, /require\("firebase-admin\/app"\)/);
+    assert.match(functionSource, /require\("firebase-admin\/firestore"\)/);
+    assert.doesNotMatch(functionSource, /require\("firebase-admin"\)/);
+    assert.doesNotMatch(functionSource, /\badmin\./);
+  });
+});

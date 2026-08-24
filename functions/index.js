@@ -1,6 +1,9 @@
-// functions/index.js — firebase-functions v6 (2nd gen), Node 20.
+// functions/index.js — firebase-functions v7 (2nd gen), Node 22.
 // Replaces the previous v1-style functions/index.js in full.
 
+const { initializeApp } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
+const { FieldValue, getFirestore, Timestamp } = require("firebase-admin/firestore");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const {
   onDocumentCreated,
@@ -9,7 +12,6 @@ const {
 } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { setGlobalOptions } = require("firebase-functions/v2");
-const admin = require("firebase-admin");
 const crypto = require("crypto");
 const { Expo } = require("expo-server-sdk");
 const { loadPushPreference } = require("./notification-preferences");
@@ -50,10 +52,11 @@ const {
   releasePushTokenOwnership,
 } = require("./push-token-ownership");
 
-admin.initializeApp();
+initializeApp();
 setGlobalOptions({ region: "us-central1", maxInstances: 5 });
 
-const db = admin.firestore();
+const db = getFirestore();
+const auth = getAuth();
 const expo = new Expo();
 const DELETE_ACCOUNT_MAX_AUTH_AGE_SECONDS = 5 * 60;
 const DELETE_ACCOUNT_RATE_LIMIT_SECONDS = 10 * 60;
@@ -130,7 +133,7 @@ async function disablePushToken(ref) {
     await ref.set(
       {
         enabled: false,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }
     );
@@ -247,9 +250,9 @@ async function notifyUser(uid, { id, ...rawPayload }) {
   try {
     await ref.create({
       ...payload,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
       readAt: null,
-      expiresAt: admin.firestore.Timestamp.fromMillis(
+      expiresAt: Timestamp.fromMillis(
         Date.now() + NOTIFICATION_RETENTION_DAYS * 24 * 60 * 60 * 1000
       ),
     });
@@ -369,7 +372,7 @@ exports.registerPushToken = onCall(async (request) => {
   ) {
     throw new HttpsError("invalid-argument", "Invalid push registration identity.");
   }
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
 
   try {
     const result = await claimPushTokenOwnership({
@@ -438,7 +441,7 @@ exports.unregisterPushToken = onCall(async (request) => {
   ) {
     throw new HttpsError("invalid-argument", "Invalid push registration identity.");
   }
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
 
   const removed = await releasePushTokenOwnership({
     db,
@@ -633,7 +636,7 @@ exports.onSessionMessageCreated = onDocumentCreated(
     try {
       await sessionSnap.ref.update({
         lastMessageAt:
-          currentMessage.createdAt ?? admin.firestore.FieldValue.serverTimestamp(),
+          currentMessage.createdAt ?? FieldValue.serverTimestamp(),
         lastMessageSenderId: senderId,
       });
     } catch (error) {
@@ -914,7 +917,7 @@ const FRIEND_SUGGESTIONS_RATE_LIMIT_SECONDS = 3;
 
 async function enforceCallableRateLimit(uid, action, minIntervalSeconds) {
   const ref = db.collection("rateLimits").doc(uid).collection("actions").doc(action);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -1042,11 +1045,11 @@ const REMINDER_WINDOW_START_MINUTES = 20;
 const REMINDER_WINDOW_END_MINUTES = 30;
 
 exports.sendSessionReminders = onSchedule("every 10 minutes", async () => {
-  const now = admin.firestore.Timestamp.now();
-  const windowStart = admin.firestore.Timestamp.fromMillis(
+  const now = Timestamp.now();
+  const windowStart = Timestamp.fromMillis(
     now.toMillis() + REMINDER_WINDOW_START_MINUTES * 60 * 1000
   );
-  const windowEnd = admin.firestore.Timestamp.fromMillis(
+  const windowEnd = Timestamp.fromMillis(
     now.toMillis() + REMINDER_WINDOW_END_MINUTES * 60 * 1000
   );
 
@@ -1105,13 +1108,13 @@ exports.sendSessionReminders = onSchedule("every 10 minutes", async () => {
 
 const accountDeletion = createAccountDeletionRunner({
   db,
-  auth: admin.auth(),
-  FieldValue: admin.firestore.FieldValue,
+  auth,
+  FieldValue,
 });
 
 async function enforceDeleteAccountRateLimit(uid) {
   const ref = db.collection("rateLimits").doc(uid).collection("actions").doc("deleteAccount");
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -1141,7 +1144,7 @@ exports.deleteUserAccount = onCall({ timeoutSeconds: 540 }, async (request) => {
 
   let userRecord;
   try {
-    userRecord = await admin.auth().getUser(uid);
+    userRecord = await auth.getUser(uid);
   } catch {
     throw new HttpsError("failed-precondition", "This account no longer exists.");
   }
