@@ -25,7 +25,8 @@ function compareTimestamps(left, right) {
 
 function deriveDirectMessageMetadata(message, messageId, currentLastMessageAt, currentLastMessageId) {
   const senderId = typeof message?.senderId === 'string' ? message.senderId : '';
-  const text = typeof message?.text === 'string' ? message.text.trim() : '';
+  const rawText = typeof message?.text === 'string' ? message.text.trim() : '';
+  const text = message?.unsentAt && !rawText ? 'Message unsent' : rawText;
   const createdAt = message?.createdAt;
 
   if (
@@ -58,4 +59,31 @@ function deriveDirectMessageMetadata(message, messageId, currentLastMessageAt, c
   };
 }
 
-module.exports = { deriveDirectMessageMetadata };
+function deriveDirectMessageUpdateMetadata(
+  message,
+  messageId,
+  currentLastMessageId
+) {
+  if (
+    typeof messageId !== 'string'
+    || !messageId
+    || currentLastMessageId !== messageId
+    || typeof message?.senderId !== 'string'
+    || typeof message?.createdAt?.toMillis !== 'function'
+  ) {
+    return null;
+  }
+
+  if (message.unsentAt && message.text === '') {
+    return { lastMessagePreview: 'Message unsent' };
+  }
+
+  const editedText = typeof message?.text === 'string' ? message.text.trim() : '';
+  if (!message?.unsentAt && !!message?.editedAt && editedText) {
+    return { lastMessagePreview: editedText.slice(0, 200) };
+  }
+
+  return null;
+}
+
+module.exports = { deriveDirectMessageMetadata, deriveDirectMessageUpdateMetadata };

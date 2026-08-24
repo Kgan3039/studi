@@ -17,10 +17,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
+import {
+  MessageActionOverlays,
+  MessageEditedIndicator,
+  MessageSelectionBar,
+  MessageSelectionMarker,
+} from '@/components/ui/MessageActions';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useMessageActions } from '@/hooks/use-message-actions';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import { ObjectionableContentError } from '@/lib/content-moderation';
@@ -397,11 +404,23 @@ export default function SessionChatScreen() {
     markRead(null);
   }, [session, isParticipant, source, markRead, focusNonce]);
 
-  const visibleMessages = useMemo(() => {
+  const actionMessages = useMemo(() => {
     return [...messagesById.values()]
       .filter((message) => !blockedUserIds.includes(message.senderId))
       .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
   }, [messagesById, blockedUserIds]);
+  const messageActions = useMessageActions({
+    allowEditing: !isReadOnly,
+    allowUnsend: !isReadOnly,
+    currentUserId: currentUser?.uid,
+    messages: actionMessages,
+    onSuccess: showToast,
+    threadId: sessionId,
+    threadType: 'session',
+  });
+  const visibleMessages = actionMessages.filter(
+    (message) => !messageActions.hiddenMessageIds.has(message.messageId)
+  );
 
   // A denied write usually means the session state changed under us (e.g.
   // the host cancelled while this screen was open) — reload the session so
@@ -732,6 +751,8 @@ export default function SessionChatScreen() {
           const showDaySeparator =
             !!messageDate &&
             (!previousDate || previousDate.toDateString() !== messageDate.toDateString());
+          const isSelected = messageActions.selectedMessageIds.has(message.messageId);
+          const isUnsent = !!message.unsentAt;
 
           return (
             <View style={[styles.messageGroup, isCurrentUser ? styles.mine : styles.theirs]}>
@@ -747,28 +768,92 @@ export default function SessionChatScreen() {
               ) : null}
               <View
                 style={[
-                  styles.bubble,
-                  isCurrentUser
-                    ? [styles.mineBubble, { backgroundColor: palette.tint }]
-                    : [
-                        styles.theirsBubble,
-                        {
-                          backgroundColor: palette.surface,
-                          borderColor: palette.border,
-                          borderWidth: StyleSheet.hairlineWidth * 2,
-                        },
-                      ],
+                  styles.messageRow,
+                  isCurrentUser ? styles.messageRowMine : styles.messageRowTheirs,
                 ]}>
-                <Text style={[styles.bubbleText, { color: isCurrentUser ? '#FFFFFF' : palette.text }]}>
-                  {message.text}
-                </Text>
+                {messageActions.isSelecting ? (
+                  <MessageSelectionMarker selected={isSelected} />
+                ) : null}
+                <Pressable
+                  accessibilityLabel={isUnsent ? 'Message unsent' : message.text}
+                  accessibilityRole="button"
+                  accessibilityActions={[{ name: 'activate', label: 'Open message actions' }]}
+                  accessibilityHint={
+                    messageActions.isSelecting
+                      ? 'Double tap to select or deselect this message.'
+                      : 'Long press for message actions.'
+                  }
+                  accessibilityState={{ selected: isSelected }}
+                  delayLongPress={350}
+                  onAccessibilityAction={() =>
+                    messageActions.isSelecting
+                      ? messageActions.toggleMessageSelection(message.messageId)
+                      : messageActions.openMessageActions(message)
+                  }
+                  onLongPress={
+                    messageActions.isSelecting
+                      ? undefined
+                      : () => messageActions.openMessageActions(message)
+                  }
+                  onPress={
+                    messageActions.isSelecting
+                      ? () => messageActions.toggleMessageSelection(message.messageId)
+                      : undefined
+                  }
+                  style={[
+                    styles.bubble,
+                    isUnsent
+                      ? [
+                          styles.unsentBubble,
+                          {
+                            backgroundColor: palette.surfaceMuted,
+                            borderColor: palette.outline,
+                          },
+                        ]
+                      : isCurrentUser
+                        ? [styles.mineBubble, { backgroundColor: palette.tint }]
+                        : [
+                            styles.theirsBubble,
+                            {
+                              backgroundColor: palette.surface,
+                              borderColor: palette.border,
+                              borderWidth: StyleSheet.hairlineWidth * 2,
+                            },
+                          ],
+                    isSelected && { borderColor: palette.tint, borderWidth: 2 },
+                  ]}>
+                  <Text
+                    style={[
+                      styles.bubbleText,
+                      isUnsent && styles.unsentText,
+                      {
+                        color: isUnsent
+                          ? palette.icon
+                          : isCurrentUser
+                            ? '#FFFFFF'
+                            : palette.text,
+                      },
+                    ]}>
+                    {isUnsent ? 'Message unsent' : message.text}
+                  </Text>
+                </Pressable>
               </View>
-              {showTime ? (
-                <Text style={[styles.bubbleTime, { color: palette.icon }]}>
-                  {message.pending ? 'Sending…' : formatTimestamp(message.createdAt)}
-                </Text>
+              {showTime || (!!message.editedAt && !isUnsent) ? (
+                <View style={styles.messageMeta}>
+                  {!messageActions.isSelecting ? (
+                    <MessageEditedIndicator
+                      message={message}
+                      onPress={() => messageActions.showOriginalMessage(message)}
+                    />
+                  ) : null}
+                  {showTime ? (
+                    <Text style={[styles.bubbleTime, { color: palette.icon }]}>
+                      {message.pending ? 'Sending…' : formatTimestamp(message.createdAt)}
+                    </Text>
+                  ) : null}
+                </View>
               ) : null}
-              {!isCurrentUser ? (
+              {!isCurrentUser && !isUnsent && !messageActions.isSelecting ? (
                 <Pressable
                   accessibilityLabel={`Report message from ${senderName(message.senderId)}`}
                   accessibilityRole="button"
@@ -794,57 +879,62 @@ export default function SessionChatScreen() {
         }}
       />
 
-      <View
-        style={[
-          styles.composerBar,
-          {
-            borderTopColor: palette.border,
-            paddingBottom: Math.max(insets.bottom, Space.md),
-          },
-        ]}>
+      {messageActions.isSelecting ? (
+        <MessageSelectionBar controller={messageActions} />
+      ) : (
         <View
           style={[
-            styles.composer,
-            { backgroundColor: palette.surfaceMuted, opacity: isReadOnly ? 0.55 : 1 },
+            styles.composerBar,
+            {
+              borderTopColor: palette.border,
+              paddingBottom: Math.max(insets.bottom, Space.md),
+            },
           ]}>
-          <TextInput
-            editable={!isSending && !isReadOnly}
-            multiline
-            onChangeText={setDraft}
-            placeholder={
-              hasGraceExpired
-                ? 'This chat is now read-only.'
-                : isCancelled
-                ? 'This session was cancelled.'
-                : isOversized
-                  ? 'Chat is unavailable for this session.'
-                  : 'Message the group…'
-            }
-            placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
-            style={[styles.composerInput, { color: palette.text }]}
-            value={draft}
-          />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Send message"
-            disabled={!canSend}
-            onPress={handleSend}
-            style={({ pressed }) => [
-              styles.sendButton,
-              {
-                backgroundColor: palette.tint,
-                opacity: !canSend ? 0.4 : pressed ? 0.8 : 1,
-              },
+          <View
+            style={[
+              styles.composer,
+              { backgroundColor: palette.surfaceMuted, opacity: isReadOnly ? 0.55 : 1 },
             ]}>
-            {isSending ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <Text style={styles.sendGlyph}>↑</Text>
-            )}
-          </Pressable>
+            <TextInput
+              editable={!isSending && !isReadOnly}
+              multiline
+              onChangeText={setDraft}
+              placeholder={
+                hasGraceExpired
+                  ? 'This chat is now read-only.'
+                  : isCancelled
+                    ? 'This session was cancelled.'
+                    : isOversized
+                      ? 'Chat is unavailable for this session.'
+                      : 'Message the group…'
+              }
+              placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
+              style={[styles.composerInput, { color: palette.text }]}
+              value={draft}
+            />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Send message"
+              disabled={!canSend}
+              onPress={handleSend}
+              style={({ pressed }) => [
+                styles.sendButton,
+                {
+                  backgroundColor: palette.tint,
+                  opacity: !canSend ? 0.4 : pressed ? 0.8 : 1,
+                },
+              ]}>
+              {isSending ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.sendGlyph}>↑</Text>
+              )}
+            </Pressable>
+          </View>
         </View>
-      </View>
+      )}
       </KeyboardAvoidingView>
+      <MessageActionOverlays controller={messageActions} />
       <SuccessToast toast={toast} />
     </>
   );
@@ -917,6 +1007,18 @@ const styles = StyleSheet.create({
   messageGroup: {
     gap: Space.xs,
   },
+  messageRow: {
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  messageRowMine: {
+    justifyContent: 'flex-end',
+  },
+  messageRowTheirs: {
+    justifyContent: 'flex-start',
+  },
   failedGroup: {
     gap: Space.xs + 2,
   },
@@ -959,6 +1061,17 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.body,
     fontSize: 14,
     lineHeight: 19,
+  },
+  unsentBubble: {
+    borderWidth: StyleSheet.hairlineWidth * 2,
+  },
+  unsentText: {
+    fontStyle: 'italic',
+  },
+  messageMeta: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.xs,
   },
   bubbleTime: {
     fontFamily: FontFamily.bodyMedium,

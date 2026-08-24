@@ -13,7 +13,10 @@ const admin = require("firebase-admin");
 const crypto = require("crypto");
 const { Expo } = require("expo-server-sdk");
 const { loadPushPreference } = require("./notification-preferences");
-const { deriveDirectMessageMetadata } = require("./direct-message-metadata");
+const {
+  deriveDirectMessageMetadata,
+  deriveDirectMessageUpdateMetadata,
+} = require("./direct-message-metadata");
 const {
   blockPairIdsFor,
   dmNotificationId,
@@ -475,33 +478,50 @@ exports.onDirectMessageCreated = onDocumentCreated(
     }
 
     const conversationRef = db.collection("conversations").doc(conversationId);
-    const participantIds = await db.runTransaction(async (transaction) => {
+    const currentState = await db.runTransaction(async (transaction) => {
       const conversationSnap = await transaction.get(conversationRef);
       if (!conversationSnap.exists) {
-        return [];
+        return { notificationText: "", participantIds: [] };
       }
+      // Re-read current state so a fast edit/unsend that races this create
+      // trigger wins, regardless of Eventarc delivery order.
+      const currentMessageSnap = await transaction.get(event.data.ref);
+      if (!currentMessageSnap.exists) {
+        return { notificationText: "", participantIds: [] };
+      }
+      const currentMessage = currentMessageSnap.data();
       const data = conversationSnap.data();
       const participants = Array.isArray(data?.participantIds)
         ? data.participantIds.filter((id) => typeof id === "string")
         : [];
-      if (!participants.includes(senderId)) {
-        return [];
+      if (!participants.includes(senderId) || currentMessage?.senderId !== senderId) {
+        return { notificationText: "", participantIds: [] };
       }
       const metadata = deriveDirectMessageMetadata(
-        message,
+        currentMessage,
         messageId,
         data?.lastMessageAt,
         data?.lastMessageId
       );
       if (!metadata) {
-        return participants;
+        return {
+          notificationText: currentMessage?.unsentAt
+            ? ""
+            : normalizePreview(currentMessage?.text),
+          participantIds: participants,
+        };
       }
       transaction.update(conversationRef, metadata);
-      return participants;
+      return {
+        notificationText: currentMessage?.unsentAt
+          ? ""
+          : normalizePreview(currentMessage?.text),
+        participantIds: participants,
+      };
     });
-    const recipients = participantIds.filter((uid) => uid !== senderId);
+    const recipients = currentState.participantIds.filter((uid) => uid !== senderId);
 
-    if (recipients.length === 0) {
+    if (recipients.length === 0 || !currentState.notificationText) {
       return;
     }
 
@@ -514,13 +534,51 @@ exports.onDirectMessageCreated = onDocumentCreated(
           id: dmNotificationId(conversationId, event.id),
           type: "dm_message",
           title: senderName || "New message",
-          body: text,
+          body: currentState.notificationText,
           url: `/conversation/${conversationId}`,
           actorId: senderId,
           conversationId,
         })
       )
     );
+  }
+);
+
+// Editing or unsending the newest DM updates only its inbox preview. It never
+// changes ordering and never fans out another notification.
+exports.onDirectMessageUpdated = onDocumentUpdated(
+  "conversations/{conversationId}/messages/{messageId}",
+  async (event) => {
+    const conversationId = event.params.conversationId;
+    const messageId = event.params.messageId;
+
+    if (!event.data || !conversationId || !messageId) {
+      return;
+    }
+
+    const conversationRef = db.collection("conversations").doc(conversationId);
+    await db.runTransaction(async (transaction) => {
+      const conversationSnap = await transaction.get(conversationRef);
+      if (!conversationSnap.exists) {
+        return;
+      }
+      // Every update event re-derives from the current document, not its event
+      // snapshot. Retries and out-of-order edit/unsend events therefore cannot
+      // restore stale or already-unsent content to the inbox preview.
+      const currentMessageSnap = await transaction.get(event.data.after.ref);
+      if (!currentMessageSnap.exists) {
+        return;
+      }
+
+      const metadata = deriveDirectMessageUpdateMetadata(
+        currentMessageSnap.data(),
+        messageId,
+        conversationSnap.data()?.lastMessageId
+      );
+      if (metadata) {
+        transaction.update(conversationRef, metadata);
+      }
+    });
   }
 );
 
@@ -541,6 +599,18 @@ exports.onSessionMessageCreated = onDocumentCreated(
       return;
     }
     const session = sessionSnap.data();
+    // A quick edit/unsend may land before this create trigger runs. Use the
+    // current document for metadata and notification content so an already-
+    // completed unsend does not cause a delayed push containing removed text.
+    const currentMessageSnap = await event.data.ref.get();
+    if (!currentMessageSnap.exists) {
+      return;
+    }
+    const currentMessage = currentMessageSnap.data();
+    const currentText = normalizePreview(currentMessage?.text);
+    if (currentMessage?.senderId !== senderId) {
+      return;
+    }
 
     const participantIds = Array.isArray(session?.participantIds)
       ? session.participantIds.filter((id) => typeof id === "string")
@@ -563,11 +633,15 @@ exports.onSessionMessageCreated = onDocumentCreated(
     try {
       await sessionSnap.ref.update({
         lastMessageAt:
-          message.createdAt ?? admin.firestore.FieldValue.serverTimestamp(),
+          currentMessage.createdAt ?? admin.firestore.FieldValue.serverTimestamp(),
         lastMessageSenderId: senderId,
       });
     } catch (error) {
       console.warn("Session chat metadata update failed", error);
+    }
+
+    if (currentMessage.unsentAt || !currentText) {
+      return;
     }
 
     const candidates = participantIds.filter((uid) => uid !== senderId);
@@ -613,7 +687,7 @@ exports.onSessionMessageCreated = onDocumentCreated(
           id: groupMessageNotificationId(sessionId, event.id),
           type: "group_message",
           title,
-          body: `${senderName}: ${text}`,
+          body: `${senderName}: ${currentText}`,
           url: `/session-chat/${sessionId}`,
           actorId: senderId,
           sessionId,

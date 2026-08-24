@@ -6,6 +6,7 @@
 // lib/notifications.ts — these tests are the executable spec for both.
 
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
 import validation from '../functions/notification-validation.js';
 
 const {
@@ -400,5 +401,19 @@ describe('group-chat fanout ceiling', () => {
     assert.equal(isWithinGroupChatFanoutLimit(Number.NaN), false);
     assert.equal(isWithinGroupChatFanoutLimit('20'), false);
     assert.equal(isWithinGroupChatFanoutLimit(undefined), false);
+  });
+});
+
+describe('group-message lifecycle notification wiring', () => {
+  const functionSource = readFileSync('functions/index.js', 'utf8');
+  const groupTrigger = functionSource.slice(
+    functionSource.indexOf('exports.onSessionMessageCreated'),
+    functionSource.indexOf('exports.onSessionParticipantsUpdated')
+  );
+
+  it('re-reads current content and suppresses a delayed push after unsend', () => {
+    assert.match(groupTrigger, /event\.data\.ref\.get\(\)/);
+    assert.match(groupTrigger, /currentMessage\.unsentAt \|\| !currentText/);
+    assert.match(groupTrigger, /body: `\$\{senderName\}: \$\{currentText\}`/);
   });
 });

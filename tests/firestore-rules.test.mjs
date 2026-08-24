@@ -658,6 +658,106 @@ describe('personal hidden chat history', () => {
   });
 });
 
+describe('per-message delete-for-self markers', () => {
+  const directThreadId = convoId(ALICE, BOB);
+  const directThreadKey = `direct__${directThreadId}`;
+  const sessionThreadKey = 'session__sharedSession';
+
+  beforeEach(async () => {
+    await seed(`conversations/${directThreadId}`, {
+      ...validConversation(ALICE, BOB),
+      lastMessageAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    await seed(`conversations/${directThreadId}/messages/directMessage`, {
+      senderId: ALICE, text: 'Direct message', createdAt: Timestamp.now(),
+    });
+    await seed('sessions/sharedSession', {
+      ...validSession(ALICE),
+      participantIds: [ALICE, BOB],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    await seed('sessions/sharedSession/messages/sessionMessage', {
+      senderId: BOB, text: 'Session message', createdAt: Timestamp.now(),
+    });
+  });
+
+  it('lets a participant privately hide DM and session messages', async () => {
+    const db = ctx(ALICE);
+    await assertSucceeds(setDoc(
+      doc(db, 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'directMessage'),
+      {
+        threadType: 'direct', threadId: directThreadId,
+        messageId: 'directMessage', hiddenAt: serverTimestamp(),
+      }
+    ));
+    await assertSucceeds(setDoc(
+      doc(db, 'users', ALICE, 'messageHides', sessionThreadKey, 'messages', 'sessionMessage'),
+      {
+        threadType: 'session', threadId: 'sharedSession',
+        messageId: 'sessionMessage', hiddenAt: serverTimestamp(),
+      }
+    ));
+    await assertSucceeds(getDocs(collection(
+      db, 'users', ALICE, 'messageHides', directThreadKey, 'messages'
+    )));
+  });
+
+  it('keeps markers owner-only and does not alter shared messages', async () => {
+    const markerRef = doc(
+      ctx(ALICE), 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'directMessage'
+    );
+    await assertSucceeds(setDoc(markerRef, {
+      threadType: 'direct', threadId: directThreadId,
+      messageId: 'directMessage', hiddenAt: serverTimestamp(),
+    }));
+
+    await assertFails(getDoc(doc(
+      ctx(BOB), 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'directMessage'
+    )));
+    await assertFails(deleteDoc(doc(
+      ctx(BOB), 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'directMessage'
+    )));
+    await assertSucceeds(getDoc(doc(
+      ctx(BOB), 'conversations', directThreadId, 'messages', 'directMessage'
+    )));
+    await assertSucceeds(deleteDoc(markerRef));
+  });
+
+  it('rejects outsider, nonexistent-message, mismatched-id, and forged-time markers', async () => {
+    await assertFails(setDoc(
+      doc(ctx(MALLORY), 'users', MALLORY, 'messageHides', sessionThreadKey, 'messages', 'sessionMessage'),
+      {
+        threadType: 'session', threadId: 'sharedSession',
+        messageId: 'sessionMessage', hiddenAt: serverTimestamp(),
+      }
+    ));
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'missing'),
+      {
+        threadType: 'direct', threadId: directThreadId,
+        messageId: 'missing', hiddenAt: serverTimestamp(),
+      }
+    ));
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'directMessage'),
+      {
+        threadType: 'direct', threadId: directThreadId,
+        messageId: 'different', hiddenAt: serverTimestamp(),
+      }
+    ));
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'directMessage'),
+      {
+        threadType: 'direct', threadId: directThreadId,
+        messageId: 'directMessage', hiddenAt: Timestamp.fromMillis(0),
+      }
+    ));
+  });
+});
+
 // --------------------------------------------------------- user settings
 describe('user settings (users/{uid}/private/settings)', () => {
   const settingsRef = (db, uid) => doc(db, 'users', uid, 'private', 'settings');
@@ -1527,6 +1627,132 @@ describe('conversations + messages', () => {
       senderId: ALICE, text: 'still here', createdAt: serverTimestamp(),
     }));
   });
+
+  it('lets the sender edit for 15 minutes while preserving the first version', async () => {
+    const cid = convoId(ALICE, BOB);
+    const messageRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'editable');
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/editable`, {
+      senderId: ALICE,
+      text: 'Original plan',
+      createdAt: Timestamp.fromMillis(Date.now() - 60_000),
+    });
+
+    await assertSucceeds(updateDoc(messageRef, {
+      text: 'Updated plan', originalText: 'Original plan', editedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(updateDoc(messageRef, {
+      text: 'Final plan', originalText: 'Original plan', editedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(messageRef, {
+      text: 'Forged history', originalText: 'Not the original', editedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(BOB), 'conversations', cid, 'messages', 'editable'), {
+      text: 'Hijacked', originalText: 'Original plan', editedAt: serverTimestamp(),
+    }));
+
+    const saved = await assertSucceeds(getDoc(messageRef));
+    assert.equal(saved.data().text, 'Final plan');
+    assert.equal(saved.data().originalText, 'Original plan');
+  });
+
+  it('rejects late, empty, objectionable, and identity-changing DM edits', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/old`, {
+      senderId: ALICE, text: 'Old text',
+      createdAt: Timestamp.fromMillis(Date.now() - 16 * 60_000),
+    });
+    const oldRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'old');
+
+    await assertFails(updateDoc(oldRef, {
+      text: 'Too late', originalText: 'Old text', editedAt: serverTimestamp(),
+    }));
+    await seed(`conversations/${cid}/messages/fresh`, {
+      senderId: ALICE, text: 'Fresh text', createdAt: Timestamp.now(),
+    });
+    const freshRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'fresh');
+    await assertFails(updateDoc(freshRef, {
+      text: '', originalText: 'Fresh text', editedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(freshRef, {
+      text: 'kill yourself', originalText: 'Fresh text', editedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(freshRef, {
+      senderId: BOB, text: 'Changed identity',
+      originalText: 'Fresh text', editedAt: serverTimestamp(),
+    }));
+  });
+
+  it('lets the sender unsend for 2 minutes and removes all shared content', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/fresh`, {
+      senderId: ALICE, text: 'Remove this', originalText: 'First version',
+      editedAt: Timestamp.now(), createdAt: Timestamp.fromMillis(Date.now() - 60_000),
+    });
+    const freshRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'fresh');
+    await assertSucceeds(updateDoc(freshRef, {
+      text: '', originalText: deleteField(), editedAt: deleteField(),
+      unsentAt: serverTimestamp(),
+    }));
+
+    const saved = await assertSucceeds(getDoc(freshRef));
+    assert.equal(saved.data().text, '');
+    assert.equal('originalText' in saved.data(), false);
+    assert.equal('editedAt' in saved.data(), false);
+    await assertFails(updateDoc(freshRef, { unsentAt: serverTimestamp() }));
+    await assertFails(deleteDoc(freshRef));
+  });
+
+  it('rejects late and non-sender unsends', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/old`, {
+      senderId: ALICE, text: 'Old text',
+      createdAt: Timestamp.fromMillis(Date.now() - 3 * 60_000),
+    });
+    const aliceRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'old');
+    const bobRef = doc(ctx(BOB), 'conversations', cid, 'messages', 'old');
+    const update = { text: '', unsentAt: serverTimestamp() };
+    await assertFails(updateDoc(aliceRef, update));
+    await assertFails(updateDoc(bobRef, update));
+  });
+
+  it('blocks post-block edits while still letting the sender remove content', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/fresh`, {
+      senderId: ALICE, text: 'Sent before block', createdAt: Timestamp.now(),
+    });
+    await seed(`userBlocks/${BOB}__${ALICE}`, {
+      blockerUserId: BOB, blockedUserId: ALICE, createdAt: Timestamp.now(),
+    });
+    const messageRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'fresh');
+
+    await assertFails(updateDoc(messageRef, {
+      text: 'Changed after block', originalText: 'Sent before block',
+      editedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(updateDoc(messageRef, {
+      text: '', unsentAt: serverTimestamp(),
+    }));
+  });
 });
 
 // ------------------------------------------- session group chat (PR: group chat)
@@ -1613,18 +1839,59 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     }));
   });
 
-  it('messages are fully immutable — no client edits or deletes, even by the sender', async () => {
+  it('lets a sender edit and unsend inside the group-chat windows', async () => {
     await seedChatSession();
     await seed('sessions/s1/messages/m1', {
-      senderId: BOB, text: 'original', createdAt: Timestamp.now(),
+      senderId: BOB, text: 'original',
+      createdAt: Timestamp.fromMillis(Date.now() - 60_000),
     });
+    const messageRef = doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1');
 
-    await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1'), {
-      text: 'edited',
+    await assertSucceeds(updateDoc(messageRef, {
+      text: 'edited', originalText: 'original', editedAt: serverTimestamp(),
     }));
-    await assertFails(deleteDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1')));
+    await assertSucceeds(updateDoc(messageRef, {
+      text: '', originalText: deleteField(), editedAt: deleteField(),
+      unsentAt: serverTimestamp(),
+    }));
+
+    const saved = await assertSucceeds(getDoc(messageRef));
+    assert.equal(saved.data().text, '');
+    assert.equal('originalText' in saved.data(), false);
+    await assertFails(deleteDoc(messageRef));
     await assertFails(deleteDoc(doc(ctx(ALICE), 'sessions', 's1', 'messages', 'm1')));
     await assertFails(deleteDoc(doc(ctx(MALLORY), 'sessions', 's1', 'messages', 'm1')));
+  });
+
+  it('rejects late, non-sender, and cancelled-session lifecycle updates', async () => {
+    await seedChatSession();
+    await seed('sessions/s1/messages/old', {
+      senderId: BOB, text: 'old edit',
+      createdAt: Timestamp.fromMillis(Date.now() - 16 * 60_000),
+    });
+    await seed('sessions/s1/messages/recent', {
+      senderId: BOB, text: 'recent',
+      createdAt: Timestamp.fromMillis(Date.now() - 3 * 60_000),
+    });
+
+    await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'old'), {
+      text: 'too late', originalText: 'old edit', editedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'recent'), {
+      text: '', unsentAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(ALICE), 'sessions', 's1', 'messages', 'recent'), {
+      text: 'hijacked', originalText: 'recent', editedAt: serverTimestamp(),
+    }));
+
+    await seedChatSession('s1', { status: 'cancelled' });
+    await seed('sessions/s1/messages/cancelled', {
+      senderId: BOB, text: 'before cancellation', createdAt: Timestamp.now(),
+    });
+    await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'cancelled'), {
+      text: 'after cancellation', originalText: 'before cancellation',
+      editedAt: serverTimestamp(),
+    }));
   });
 
   it('cancellation makes the chat read-only for retained participants', async () => {

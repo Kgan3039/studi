@@ -331,6 +331,49 @@ service cloud.firestore {
         );
     }
 
+    // Message lifecycle fields are server-clocked and preserve the first
+    // version only. Sender, creation time, and every unrelated field remain
+    // immutable. An unsend removes both current and original content while
+    // retaining a content-free tombstone so conversation order stays intact.
+    function isValidMessageEdit() {
+      return request.auth.uid == resource.data.senderId
+        && !('unsentAt' in resource.data)
+        && request.time <= resource.data.createdAt + duration.value(15, 'm')
+        && affectedKeys().hasOnly(['text', 'editedAt', 'originalText'])
+        && incoming().keys().hasOnly([
+             'senderId', 'text', 'createdAt', 'editedAt', 'originalText'
+           ])
+        && incoming().senderId == resource.data.senderId
+        && incoming().createdAt == resource.data.createdAt
+        && incoming().text is string
+        && incoming().text.size() >= 1
+        && incoming().text.size() <= 2000
+        && incoming().text != resource.data.text
+        && isAllowedUserGeneratedText(incoming().text)
+        && incoming().editedAt == request.time
+        && incoming().originalText is string
+        && incoming().originalText.size() >= 1
+        && incoming().originalText.size() <= 2000
+        && (
+          (('originalText' in resource.data)
+            && incoming().originalText == resource.data.originalText)
+          || (!('originalText' in resource.data)
+            && incoming().originalText == resource.data.text)
+        );
+    }
+
+    function isValidMessageUnsend() {
+      return request.auth.uid == resource.data.senderId
+        && !('unsentAt' in resource.data)
+        && request.time <= resource.data.createdAt + duration.value(2, 'm')
+        && affectedKeys().hasOnly(['text', 'editedAt', 'originalText', 'unsentAt'])
+        && incoming().keys().hasOnly(['senderId', 'text', 'createdAt', 'unsentAt'])
+        && incoming().senderId == resource.data.senderId
+        && incoming().createdAt == resource.data.createdAt
+        && incoming().text == ''
+        && incoming().unsentAt == request.time;
+    }
+
     // ------------------------------------------------------------------
     // Users — public profile: displayName + classes + optional academic
     // fields (year/major/pronouns/bio). Still no PII: no email, no phone,
@@ -511,6 +554,51 @@ service cloud.firestore {
         // Deleting the owner's marker is the explicit restore operation. There
         // is no restore UI in this beta; account deletion also removes the user
         // tree recursively through the existing Admin path.
+        allow delete: if isOwner(userId);
+      }
+
+      // Per-message "Delete for Me" markers. The shared message remains
+      // untouched; markers are private, owner-scoped, and nested by thread so
+      // each chat subscribes only to its own deletion set.
+      match /messageHides/{threadKey}/messages/{messageId} {
+        function isOwnDirectMessage() {
+          return incoming().threadType == 'direct'
+            && exists(
+              /databases/$(database)/documents/conversations/$(incoming().threadId)
+            )
+            && request.auth.uid in get(
+              /databases/$(database)/documents/conversations/$(incoming().threadId)
+            ).data.participantIds
+            && exists(
+              /databases/$(database)/documents/conversations/$(incoming().threadId)/messages/$(messageId)
+            );
+        }
+
+        function isOwnSessionMessage() {
+          return incoming().threadType == 'session'
+            && exists(/databases/$(database)/documents/sessions/$(incoming().threadId))
+            && request.auth.uid in get(
+              /databases/$(database)/documents/sessions/$(incoming().threadId)
+            ).data.participantIds
+            && exists(
+              /databases/$(database)/documents/sessions/$(incoming().threadId)/messages/$(messageId)
+            );
+        }
+
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && incoming().keys().hasOnly([
+               'threadType', 'threadId', 'messageId', 'hiddenAt'
+             ])
+          && incoming().threadType in ['direct', 'session']
+          && incoming().threadId is string
+          && incoming().threadId.size() >= 1
+          && incoming().threadId.size() <= 300
+          && incoming().messageId == messageId
+          && messageId.matches('^[A-Za-z0-9_-]{1,128}$')
+          && threadKey == incoming().threadType + '__' + incoming().threadId
+          && incoming().hiddenAt == request.time
+          && (isOwnDirectMessage() || isOwnSessionMessage());
         allow delete: if isOwner(userId);
       }
 
@@ -758,8 +846,8 @@ service cloud.firestore {
       // the ACTUAL participant count so legacy uncapped sessions can't force
       // unbounded notification fanout (mirrors MAX_GROUP_CHAT_PARTICIPANTS
       // in functions/notification-validation.js and lib/firestore.ts; change
-      // all three together). Messages are fully immutable from the client —
-      // no edits, no deletes; account deletion cleans them up server-side.
+      // all three together). Sender edits and unsends are the only client
+      // updates; their windows and immutable fields are enforced below.
       match /messages/{messageId} {
         function parentSession() {
           return get(/databases/$(database)/documents/sessions/$(sessionId)).data;
@@ -790,7 +878,12 @@ service cloud.firestore {
                'sendMessage',
                'sessions/' + sessionId + '/messages/' + messageId
              );
-        allow update: if false;
+        allow update: if isVerifiedUwUser()
+          && request.auth.uid in parentSession().participantIds
+          && parentSession().status in ['open', 'full']
+          && request.time < parentSession().endTime + duration.value(2, 'h')
+          && parentSession().participantIds.size() <= 20
+          && (isValidMessageEdit() || isValidMessageUnsend());
         allow delete: if false;
       }
     }
@@ -882,8 +975,17 @@ service cloud.firestore {
                parentConversation().participantIds[0],
                parentConversation().participantIds[1]
              );
-        allow update: if false;
-        allow delete: if isVerifiedUwUser() && request.auth.uid == resource.data.senderId;
+        allow update: if isVerifiedUwUser()
+          && request.auth.uid in parentConversation().participantIds
+          && (
+            isValidMessageUnsend()
+            || (isValidMessageEdit()
+              && !isBlockedEitherWay(
+                   parentConversation().participantIds[0],
+                   parentConversation().participantIds[1]
+                 ))
+          );
+        allow delete: if false;
       }
     }
 
