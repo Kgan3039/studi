@@ -1,4 +1,13 @@
-import { StyleSheet, Text, TextInput, View } from 'react-native';
+import type { ReactNode } from 'react';
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ActionRow } from '@/components/ui/ActionRow';
@@ -10,6 +19,64 @@ import { Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme'
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { MessageActionController } from '@/hooks/use-message-actions';
 import type { MessageActionRecord } from '@/lib/message-actions';
+
+type MessageSelectionTargetProps = {
+  accessibilityLabel: string;
+  bubbleStyle: StyleProp<ViewStyle>;
+  children: ReactNode;
+  onOpenActions: () => void;
+  onToggleSelection: () => void;
+  rowStyle: StyleProp<ViewStyle>;
+  selected: boolean;
+  selecting: boolean;
+};
+
+/** Makes the full message row tappable while multi-select is active. */
+export function MessageSelectionTarget({
+  accessibilityLabel,
+  bubbleStyle,
+  children,
+  onOpenActions,
+  onToggleSelection,
+  rowStyle,
+  selected,
+  selecting,
+}: MessageSelectionTargetProps) {
+  if (selecting) {
+    return (
+      <Pressable
+        accessibilityActions={[
+          { name: 'activate', label: selected ? 'Deselect message' : 'Select message' },
+        ]}
+        accessibilityHint="Double tap to select or deselect this message."
+        accessibilityLabel={accessibilityLabel}
+        accessibilityRole="button"
+        accessibilityState={{ selected }}
+        onAccessibilityAction={onToggleSelection}
+        onPress={onToggleSelection}
+        style={({ pressed }) => [rowStyle, pressed && styles.selectionTargetPressed]}>
+        <MessageSelectionMarker selected={selected} />
+        <View style={bubbleStyle}>{children}</View>
+      </Pressable>
+    );
+  }
+
+  return (
+    <View style={rowStyle}>
+      <Pressable
+        accessibilityActions={[{ name: 'activate', label: 'Open message actions' }]}
+        accessibilityHint="Long press for message actions."
+        accessibilityLabel={accessibilityLabel}
+        accessibilityRole="button"
+        delayLongPress={350}
+        onAccessibilityAction={onOpenActions}
+        onLongPress={onOpenActions}
+        style={bubbleStyle}>
+        {children}
+      </Pressable>
+    </View>
+  );
+}
 
 export function MessageActionOverlays({
   controller,
@@ -338,5 +405,8 @@ const styles = StyleSheet.create({
     height: 24,
     justifyContent: 'center',
     width: 24,
+  },
+  selectionTargetPressed: {
+    opacity: 0.65,
   },
 });

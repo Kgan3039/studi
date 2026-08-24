@@ -25,6 +25,10 @@ export function canUnsendMessage(
   nowMs?: number
 ): boolean;
 export function hasMessageTextChanged(currentText: unknown, nextText: unknown): boolean;
+export function toggleSelectedMessageId(
+  selectedMessageIds: Iterable<string>,
+  messageId: string
+): Set<string>;
 export function buildSelectedMessageCopy(
   messages: MessageActionRecord[],
   selectedMessageIds: Iterable<string>

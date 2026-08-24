@@ -11,6 +11,7 @@ const {
   canEditMessage,
   canUnsendMessage,
   hasMessageTextChanged,
+  toggleSelectedMessageId,
 } = messageActions;
 const timestamp = (millis) => ({ toMillis: () => millis });
 const message = (overrides = {}) => ({
@@ -72,8 +73,27 @@ describe('multi-message copy', () => {
   });
 });
 
+describe('multi-message selection', () => {
+  it('adds independent messages without replacing the existing selection', () => {
+    const firstSelection = toggleSelectedMessageId(new Set(), 'message-a');
+    const secondSelection = toggleSelectedMessageId(firstSelection, 'message-b');
+
+    assert.deepEqual([...firstSelection], ['message-a']);
+    assert.deepEqual([...secondSelection], ['message-a', 'message-b']);
+  });
+
+  it('deselects only the tapped message', () => {
+    const selected = new Set(['message-a', 'message-b']);
+    const nextSelection = toggleSelectedMessageId(selected, 'message-a');
+
+    assert.deepEqual([...selected], ['message-a', 'message-b']);
+    assert.deepEqual([...nextSelection], ['message-b']);
+  });
+});
+
 describe('message action production wiring', () => {
   const directChat = readFileSync('app/conversation/[conversationId].tsx', 'utf8');
+  const messageActionsUi = readFileSync('components/ui/MessageActions.tsx', 'utf8');
   const sessionChat = readFileSync('app/session-chat/[sessionId].tsx', 'utf8');
   const firestore = readFileSync('lib/firestore.ts', 'utf8');
 
@@ -83,12 +103,18 @@ describe('message action production wiring', () => {
   ]) {
     it(`wires long-press, selection, edit history, and action overlays into ${name}`, () => {
       assert.match(source, /useMessageActions\(/);
-      assert.match(source, /onLongPress=/);
       assert.match(source, /<MessageSelectionBar/);
+      assert.match(source, /<MessageSelectionTarget/);
       assert.match(source, /<MessageEditedIndicator/);
       assert.match(source, /<MessageActionOverlays/);
     });
   }
+
+  it('uses the full message row as the active multi-selection target', () => {
+    assert.match(messageActionsUi, /if \(selecting\)[\s\S]*onPress=\{onToggleSelection\}/);
+    assert.match(messageActionsUi, /<MessageSelectionMarker selected=\{selected\} \/>/);
+    assert.match(messageActionsUi, /onLongPress=\{onOpenActions\}/);
+  });
 
   it('uses owner-scoped markers instead of mutating shared docs for delete-for-self', () => {
     assert.match(firestore, /users[\s\S]*messageHides[\s\S]*messages/);

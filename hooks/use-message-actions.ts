@@ -16,6 +16,7 @@ import {
   canUnsendMessage,
   hasMessageTextChanged,
   isMessageUnsent,
+  toggleSelectedMessageId,
   type MessageActionRecord,
 } from '@/lib/message-actions';
 
@@ -273,15 +274,7 @@ export function useMessageActions({
   }
 
   function toggleMessageSelection(messageId: string) {
-    setSelectedMessageIds((current) => {
-      const next = new Set(current);
-      if (next.has(messageId)) {
-        next.delete(messageId);
-      } else {
-        next.add(messageId);
-      }
-      return next;
-    });
+    setSelectedMessageIds((current) => toggleSelectedMessageId(current, messageId));
   }
 
   function finishSelecting() {

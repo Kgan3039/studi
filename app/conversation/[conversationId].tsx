@@ -22,7 +22,7 @@ import {
   MessageActionOverlays,
   MessageEditedIndicator,
   MessageSelectionBar,
-  MessageSelectionMarker,
+  MessageSelectionTarget,
 } from '@/components/ui/MessageActions';
 import {
   PullToRefreshIndicator,
@@ -569,62 +569,40 @@ export default function ConversationScreen() {
                     {formatDaySeparator(messageDate)}
                   </Text>
                 ) : null}
-                <View
-                  style={[
+                <MessageSelectionTarget
+                  accessibilityLabel={isUnsent ? 'Message unsent' : message.text}
+                  bubbleStyle={[
+                    styles.bubble,
+                    isUnsent
+                      ? [
+                          styles.unsentBubble,
+                          {
+                            backgroundColor: palette.surfaceMuted,
+                            borderColor: palette.outline,
+                          },
+                        ]
+                      : isCurrentUser
+                        ? [styles.mineBubble, { backgroundColor: palette.tint }]
+                        : [
+                            styles.theirsBubble,
+                            {
+                              backgroundColor: palette.surface,
+                              borderColor: palette.border,
+                              borderWidth: StyleSheet.hairlineWidth * 2,
+                            },
+                          ],
+                    isSelected && { borderColor: palette.tint, borderWidth: 2 },
+                  ]}
+                  onOpenActions={() => messageActions.openMessageActions(message)}
+                  onToggleSelection={() =>
+                    messageActions.toggleMessageSelection(message.messageId)
+                  }
+                  rowStyle={[
                     styles.messageRow,
                     isCurrentUser ? styles.messageRowMine : styles.messageRowTheirs,
-                  ]}>
-                  {messageActions.isSelecting ? (
-                    <MessageSelectionMarker selected={isSelected} />
-                  ) : null}
-                  <Pressable
-                    accessibilityLabel={isUnsent ? 'Message unsent' : message.text}
-                    accessibilityRole="button"
-                    accessibilityActions={[{ name: 'activate', label: 'Open message actions' }]}
-                    accessibilityHint={
-                      messageActions.isSelecting
-                        ? 'Double tap to select or deselect this message.'
-                        : 'Long press for message actions.'
-                    }
-                    accessibilityState={{ selected: isSelected }}
-                    delayLongPress={350}
-                    onAccessibilityAction={() =>
-                      messageActions.isSelecting
-                        ? messageActions.toggleMessageSelection(message.messageId)
-                        : messageActions.openMessageActions(message)
-                    }
-                    onLongPress={
-                      messageActions.isSelecting
-                        ? undefined
-                        : () => messageActions.openMessageActions(message)
-                    }
-                    onPress={
-                      messageActions.isSelecting
-                        ? () => messageActions.toggleMessageSelection(message.messageId)
-                        : undefined
-                    }
-                    style={[
-                      styles.bubble,
-                      isUnsent
-                        ? [
-                            styles.unsentBubble,
-                            {
-                              backgroundColor: palette.surfaceMuted,
-                              borderColor: palette.outline,
-                            },
-                          ]
-                        : isCurrentUser
-                          ? [styles.mineBubble, { backgroundColor: palette.tint }]
-                          : [
-                              styles.theirsBubble,
-                              {
-                                backgroundColor: palette.surface,
-                                borderColor: palette.border,
-                                borderWidth: StyleSheet.hairlineWidth * 2,
-                              },
-                            ],
-                      isSelected && { borderColor: palette.tint, borderWidth: 2 },
-                    ]}>
+                  ]}
+                  selected={isSelected}
+                  selecting={messageActions.isSelecting}>
                     <Text
                       style={[
                         styles.bubbleText,
@@ -639,8 +617,7 @@ export default function ConversationScreen() {
                       ]}>
                       {isUnsent ? 'Message unsent' : message.text}
                     </Text>
-                  </Pressable>
-                </View>
+                </MessageSelectionTarget>
                 {showTime || (!!message.editedAt && !isUnsent) ? (
                   <View style={styles.messageMeta}>
                     {!messageActions.isSelecting ? (
