@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
 import {
@@ -444,9 +445,9 @@ export default function SessionChatScreen() {
     threadId: sessionId,
     threadType: 'session',
   });
-  const visibleMessages = actionMessages.filter(
-    (message) => !messageActions.hiddenMessageIds.has(message.messageId)
-  );
+  const visibleMessages = messageActions.hiddenMessagesReady
+    ? actionMessages.filter((message) => !messageActions.hiddenMessageIds.has(message.messageId))
+    : [];
 
   // A denied write usually means the session state changed under us (e.g.
   // the host cancelled while this screen was open) — reload the session so
@@ -753,7 +754,14 @@ export default function SessionChatScreen() {
           ) : null
         }
         ListEmptyComponent={
-          threadLoaded ? (
+          messageActions.hiddenMessagesError ? (
+            <ErrorState
+              title="Unable to load this chat"
+              body="Please try again."
+              onRetry={messageActions.retryHiddenMessages}
+              style={styles.invertedItem}
+            />
+          ) : threadLoaded && messageActions.hiddenMessagesReady ? (
             <View style={[styles.emptyThread, styles.invertedItem]}>
               <Text style={[styles.emptyHeadline, { color: palette.text }]}>Start the conversation</Text>
               <Text style={[TypeScale.body, styles.emptyBody, { color: palette.icon }]}>

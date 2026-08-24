@@ -65,6 +65,7 @@ type BoundIntervalRateLimitedAction =
   | "locationRating"
   | "reportUser"
   | "sendMessage"
+  | "updateMessage"
   | "updateSession";
 
 type RateLimitedAction =
@@ -1663,6 +1664,10 @@ export async function editChatMessage(
         typeof message.originalText === "string" ? message.originalText : message.text,
       text: trimmedText,
     });
+    transaction.set(rateLimitDoc(senderId, "updateMessage"), {
+      lastResourceId: messageRef.path,
+      updatedAt: serverTimestamp(),
+    });
   });
 
   track("message_edited", { thread_type: threadType });
@@ -1712,9 +1717,13 @@ export async function setChatMessageLiked(
     throw new Error("This message is no longer available.");
   }
 
-  await updateDoc(chatMessageRef(threadType, threadId, messageId), {
+  const batch = writeBatch(db);
+  const messageRef = chatMessageRef(threadType, threadId, messageId);
+  batch.update(messageRef, {
     likedByIds: liked ? arrayUnion(userId) : arrayRemove(userId),
   });
+  stageBoundRateLimit(batch, userId, "updateMessage", messageRef.path);
+  await batch.commit();
 }
 
 // ---------------------------------------------------------------------------
@@ -2149,6 +2158,7 @@ export async function reportUser(
   target?: { contentType: "direct_message" | "session_message"; contentId: string; threadId: string }
 ) {
   let messageText: string | undefined;
+  let originalMessageText: string | undefined;
   if (target) {
     const messageRef = target.contentType === "direct_message"
       ? doc(db, COLLECTIONS.conversations, target.threadId, "messages", target.contentId)
@@ -2164,6 +2174,8 @@ export async function reportUser(
       throw new Error("Invalid report target.");
     }
     messageText = message.text;
+    originalMessageText =
+      typeof message.originalText === "string" ? message.originalText : undefined;
   }
 
   const batch = writeBatch(db);
@@ -2181,6 +2193,7 @@ export async function reportUser(
           contentId: target.contentId.slice(0, 128),
           threadId: target.threadId.slice(0, 128),
           messageText,
+          ...(originalMessageText ? { originalMessageText } : {}),
         }
       : {}),
     createdAt: serverTimestamp(),

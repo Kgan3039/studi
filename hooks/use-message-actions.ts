@@ -16,6 +16,7 @@ import {
   canEditMessage,
   canUnsendMessage,
   hasMessageTextChanged,
+  hiddenMessageHydrationState,
   isMessageUnsent,
   toggleSelectedMessageId,
   type MessageActionRecord,
@@ -66,7 +67,15 @@ export function useMessageActions({
   threadId,
   threadType,
 }: UseMessageActionsOptions) {
+  const hiddenMessagesScopeKey = currentUserId && threadId
+    ? `${currentUserId}:${threadType}:${threadId}`
+    : null;
   const [hiddenMessageIds, setHiddenMessageIds] = useState<Set<string>>(new Set());
+  const [hydratedHiddenMessagesScopeKey, setHydratedHiddenMessagesScopeKey] =
+    useState<string | null>(null);
+  const [failedHiddenMessagesScopeKey, setFailedHiddenMessagesScopeKey] =
+    useState<string | null>(null);
+  const [hiddenMessagesRetryNonce, setHiddenMessagesRetryNonce] = useState(0);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [originalMessageId, setOriginalMessageId] = useState<string | null>(null);
@@ -85,6 +94,8 @@ export function useMessageActions({
 
   useEffect(() => {
     setHiddenMessageIds(new Set());
+    setHydratedHiddenMessagesScopeKey(null);
+    setFailedHiddenMessagesScopeKey(null);
     setActiveMessageId(null);
     setEditingMessageId(null);
     setOriginalMessageId(null);
@@ -95,7 +106,7 @@ export function useMessageActions({
     setSelectedMessageIds(new Set());
     setIsSelecting(false);
     likeWriteIdsRef.current.clear();
-    if (!currentUserId || !threadId) {
+    if (!currentUserId || !threadId || !hiddenMessagesScopeKey) {
       return;
     }
 
@@ -103,12 +114,40 @@ export function useMessageActions({
       currentUserId,
       threadType,
       threadId,
-      setHiddenMessageIds,
+      (messageIds) => {
+        setHiddenMessageIds(messageIds);
+        setFailedHiddenMessagesScopeKey(null);
+        setHydratedHiddenMessagesScopeKey(hiddenMessagesScopeKey);
+      },
       () => {
-        // Keep the last known local-deletion state if its listener briefly fails.
+        // Fail closed: without an authoritative marker snapshot, rendering the
+        // shared messages could flash content this user deleted for themselves.
+        setFailedHiddenMessagesScopeKey(hiddenMessagesScopeKey);
+        setHydratedHiddenMessagesScopeKey(null);
       }
     );
-  }, [currentUserId, threadId, threadType]);
+  }, [
+    currentUserId,
+    hiddenMessagesRetryNonce,
+    hiddenMessagesScopeKey,
+    threadId,
+    threadType,
+  ]);
+
+  const {
+    error: hiddenMessagesError,
+    ready: hiddenMessagesReady,
+  } = hiddenMessageHydrationState(
+    hiddenMessagesScopeKey,
+    hydratedHiddenMessagesScopeKey,
+    failedHiddenMessagesScopeKey
+  );
+
+  function retryHiddenMessages() {
+    setFailedHiddenMessagesScopeKey(null);
+    setHydratedHiddenMessagesScopeKey(null);
+    setHiddenMessagesRetryNonce((nonce) => nonce + 1);
+  }
 
   useEffect(() => {
     if (!activeMessageId) {
@@ -454,6 +493,8 @@ export function useMessageActions({
     editingMessage,
     finishSelecting,
     hiddenMessageIds,
+    hiddenMessagesError,
+    hiddenMessagesReady,
     isSelecting,
     isWorking,
     openMessageActions,
@@ -464,6 +505,7 @@ export function useMessageActions({
     requestDeleteActiveMessage,
     requestDeleteSelectedMessages,
     requestUnsendActiveMessage,
+    retryHiddenMessages,
     selectedCopy,
     selectedMessageIds,
     setConfirmUnsendMessageId,

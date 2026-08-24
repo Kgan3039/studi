@@ -29,6 +29,11 @@ export function canUnsendMessage(
   nowMs?: number
 ): boolean;
 export function hasMessageTextChanged(currentText: unknown, nextText: unknown): boolean;
+export function hiddenMessageHydrationState(
+  scopeKey: string | null | undefined,
+  hydratedScopeKey: string | null | undefined,
+  failedScopeKey: string | null | undefined
+): { error: boolean; ready: boolean };
 export function toggleSelectedMessageId(
   selectedMessageIds: Iterable<string>,
   messageId: string

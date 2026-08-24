@@ -8,6 +8,7 @@ const {
   classifyMessageUpdate,
   formatMessageUpdateBody,
   isMessageUpdateStillCurrent,
+  messageLifecycleRecipientCandidates,
   possessive,
 } = require('../functions/message-lifecycle.js');
 
@@ -111,6 +112,52 @@ describe('message lifecycle notification wording', () => {
   });
 });
 
+describe('message lifecycle recipients', () => {
+  const participants = ['aliceUid', 'bobUid', 'caraUid'];
+
+  it('sends a like only to the original sender', () => {
+    assert.deepEqual(
+      messageLifecycleRecipientCandidates(
+        { actorId: 'bobUid', kind: 'liked', messageSenderId: 'aliceUid' },
+        participants
+      ),
+      ['aliceUid']
+    );
+  });
+
+  it('suppresses self-likes and keeps edit/unsend fanout unchanged', () => {
+    assert.deepEqual(
+      messageLifecycleRecipientCandidates(
+        { actorId: 'aliceUid', kind: 'liked', messageSenderId: 'aliceUid' },
+        participants
+      ),
+      []
+    );
+    assert.deepEqual(
+      messageLifecycleRecipientCandidates(
+        { actorId: 'aliceUid', kind: 'edited', messageSenderId: 'aliceUid' },
+        participants
+      ),
+      ['bobUid', 'caraUid']
+    );
+  });
+
+  it('keeps unlike silent and makes re-like use the same deterministic audience', () => {
+    assert.equal(
+      classifyMessageUpdate(
+        { ...baseMessage, likedByIds: ['bobUid'] },
+        { ...baseMessage, likedByIds: [] }
+      ),
+      null
+    );
+    const relike = classifyMessageUpdate(
+      { ...baseMessage, likedByIds: [] },
+      { ...baseMessage, likedByIds: ['bobUid'] }
+    );
+    assert.deepEqual(messageLifecycleRecipientCandidates(relike, participants), ['aliceUid']);
+  });
+});
+
 describe('message lifecycle production wiring', () => {
   const functionsIndex = readFileSync('functions/index.js', 'utf8');
 
@@ -121,8 +168,9 @@ describe('message lifecycle production wiring', () => {
     assert.match(functionsIndex, /messageLifecycleNotificationId/);
   });
 
-  it('filters lifecycle recipients against both the actor and message sender', () => {
+  it('uses one shared recipient policy and filters against both actor and sender blocks', () => {
     assert.match(functionsIndex, /\[update\.actorId, update\.messageSenderId\]/);
+    assert.match(functionsIndex, /messageLifecycleRecipientCandidates/);
     assert.match(functionsIndex, /getUnblockedRecipients/);
   });
 });

@@ -23,6 +23,7 @@ const {
   classifyMessageUpdate,
   formatMessageUpdateBody,
   isMessageUpdateStillCurrent,
+  messageLifecycleRecipientCandidates,
 } = require("./message-lifecycle");
 const {
   blockPairIdsFor,
@@ -648,10 +649,17 @@ exports.onDirectMessageUpdated = onDocumentUpdated(
       return;
     }
 
+    const candidates = messageLifecycleRecipientCandidates(
+      update,
+      currentState.participantIds
+    );
     const recipients = await getUnblockedRecipients(
       [update.actorId, update.messageSenderId],
-      currentState.participantIds.filter((uid) => uid !== update.actorId)
+      candidates
     );
+    if (recipients.length === 0) {
+      return;
+    }
     const [actorName, messageSenderName] = await Promise.all([
       getDisplayName(update.actorId),
       update.actorId === update.messageSenderId
@@ -833,9 +841,10 @@ exports.onSessionMessageUpdated = onDocumentUpdated(
       return;
     }
 
+    const candidates = messageLifecycleRecipientCandidates(update, participantIds);
     const recipients = await getUnblockedRecipients(
       [update.actorId, update.messageSenderId],
-      participantIds.filter((uid) => uid !== update.actorId)
+      candidates
     );
     if (recipients.length === 0) {
       return;

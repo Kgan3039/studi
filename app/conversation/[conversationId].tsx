@@ -17,7 +17,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { IconButton } from '@/components/ui/IconButton';
+import { LoadingState } from '@/components/ui/LoadingState';
 import {
   MessageActionOverlays,
   MessageEditedIndicator,
@@ -171,9 +173,9 @@ export default function ConversationScreen() {
     threadId: conversationId,
     threadType: 'direct',
   });
-  const visibleMessages = messages.filter(
-    (message) => !messageActions.hiddenMessageIds.has(message.messageId)
-  );
+  const visibleMessages = messageActions.hiddenMessagesReady
+    ? messages.filter((message) => !messageActions.hiddenMessageIds.has(message.messageId))
+    : [];
 
   useEffect(() => {
     let cancelled = false;
@@ -562,7 +564,15 @@ export default function ConversationScreen() {
         }
         scrollEventThrottle={16}
         contentContainerStyle={styles.threadContent}>
-        {visibleMessages.length > 0 ? (
+        {messageActions.hiddenMessagesError ? (
+          <ErrorState
+            title="Unable to load this conversation"
+            body="Please try again."
+            onRetry={messageActions.retryHiddenMessages}
+          />
+        ) : !messageActions.hiddenMessagesReady ? (
+          <LoadingState title="Loading messages" />
+        ) : visibleMessages.length > 0 ? (
           visibleMessages.map((message, index) => {
             const isCurrentUser = currentUser?.uid === message.senderId;
             const nextMessage = visibleMessages[index + 1];

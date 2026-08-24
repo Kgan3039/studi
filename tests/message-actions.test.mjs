@@ -12,6 +12,7 @@ const {
   canEditMessage,
   canUnsendMessage,
   hasMessageTextChanged,
+  hiddenMessageHydrationState,
   isMessageDoubleTap,
   normalizeMessageLikedByIds,
   toggleSelectedMessageId,
@@ -115,6 +116,41 @@ describe('multi-message selection', () => {
   });
 });
 
+describe('hidden-message hydration scope', () => {
+  it('is ready only when the authoritative snapshot matches the current scope', () => {
+    assert.deepEqual(hiddenMessageHydrationState('alice:direct:one', null, null), {
+      error: false,
+      ready: false,
+    });
+    assert.deepEqual(
+      hiddenMessageHydrationState('alice:direct:one', 'alice:direct:one', null),
+      { error: false, ready: true }
+    );
+  });
+
+  it('fails closed across user/thread changes and exposes only current-scope failures', () => {
+    assert.deepEqual(
+      hiddenMessageHydrationState(
+        'bob:direct:two',
+        'alice:direct:one',
+        'alice:direct:one'
+      ),
+      { error: false, ready: false }
+    );
+    assert.deepEqual(
+      hiddenMessageHydrationState('bob:direct:two', null, 'bob:direct:two'),
+      { error: true, ready: false }
+    );
+  });
+
+  it('does not block a screen before an authenticated thread scope exists', () => {
+    assert.deepEqual(hiddenMessageHydrationState(null, null, null), {
+      error: false,
+      ready: true,
+    });
+  });
+});
+
 describe('message action production wiring', () => {
   const directChat = readFileSync('app/conversation/[conversationId].tsx', 'utf8');
   const messageActionsHook = readFileSync('hooks/use-message-actions.ts', 'utf8');
@@ -152,8 +188,10 @@ describe('message action production wiring', () => {
     assert.match(messageActionsHook, /onReportMessage\(message\)/);
   });
 
-  it('uses atomic shared-message reactions and a stronger active-message backdrop', () => {
+  it('uses atomic, message-bound shared reactions and a stronger active-message backdrop', () => {
     assert.match(firestore, /likedByIds: liked \? arrayUnion\(userId\) : arrayRemove\(userId\)/);
+    assert.match(firestore, /stageBoundRateLimit\(batch, userId, "updateMessage", messageRef\.path\)/);
+    assert.match(firestore, /await batch\.commit\(\)/);
     assert.match(messageActionsUi, /scrimTone="strong"/);
     assert.match(messageActionsUi, /title="Liked By"/);
     assert.match(sessionChat, /\.flatMap\(\(message\) => \[message\.senderId, \.\.\.message\.likedByIds\]\)/);
@@ -161,6 +199,23 @@ describe('message action production wiring', () => {
       sessionChat,
       /likedByIds: message\.likedByIds\.filter\(\(userId\) => !blockedIds\.has\(userId\)\)/
     );
+  });
+
+  it('fails closed until hidden-message hydration resolves on both chat screens', () => {
+    assert.match(messageActionsHook, /hiddenMessagesReady/);
+    assert.match(messageActionsHook, /failedHiddenMessagesScopeKey/);
+    assert.match(messageActionsHook, /hiddenMessageHydrationState/);
+    assert.match(messageActionsHook, /retryHiddenMessages/);
+    for (const source of [directChat, sessionChat]) {
+      assert.match(source, /messageActions\.hiddenMessagesReady/);
+      assert.match(source, /messageActions\.hiddenMessagesError/);
+      assert.match(source, /messageActions\.retryHiddenMessages/);
+    }
+  });
+
+  it('captures authoritative original text when reporting an edited message', () => {
+    assert.match(firestore, /originalMessageText/);
+    assert.match(firestore, /typeof message\.originalText === "string"/);
   });
 
   it('uses owner-scoped markers instead of mutating shared docs for delete-for-self', () => {

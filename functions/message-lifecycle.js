@@ -45,6 +45,22 @@ function isMessageUpdateStillCurrent(update, currentMessage = {}) {
   return !currentMessage.unsentAt && !!currentMessage.editedAt;
 }
 
+function messageLifecycleRecipientCandidates(update, participantIds) {
+  const participants = Array.isArray(participantIds)
+    ? [...new Set(participantIds.filter((userId) => typeof userId === "string" && userId))]
+    : [];
+  if (!update || !participants.includes(update.actorId)) {
+    return [];
+  }
+  if (update.kind === "liked") {
+    return update.actorId !== update.messageSenderId
+      && participants.includes(update.messageSenderId)
+      ? [update.messageSenderId]
+      : [];
+  }
+  return participants.filter((userId) => userId !== update.actorId);
+}
+
 function possessive(name) {
   const normalized = typeof name === "string" && name.trim() ? name.trim() : "Student";
   return normalized.endsWith("s") ? `${normalized}'` : `${normalized}'s`;
@@ -76,6 +92,7 @@ module.exports = {
   classifyMessageUpdate,
   formatMessageUpdateBody,
   isMessageUpdateStillCurrent,
+  messageLifecycleRecipientCandidates,
   normalizedLikedByIds,
   possessive,
 };

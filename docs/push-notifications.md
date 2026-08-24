@@ -107,10 +107,10 @@ cannot force unbounded fanout. The same ceiling is enforced in three places
 (`lib/firestore.ts` `isGroupChatAvailable`), and the Cloud Function, which
 skips metadata + notifications entirely for oversized sessions rather than
 silently notifying a subset. A new group message costs **at most 38 block-doc
-reads** — 19 recipients × 2 directions. A like can cost at most 74 because
-recipients are checked against both the reacting user and original sender;
-the original sender's self-pair is skipped. Sender edits/unsends collapse
-those identities and stay at 38. Each check is fetched in one batched RPC.
+reads** — 19 recipients × 2 directions. A like targets only the original
+message sender and costs at most 2 block-doc reads; self-likes and unlikes send
+no notification. Sender edits/unsends stay at 38. Each check is fetched in one
+batched RPC.
 
 A cancelled session is read-only — rules deny new sends, edits, and reactions
 while retained participants keep the history. During an active chat window,
