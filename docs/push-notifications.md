@@ -20,8 +20,10 @@ The notifications-center PR extends that into a persistent pipeline:
   `onSessionMessageCreated` notifies every participant except the sender and
   stamps `lastMessageAt`/`lastMessageSenderId` onto the session doc for the
   unread indicator; never message content, since session docs are readable by
-  all verified users). `friend_request` and `friend_accepted` are reserved in
-  the schema but not produced.
+  all verified users). `onDirectMessageUpdated` and
+  `onSessionMessageUpdated` additionally send content-free activity notices
+  when someone likes a message or its sender edits/unsends it. `friend_request`
+  and `friend_accepted` are reserved in the schema but not produced.
 - `/notifications` screen (protected) with unread badge on the Profile tab.
 
 Not implemented: App Check, RNFirebase messaging, friend notifications,
@@ -87,12 +89,14 @@ no registry. Deploy in this order:
    simulated offline unregister, restart/retry, and account deletion.
 
 Group-message notifications are **block-filtered server-side**: before
-`notifyUser()` runs, `onSessionMessageCreated` checks both directions of the
-deterministic `userBlocks/{blocker}__{blocked}` docs in one batched `getAll`
-and drops blocked recipients entirely — no record, no push, regardless of any
-preference setting (the filter runs upstream of the pref check). The chat
-message itself stays stored for the remaining participants; client
-bubble-hiding is a UI courtesy on top, not the enforcement.
+`notifyUser()` runs, both session-message triggers check both directions of
+the deterministic `userBlocks/{blocker}__{blocked}` docs in a batched `getAll`
+and drop blocked recipients entirely — no record, no push, regardless of any
+preference setting (the filter runs upstream of the pref check). Lifecycle
+notifications are checked against both the person acting and the original
+message sender. The chat message itself stays stored for the remaining
+participants; client bubble-hiding is a UI courtesy on top, not the
+enforcement.
 
 Group-chat fanout is **capped at 20 participants**
 (`MAX_GROUP_CHAT_PARTICIPANTS`), judged on the ACTUAL `participantIds`
@@ -102,14 +106,18 @@ cannot force unbounded fanout. The same ceiling is enforced in three places
 (`participantIds.size() <= 20`), the client's read-only chat state
 (`lib/firestore.ts` `isGroupChatAvailable`), and the Cloud Function, which
 skips metadata + notifications entirely for oversized sessions rather than
-silently notifying a subset. Exact read cost: **at most 38 block-doc reads
-per message** — a full 20-participant session minus the sender is 19
-recipients × 2 directions, fetched in a single RPC.
+silently notifying a subset. A new group message costs **at most 38 block-doc
+reads** — 19 recipients × 2 directions. A like can cost at most 74 because
+recipients are checked against both the reacting user and original sender;
+the original sender's self-pair is skipped. Sender edits/unsends collapse
+those identities and stay at 38. Each check is fetched in one batched RPC.
 
-A cancelled session is read-only — rules deny new sends while retained
-participants keep the history — and group messages are fully immutable from
-the client (no edits, no deletes; account deletion cleans them up via the
-Admin SDK).
+A cancelled session is read-only — rules deny new sends, edits, and reactions
+while retained participants keep the history. During an active chat window,
+senders may edit or unsend within the bounded action windows and each
+participant may add/remove only their own thumbs-up reaction. Shared message
+documents cannot be deleted by clients; account deletion cleans them up via
+the Admin SDK.
 
 ## Payload validation & deep-link safety
 
@@ -132,27 +140,30 @@ physical tap routes — and fires `notification_opened` — exactly once even
 when the live listener and `getLastNotificationResponseAsync` both surface
 the same response.
 
-Unit tests for all of the above: `npm run test:notifications`.
+Unit tests for the notification contract and message-update wording:
+`npm run test:notifications` and `npm run test:message-lifecycle`.
 
 ## Idempotency
 
-Trigger-driven records are keyed on the **CloudEvent ID** (`event.id`):
-Eventarc reuses it across retries of one delivery and mints a new one for
-every legitimate later event. Records are written with `create()`, so a retry
-finds the record already present (`ALREADY_EXISTS`) and skips both the write
-and the push — while leave/rejoin, cancel/reopen/re-cancel, and reverting a
-session to a prior time/location all notify again. No state hashing. ID
-builders live in `functions/notification-validation.js` and are unit-tested
-by `npm run test:notifications`.
+Creation and session-transition records are keyed on the **CloudEvent ID**
+(`event.id`): Eventarc reuses it across retries of one delivery and mints a
+new one for every legitimate later event. Message lifecycle records instead
+use the thread, message, action, and actor, so retry delivery and rapid
+unlike/re-like churn cannot spam duplicate activity. Records are written with
+`create()`, so an existing record skips both the write and push. ID builders
+live in `functions/notification-validation.js` and are unit-tested by
+`npm run test:notifications`.
 
 | Event | Record ID | Notes |
 |---|---|---|
 | Direct message | `dm_{conversationId}_{eventId}` | recipient only; conversation-scoped against cross-conversation collisions |
+| Direct message activity | `ml_direct_{conversationId}_{messageId}_{action}_{actorId}` | other participant; like/edit/unsend only, content-free |
 | Session join | `join_{eventId}` | host only; a leave/rejoin is a new event and notifies again |
 | Session cancelled | `cancel_{eventId}` | participants except host; each real open→cancelled transition notifies |
 | Session updated | `update_{eventId}` | participants except host; every distinct material edit notifies, retries dedupe |
 | Session reminder | `reminder_{sessionId}_{uid}_{startTimeMillis}` | host + participants; one per recipient per session **start occurrence** — a reschedule reminds again |
 | Group message | `gm_{sessionId}_{eventId}` | participants except sender; session-scoped like the DM equivalent |
+| Group message activity | `ml_session_{sessionId}_{messageId}_{action}_{actorId}` | participants except actor; recipient-specific like wording, content-free edit/unsend |
 
 ## Scheduled reminders
 

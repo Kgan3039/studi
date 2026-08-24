@@ -35,6 +35,8 @@ export type SheetProps = {
   keyboardScrollTarget?: { y: number; height: number } | null;
   /** Renders children directly instead of inside a ScrollView. */
   scroll?: boolean;
+  /** Uses a denser backdrop when the underlying selected item must stand out. */
+  scrimTone?: 'default' | 'strong';
   children: ReactNode;
 };
 
@@ -54,6 +56,7 @@ export function Sheet({
   onDismissed,
   keyboardScrollTarget,
   scroll = true,
+  scrimTone = 'default',
   children,
 }: SheetProps) {
   const colorScheme = useColorScheme() ?? 'light';
@@ -115,7 +118,14 @@ export function Sheet({
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.overlay}>
-        <Animated.View style={[StyleSheet.absoluteFill, styles.scrim, scrimStyle]} />
+        <Animated.View
+          style={[
+            StyleSheet.absoluteFill,
+            styles.scrim,
+            scrimTone === 'strong' && styles.scrimStrong,
+            scrimStyle,
+          ]}
+        />
         {/* Declared before the panel so it sits behind it: taps outside land on
             the scrim, taps inside it do not. */}
         <Pressable
@@ -222,6 +232,9 @@ const styles = StyleSheet.create({
   },
   scrim: {
     backgroundColor: 'rgba(18, 24, 21, 0.28)',
+  },
+  scrimStrong: {
+    backgroundColor: 'rgba(18, 24, 21, 0.42)',
   },
   panel: {
     borderRadius: Radius.xl,

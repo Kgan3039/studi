@@ -20,6 +20,11 @@ const {
   deriveDirectMessageUpdateMetadata,
 } = require("./direct-message-metadata");
 const {
+  classifyMessageUpdate,
+  formatMessageUpdateBody,
+  isMessageUpdateStillCurrent,
+} = require("./message-lifecycle");
+const {
   blockPairIdsFor,
   dmNotificationId,
   filterBlockedRecipients,
@@ -30,6 +35,7 @@ const {
   getSessionChangedFields,
   groupMessageNotificationId,
   isWithinGroupChatFanoutLimit,
+  messageLifecycleNotificationId,
   normalizeNotificationPayload,
   reminderNotificationId,
   sessionEventNotificationId,
@@ -106,6 +112,36 @@ async function getDisplayName(uid) {
   const snap = await db.collection("users").doc(uid).get();
   const displayName = snap.exists ? snap.data()?.displayName : "";
   return typeof displayName === "string" ? displayName.trim() : "";
+}
+
+async function getUnblockedRecipients(actorIds, candidates) {
+  const uniqueActorIds = [...new Set(
+    (Array.isArray(actorIds) ? actorIds : [actorIds]).filter(Boolean)
+  )];
+  if (uniqueActorIds.length === 0 || candidates.length === 0) {
+    return [];
+  }
+
+  const blockIds = new Set(
+    uniqueActorIds.flatMap((actorId) =>
+      candidates
+        .filter((uid) => uid !== actorId)
+        .flatMap((uid) => blockPairIdsFor(actorId, uid))
+    )
+  );
+  if (blockIds.size === 0) {
+    return candidates;
+  }
+
+  const blockRefs = [...blockIds].map((id) => db.collection("userBlocks").doc(id));
+  const blockSnaps = await db.getAll(...blockRefs);
+  const existingBlockIds = new Set(
+    blockSnaps.filter((snap) => snap.exists).map((snap) => snap.id)
+  );
+  return uniqueActorIds.reduce(
+    (recipients, actorId) => filterBlockedRecipients(actorId, recipients, existingBlockIds),
+    candidates
+  );
 }
 
 async function getEnabledPushTokenDocs(uid) {
@@ -547,8 +583,8 @@ exports.onDirectMessageCreated = onDocumentCreated(
   }
 );
 
-// Editing or unsending the newest DM updates only its inbox preview. It never
-// changes ordering and never fans out another notification.
+// Every update re-derives the newest-message preview. A valid like, edit, or
+// unsend also produces one content-free, deduplicated lifecycle notification.
 exports.onDirectMessageUpdated = onDocumentUpdated(
   "conversations/{conversationId}/messages/{messageId}",
   async (event) => {
@@ -559,29 +595,94 @@ exports.onDirectMessageUpdated = onDocumentUpdated(
       return;
     }
 
+    const before = event.data.before.data();
+    const after = event.data.after.data();
+    const update = classifyMessageUpdate(before, after);
+    const shouldRefreshPreview = before.text !== after.text || (!before.unsentAt && after.unsentAt);
+    if (!update && !shouldRefreshPreview) {
+      return;
+    }
     const conversationRef = db.collection("conversations").doc(conversationId);
-    await db.runTransaction(async (transaction) => {
+    const currentState = await db.runTransaction(async (transaction) => {
       const conversationSnap = await transaction.get(conversationRef);
       if (!conversationSnap.exists) {
-        return;
+        return null;
       }
       // Every update event re-derives from the current document, not its event
       // snapshot. Retries and out-of-order edit/unsend events therefore cannot
       // restore stale or already-unsent content to the inbox preview.
       const currentMessageSnap = await transaction.get(event.data.after.ref);
       if (!currentMessageSnap.exists) {
-        return;
+        return null;
       }
 
-      const metadata = deriveDirectMessageUpdateMetadata(
-        currentMessageSnap.data(),
-        messageId,
-        conversationSnap.data()?.lastMessageId
-      );
+      const conversation = conversationSnap.data();
+      const currentMessage = currentMessageSnap.data();
+
+      const metadata = shouldRefreshPreview
+        ? deriveDirectMessageUpdateMetadata(
+            currentMessage,
+            messageId,
+            conversation?.lastMessageId
+          )
+        : null;
       if (metadata) {
         transaction.update(conversationRef, metadata);
       }
+
+      return {
+        currentMessage,
+        participantIds: Array.isArray(conversation?.participantIds)
+          ? conversation.participantIds.filter((uid) => typeof uid === "string")
+          : [],
+      };
     });
+
+    if (
+      !update
+      || !currentState
+      || !currentState.participantIds.includes(update.actorId)
+      || !currentState.participantIds.includes(update.messageSenderId)
+      || !isMessageUpdateStillCurrent(update, currentState.currentMessage)
+    ) {
+      return;
+    }
+
+    const recipients = await getUnblockedRecipients(
+      [update.actorId, update.messageSenderId],
+      currentState.participantIds.filter((uid) => uid !== update.actorId)
+    );
+    const [actorName, messageSenderName] = await Promise.all([
+      getDisplayName(update.actorId),
+      update.actorId === update.messageSenderId
+        ? Promise.resolve("")
+        : getDisplayName(update.messageSenderId),
+    ]);
+
+    await Promise.all(
+      recipients.map((uid) =>
+        notifyUser(uid, {
+          id: messageLifecycleNotificationId(
+            "direct",
+            conversationId,
+            messageId,
+            update.kind,
+            update.actorId
+          ),
+          type: "dm_message",
+          title: "Message Activity",
+          body: formatMessageUpdateBody({
+            actorName,
+            messageSenderName,
+            recipientId: uid,
+            update,
+          }),
+          url: `/conversation/${conversationId}`,
+          actorId: update.actorId,
+          conversationId,
+        })
+      )
+    );
   }
 );
 
@@ -661,14 +762,7 @@ exports.onSessionMessageCreated = onDocumentCreated(
     // → at most 38 lookups in a single RPC). A lookup failure throws so
     // Eventarc retries the whole event; the idempotent record IDs make that
     // retry safe.
-    const blockRefs = candidates.flatMap((uid) =>
-      blockPairIdsFor(senderId, uid).map((id) => db.collection("userBlocks").doc(id))
-    );
-    const blockSnaps = await db.getAll(...blockRefs);
-    const existingBlockIds = new Set(
-      blockSnaps.filter((snap) => snap.exists).map((snap) => snap.id)
-    );
-    const recipients = filterBlockedRecipients(senderId, candidates, existingBlockIds);
+    const recipients = await getUnblockedRecipients(senderId, candidates);
 
     if (recipients.length === 0) {
       return;
@@ -680,7 +774,7 @@ exports.onSessionMessageCreated = onDocumentCreated(
     const title =
       typeof session?.title === "string" && session.title.trim()
         ? session.title.trim()
-        : "Session chat";
+        : "Session Chat";
 
     await Promise.all(
       recipients.map((uid) =>
@@ -693,6 +787,91 @@ exports.onSessionMessageCreated = onDocumentCreated(
           body: `${senderName}: ${currentText}`,
           url: `/session-chat/${sessionId}`,
           actorId: senderId,
+          sessionId,
+        })
+      )
+    );
+  }
+);
+
+exports.onSessionMessageUpdated = onDocumentUpdated(
+  "sessions/{sessionId}/messages/{messageId}",
+  async (event) => {
+    const sessionId = event.params.sessionId;
+    const messageId = event.params.messageId;
+    if (!event.data || !sessionId || !messageId) {
+      return;
+    }
+
+    const update = classifyMessageUpdate(
+      event.data.before.data(),
+      event.data.after.data()
+    );
+    if (!update) {
+      return;
+    }
+
+    const [sessionSnap, currentMessageSnap] = await Promise.all([
+      db.collection("sessions").doc(sessionId).get(),
+      event.data.after.ref.get(),
+    ]);
+    if (!sessionSnap.exists || !currentMessageSnap.exists) {
+      return;
+    }
+
+    const session = sessionSnap.data();
+    const currentMessage = currentMessageSnap.data();
+    const participantIds = Array.isArray(session?.participantIds)
+      ? session.participantIds.filter((uid) => typeof uid === "string")
+      : [];
+    if (
+      !isWithinGroupChatFanoutLimit(participantIds.length)
+      || !participantIds.includes(update.actorId)
+      || !participantIds.includes(update.messageSenderId)
+      || !isMessageUpdateStillCurrent(update, currentMessage)
+    ) {
+      return;
+    }
+
+    const recipients = await getUnblockedRecipients(
+      [update.actorId, update.messageSenderId],
+      participantIds.filter((uid) => uid !== update.actorId)
+    );
+    if (recipients.length === 0) {
+      return;
+    }
+
+    const [actorName, messageSenderName] = await Promise.all([
+      getDisplayName(update.actorId),
+      update.actorId === update.messageSenderId
+        ? Promise.resolve("")
+        : getDisplayName(update.messageSenderId),
+    ]);
+    const title =
+      typeof session?.title === "string" && session.title.trim()
+        ? session.title.trim()
+        : "Session Chat";
+
+    await Promise.all(
+      recipients.map((uid) =>
+        notifyUser(uid, {
+          id: messageLifecycleNotificationId(
+            "session",
+            sessionId,
+            messageId,
+            update.kind,
+            update.actorId
+          ),
+          type: "group_message",
+          title,
+          body: formatMessageUpdateBody({
+            actorName,
+            messageSenderName,
+            recipientId: uid,
+            update,
+          }),
+          url: `/session-chat/${sessionId}`,
+          actorId: update.actorId,
           sessionId,
         })
       )

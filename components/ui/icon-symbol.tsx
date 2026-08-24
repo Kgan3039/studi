@@ -52,6 +52,7 @@ const MAPPING = {
   'rectangle.portrait.and.arrow.right': 'logout',
   'trash.fill': 'delete',
   'hand.raised.fill': 'privacy-tip',
+  'hand.thumbsup.fill': 'thumb-up',
   // Blocking uses the universal "no entry" sign, not a raised hand.
   nosign: 'block',
   'person.crop.circle.badge.xmark': 'person-off',

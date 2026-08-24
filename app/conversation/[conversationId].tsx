@@ -21,6 +21,7 @@ import { IconButton } from '@/components/ui/IconButton';
 import {
   MessageActionOverlays,
   MessageEditedIndicator,
+  MessageReactionBadge,
   MessageSelectionBar,
   MessageSelectionTarget,
 } from '@/components/ui/MessageActions';
@@ -149,8 +150,23 @@ export default function ConversationScreen() {
   const isMessagingDisabled = hasBlockedOther || isBlockedByOther;
   const messageActions = useMessageActions({
     allowEditing: !isMessagingDisabled,
+    allowReactions: !isMessagingDisabled,
     currentUserId: currentUser?.uid,
     messages,
+    onReportMessage: (message) => {
+      if (!partnerId) return;
+      router.push({
+        pathname: '/report-user',
+        params: {
+          reportedUserId: message.senderId,
+          reportedUserName: partnerName,
+          context: 'conversation',
+          contentType: 'direct_message',
+          contentId: message.messageId,
+          threadId: conversationId,
+        },
+      });
+    },
     onSuccess: showToast,
     threadId: conversationId,
     threadType: 'direct',
@@ -558,6 +574,7 @@ export default function ConversationScreen() {
               !!messageDate &&
               (!previousDate || previousDate.toDateString() !== messageDate.toDateString());
             const isSelected = messageActions.selectedMessageIds.has(message.messageId);
+            const isActive = messageActions.activeMessage?.messageId === message.messageId;
             const isUnsent = !!message.unsentAt;
 
             return (
@@ -573,6 +590,7 @@ export default function ConversationScreen() {
                   accessibilityLabel={isUnsent ? 'Message unsent' : message.text}
                   bubbleStyle={[
                     styles.bubble,
+                    message.likedByIds.length > 0 && styles.bubbleWithReaction,
                     isUnsent
                       ? [
                           styles.unsentBubble,
@@ -592,7 +610,16 @@ export default function ConversationScreen() {
                             },
                           ],
                     isSelected && { borderColor: palette.tint, borderWidth: 2 },
+                    isActive && [
+                      styles.activeBubble,
+                      { backgroundColor: palette.tint, borderColor: '#FFFFFF' },
+                    ],
                   ]}
+                  onDoublePress={
+                    messageActions.canReactToMessage(message)
+                      ? () => void messageActions.toggleMessageLike(message)
+                      : undefined
+                  }
                   onOpenActions={() => messageActions.openMessageActions(message)}
                   onToggleSelection={() =>
                     messageActions.toggleMessageSelection(message.messageId)
@@ -608,16 +635,24 @@ export default function ConversationScreen() {
                         styles.bubbleText,
                         isUnsent && styles.unsentText,
                         {
-                          color: isUnsent
-                            ? palette.icon
-                            : isCurrentUser
+                          color: isActive
+                            ? '#FFFFFF'
+                            : isUnsent
+                              ? palette.icon
+                              : isCurrentUser
                               ? '#FFFFFF'
                               : palette.text,
                         },
                       ]}>
                       {isUnsent ? 'Message unsent' : message.text}
                     </Text>
-                </MessageSelectionTarget>
+                    <MessageReactionBadge
+                      currentUserId={currentUser?.uid}
+                      likedByIds={message.likedByIds}
+                      onPress={() => messageActions.showMessageLikes(message)}
+                      selecting={messageActions.isSelecting}
+                    />
+                  </MessageSelectionTarget>
                 {showTime || (!!message.editedAt && !isUnsent) ? (
                   <View style={styles.messageMeta}>
                     {!messageActions.isSelecting ? (
@@ -632,27 +667,6 @@ export default function ConversationScreen() {
                       </Text>
                     ) : null}
                   </View>
-                ) : null}
-                {!isCurrentUser && partnerId && !isUnsent && !messageActions.isSelecting ? (
-                  <Pressable
-                    accessibilityLabel={`Report message from ${partnerName || 'student'}`}
-                    accessibilityRole="button"
-                    hitSlop={8}
-                    onPress={() =>
-                      router.push({
-                        pathname: '/report-user',
-                        params: {
-                          reportedUserId: partnerId,
-                          reportedUserName: partnerName,
-                          context: 'conversation',
-                          contentType: 'direct_message',
-                          contentId: message.messageId,
-                          threadId: conversationId,
-                        },
-                      })
-                    }>
-                    <Text style={[styles.reportMessage, { color: palette.icon }]}>Report message</Text>
-                  </Pressable>
                 ) : null}
               </View>
             );
@@ -761,7 +775,14 @@ export default function ConversationScreen() {
         onConfirm={handleRemoveFriend}
         onCancel={() => setConfirmRemoveFriend(false)}
       />
-      <MessageActionOverlays controller={messageActions} />
+      <MessageActionOverlays
+        controller={messageActions}
+        userNameForId={(userId) =>
+          userId === currentUser?.uid
+            ? currentUser.displayName?.trim() || 'You'
+            : partnerName || 'Student'
+        }
+      />
       <SuccessToast toast={toast} bottomOffset={72} />
     </KeyboardAvoidingView>
   );
@@ -840,6 +861,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.md + 2,
     paddingVertical: Space.sm + 2,
   },
+  bubbleWithReaction: {
+    marginTop: Space.sm,
+  },
+  activeBubble: {
+    borderWidth: 2,
+    transform: [{ scale: 1.025 }],
+    zIndex: 3,
+  },
   mineBubble: {
     borderBottomRightRadius: Radius.sm - 2,
   },
@@ -867,10 +896,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 13,
     paddingHorizontal: Space.xs,
-  },
-  reportMessage: {
-    ...TypeScale.caption,
-    textDecorationLine: 'underline',
   },
   emptyThread: {
     alignItems: 'center',

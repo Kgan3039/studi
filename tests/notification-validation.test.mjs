@@ -24,6 +24,7 @@ const {
   groupMessageNotificationId,
   isAllowedNotificationUrl,
   isWithinGroupChatFanoutLimit,
+  messageLifecycleNotificationId,
   normalizeNotificationPayload,
   reminderNotificationId,
   sessionEventNotificationId,
@@ -167,7 +168,7 @@ describe('notification payload validation', () => {
   });
 });
 
-describe('idempotent record IDs (CloudEvent-keyed)', () => {
+describe('idempotent notification record IDs', () => {
   it('DM: retries of one event dedupe; no cross-conversation collision', () => {
     // Same CloudEvent delivered twice (retry) → identical ID.
     assert.equal(dmNotificationId(CONVO, 'event-1'), dmNotificationId(CONVO, 'event-1'));
@@ -241,6 +242,29 @@ describe('idempotent record IDs (CloudEvent-keyed)', () => {
       groupMessageNotificationId('s2', 'event-1')
     );
     assert.equal(/^[A-Za-z0-9_-]+$/.test(groupMessageNotificationId('a/b', 'e.v')), true);
+  });
+
+  it('message lifecycle IDs dedupe repeated action churn without cross-thread collisions', () => {
+    const first = messageLifecycleNotificationId(
+      'direct', CONVO, 'message-a', 'liked', 'bobUid'
+    );
+    assert.equal(
+      first,
+      messageLifecycleNotificationId('direct', CONVO, 'message-a', 'liked', 'bobUid')
+    );
+    assert.notEqual(
+      first,
+      messageLifecycleNotificationId('direct', CONVO, 'message-a', 'liked', 'caraUid')
+    );
+    assert.notEqual(
+      first,
+      messageLifecycleNotificationId('direct', CONVO, 'message-a', 'edited', 'bobUid')
+    );
+    assert.notEqual(
+      first,
+      messageLifecycleNotificationId('session', 's1', 'message-a', 'liked', 'bobUid')
+    );
+    assert.equal(/^[A-Za-z0-9_-]+$/.test(first), true);
   });
 
   it('sanitizes unexpected characters out of doc IDs', () => {

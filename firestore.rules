@@ -341,7 +341,7 @@ service cloud.firestore {
         && request.time <= resource.data.createdAt + duration.value(15, 'm')
         && affectedKeys().hasOnly(['text', 'editedAt', 'originalText'])
         && incoming().keys().hasOnly([
-             'senderId', 'text', 'createdAt', 'editedAt', 'originalText'
+             'senderId', 'text', 'createdAt', 'editedAt', 'originalText', 'likedByIds'
            ])
         && incoming().senderId == resource.data.senderId
         && incoming().createdAt == resource.data.createdAt
@@ -355,6 +355,11 @@ service cloud.firestore {
         && incoming().originalText.size() >= 1
         && incoming().originalText.size() <= 2000
         && (
+          (!('likedByIds' in resource.data) && !('likedByIds' in incoming()))
+          || (('likedByIds' in resource.data) && ('likedByIds' in incoming())
+            && incoming().likedByIds == resource.data.likedByIds)
+        )
+        && (
           (('originalText' in resource.data)
             && incoming().originalText == resource.data.originalText)
           || (!('originalText' in resource.data)
@@ -366,12 +371,45 @@ service cloud.firestore {
       return request.auth.uid == resource.data.senderId
         && !('unsentAt' in resource.data)
         && request.time <= resource.data.createdAt + duration.value(2, 'm')
-        && affectedKeys().hasOnly(['text', 'editedAt', 'originalText', 'unsentAt'])
+        && affectedKeys().hasOnly([
+             'text', 'editedAt', 'originalText', 'likedByIds', 'unsentAt'
+           ])
         && incoming().keys().hasOnly(['senderId', 'text', 'createdAt', 'unsentAt'])
         && incoming().senderId == resource.data.senderId
         && incoming().createdAt == resource.data.createdAt
         && incoming().text == ''
         && incoming().unsentAt == request.time;
+    }
+
+    // Reactions live on the message so the existing bounded chat listeners
+    // receive them without opening one listener per message. A client may add
+    // or remove only its own uid, one at a time; every other message field is
+    // immutable. The caller supplies the thread's maximum participant count.
+    function isValidMessageReaction(maxLikes) {
+      return !('unsentAt' in resource.data)
+        && affectedKeys().hasOnly(['likedByIds'])
+        && incoming().keys().hasOnly([
+             'senderId', 'text', 'createdAt', 'editedAt', 'originalText', 'likedByIds'
+           ])
+        && incoming().likedByIds is list
+        && incoming().likedByIds.size() <= maxLikes
+        && (
+          (!('likedByIds' in resource.data)
+            && incoming().likedByIds.size() == 1
+            && incoming().likedByIds[0] == request.auth.uid)
+          || (('likedByIds' in resource.data)
+            && resource.data.likedByIds is list
+            && !resource.data.likedByIds.hasAny([request.auth.uid])
+            && incoming().likedByIds.hasAny([request.auth.uid])
+            && incoming().likedByIds.hasAll(resource.data.likedByIds)
+            && incoming().likedByIds.size() == resource.data.likedByIds.size() + 1)
+          || (('likedByIds' in resource.data)
+            && resource.data.likedByIds is list
+            && resource.data.likedByIds.hasAny([request.auth.uid])
+            && !incoming().likedByIds.hasAny([request.auth.uid])
+            && resource.data.likedByIds.hasAll(incoming().likedByIds)
+            && incoming().likedByIds.size() == resource.data.likedByIds.size() - 1)
+        );
     }
 
     // ------------------------------------------------------------------
@@ -846,8 +884,9 @@ service cloud.firestore {
       // the ACTUAL participant count so legacy uncapped sessions can't force
       // unbounded notification fanout (mirrors MAX_GROUP_CHAT_PARTICIPANTS
       // in functions/notification-validation.js and lib/firestore.ts; change
-      // all three together). Sender edits and unsends are the only client
-      // updates; their windows and immutable fields are enforced below.
+      // all three together). Senders may edit or unsend within their time
+      // windows, and participants may add/remove only their own reaction;
+      // immutable fields and reaction bounds are enforced below.
       match /messages/{messageId} {
         function parentSession() {
           return get(/databases/$(database)/documents/sessions/$(sessionId)).data;
@@ -883,7 +922,11 @@ service cloud.firestore {
           && parentSession().status in ['open', 'full']
           && request.time < parentSession().endTime + duration.value(2, 'h')
           && parentSession().participantIds.size() <= 20
-          && (isValidMessageEdit() || isValidMessageUnsend());
+          && (
+            isValidMessageEdit()
+            || isValidMessageUnsend()
+            || isValidMessageReaction(20)
+          );
         allow delete: if false;
       }
     }
@@ -979,7 +1022,7 @@ service cloud.firestore {
           && request.auth.uid in parentConversation().participantIds
           && (
             isValidMessageUnsend()
-            || (isValidMessageEdit()
+            || ((isValidMessageEdit() || isValidMessageReaction(2))
               && !isBlockedEitherWay(
                    parentConversation().participantIds[0],
                    parentConversation().participantIds[1]

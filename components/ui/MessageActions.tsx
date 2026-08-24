@@ -1,16 +1,18 @@
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import {
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type GestureResponderEvent,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ActionRow } from '@/components/ui/ActionRow';
+import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -18,12 +20,13 @@ import { Sheet } from '@/components/ui/Sheet';
 import { Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { MessageActionController } from '@/hooks/use-message-actions';
-import type { MessageActionRecord } from '@/lib/message-actions';
+import { isMessageDoubleTap, type MessageActionRecord } from '@/lib/message-actions';
 
 type MessageSelectionTargetProps = {
   accessibilityLabel: string;
   bubbleStyle: StyleProp<ViewStyle>;
   children: ReactNode;
+  onDoublePress?: () => void;
   onOpenActions: () => void;
   onToggleSelection: () => void;
   rowStyle: StyleProp<ViewStyle>;
@@ -36,12 +39,36 @@ export function MessageSelectionTarget({
   accessibilityLabel,
   bubbleStyle,
   children,
+  onDoublePress,
   onOpenActions,
   onToggleSelection,
   rowStyle,
   selected,
   selecting,
 }: MessageSelectionTargetProps) {
+  const lastTapAtRef = useRef(0);
+  const longPressTriggeredRef = useRef(false);
+
+  function handlePress() {
+    if (longPressTriggeredRef.current || !onDoublePress) {
+      return;
+    }
+
+    const now = Date.now();
+    if (isMessageDoubleTap(lastTapAtRef.current, now)) {
+      lastTapAtRef.current = 0;
+      onDoublePress();
+      return;
+    }
+    lastTapAtRef.current = now;
+  }
+
+  function handleLongPress() {
+    longPressTriggeredRef.current = true;
+    lastTapAtRef.current = 0;
+    onOpenActions();
+  }
+
   if (selecting) {
     return (
       <Pressable
@@ -64,13 +91,24 @@ export function MessageSelectionTarget({
   return (
     <View style={rowStyle}>
       <Pressable
-        accessibilityActions={[{ name: 'activate', label: 'Open message actions' }]}
-        accessibilityHint="Long press for message actions."
+        accessibilityActions={[
+          { name: 'activate', label: 'Open message actions' },
+          ...(onDoublePress ? [{ name: 'magicTap' as const, label: 'Like message' }] : []),
+        ]}
+        accessibilityHint="Double tap quickly to like. Long press for message actions."
         accessibilityLabel={accessibilityLabel}
         accessibilityRole="button"
         delayLongPress={350}
-        onAccessibilityAction={onOpenActions}
-        onLongPress={onOpenActions}
+        onAccessibilityAction={(event) =>
+          event.nativeEvent.actionName === 'magicTap' && onDoublePress
+            ? onDoublePress()
+            : onOpenActions()
+        }
+        onLongPress={handleLongPress}
+        onPress={handlePress}
+        onPressIn={() => {
+          longPressTriggeredRef.current = false;
+        }}
         style={bubbleStyle}>
         {children}
       </Pressable>
@@ -80,18 +118,22 @@ export function MessageSelectionTarget({
 
 export function MessageActionOverlays({
   controller,
+  userNameForId = () => 'Student',
 }: {
   controller: MessageActionController;
+  userNameForId?: (userId: string) => string;
 }) {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const deleteCount = controller.pendingDelete?.messageIds.length ?? 0;
+  const likedByIds = controller.reactionMessage?.likedByIds ?? [];
 
   return (
     <>
       <Sheet
         onClose={controller.closeMessageActions}
         scroll={false}
+        scrimTone="strong"
         subtitle="Choose what to do with this message."
         title="Message Actions"
         visible={!!controller.activeMessage}>
@@ -123,6 +165,16 @@ export function MessageActionOverlays({
               icon="arrow.uturn.backward"
               label="Unsend"
               onPress={controller.requestUnsendActiveMessage}
+              showChevron={false}
+            />
+          ) : null}
+          {controller.canReportActive ? (
+            <ActionRow
+              description="Send this message privately to Studi for review."
+              destructive
+              icon="exclamationmark.triangle"
+              label="Report Message"
+              onPress={controller.reportActiveMessage}
               showChevron={false}
             />
           ) : null}
@@ -205,6 +257,42 @@ export function MessageActionOverlays({
         </View>
       </Sheet>
 
+      <Sheet
+        onClose={controller.closeMessageLikes}
+        subtitle={
+          likedByIds.length === 1
+            ? '1 person liked this message.'
+            : `${likedByIds.length} people liked this message.`
+        }
+        title="Liked By"
+        visible={!!controller.reactionMessage}>
+        <View
+          style={[
+            styles.likesList,
+            { backgroundColor: palette.surface, borderColor: palette.border },
+          ]}>
+          {likedByIds.map((userId, index) => {
+            const name = userNameForId(userId) || 'Student';
+            return (
+              <View
+                key={userId}
+                style={[
+                  styles.likeRow,
+                  index < likedByIds.length - 1 && {
+                    borderBottomColor: palette.border,
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                  },
+                ]}>
+                <Avatar name={name} size="sm" verified />
+                <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>
+                  {userId === controller.currentUserId ? 'You' : name}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      </Sheet>
+
       <ConfirmDialog
         body="This removes the message for everyone. People may already have seen it or its notification."
         confirmLabel="Unsend"
@@ -256,6 +344,59 @@ export function MessageEditedIndicator({
       style={styles.editedButton}
       variant="ghost"
     />
+  );
+}
+
+export function MessageReactionBadge({
+  currentUserId,
+  likedByIds,
+  onPress,
+  selecting,
+}: {
+  currentUserId?: string;
+  likedByIds: string[];
+  onPress: () => void;
+  selecting: boolean;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+  if (likedByIds.length === 0) {
+    return null;
+  }
+
+  const likedByCurrentUser = !!currentUserId && likedByIds.includes(currentUserId);
+  const foreground = likedByCurrentUser ? '#FFFFFF' : palette.tint;
+
+  function handlePress(event: GestureResponderEvent) {
+    event.stopPropagation();
+    onPress();
+  }
+
+  return (
+    <Pressable
+      accessibilityLabel={
+        likedByIds.length === 1
+          ? 'Liked by 1 person. Show who liked this message.'
+          : `Liked by ${likedByIds.length} people. Show who liked this message.`
+      }
+      accessibilityRole="button"
+      disabled={selecting}
+      hitSlop={8}
+      onPress={handlePress}
+      pointerEvents={selecting ? 'none' : 'auto'}
+      style={({ pressed }) => [
+        styles.reactionBadge,
+        {
+          backgroundColor: likedByCurrentUser ? palette.tint : palette.surface,
+          borderColor: likedByCurrentUser ? palette.tint : palette.outline,
+          opacity: pressed ? 0.68 : 1,
+        },
+      ]}>
+      <IconSymbol color={foreground} name="hand.thumbsup.fill" size={13} />
+      {likedByIds.length > 1 ? (
+        <Text style={[styles.reactionCount, { color: foreground }]}>{likedByIds.length}</Text>
+      ) : null}
+    </Pressable>
   );
 }
 
@@ -361,6 +502,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 23,
   },
+  likesList: {
+    borderRadius: Radius.xl,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    overflow: 'hidden',
+  },
+  likeRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.md,
+    minHeight: 56,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+  },
   editedButton: {
     minHeight: 24,
     paddingHorizontal: Space.xs,
@@ -408,5 +562,25 @@ const styles = StyleSheet.create({
   },
   selectionTargetPressed: {
     opacity: 0.65,
+  },
+  reactionBadge: {
+    alignItems: 'center',
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    flexDirection: 'row',
+    gap: 2,
+    justifyContent: 'center',
+    left: -8,
+    minHeight: 24,
+    minWidth: 28,
+    paddingHorizontal: 6,
+    position: 'absolute',
+    top: -12,
+    zIndex: 2,
+  },
+  reactionCount: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 10,
+    lineHeight: 13,
   },
 });

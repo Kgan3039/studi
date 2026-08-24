@@ -195,9 +195,11 @@ describe('direct-message lifecycle trigger wiring', () => {
     assert.match(createTrigger, /body: currentState\.notificationText/);
   });
 
-  it('derives every edit/unsend preview from current state without another push', () => {
+  it('derives edit/unsend previews from current state without rewriting previews for reactions', () => {
     assert.match(updateTrigger, /transaction\.get\(event\.data\.after\.ref\)/);
+    assert.match(updateTrigger, /shouldRefreshPreview/);
     assert.match(updateTrigger, /deriveDirectMessageUpdateMetadata/);
-    assert.doesNotMatch(updateTrigger, /notifyUser|onDocumentCreated/);
+    assert.match(updateTrigger, /formatMessageUpdateBody/);
+    assert.match(updateTrigger, /notifyUser/);
   });
 });

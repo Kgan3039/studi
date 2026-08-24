@@ -11,6 +11,7 @@ import {
   initializeTestEnvironment,
 } from '@firebase/rules-unit-testing';
 import {
+  arrayRemove,
   arrayUnion,
   collection,
   deleteDoc,
@@ -1628,6 +1629,60 @@ describe('conversations + messages', () => {
     }));
   });
 
+  it('lets DM participants add and remove only their own message reaction', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/reactable`, {
+      senderId: ALICE, text: 'React to this', createdAt: Timestamp.now(),
+    });
+
+    const aliceRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'reactable');
+    const bobRef = doc(ctx(BOB), 'conversations', cid, 'messages', 'reactable');
+    await assertSucceeds(updateDoc(aliceRef, { likedByIds: arrayUnion(ALICE) }));
+    await assertSucceeds(updateDoc(bobRef, { likedByIds: arrayUnion(BOB) }));
+
+    await assertFails(updateDoc(bobRef, { likedByIds: arrayRemove(ALICE) }));
+    await assertFails(updateDoc(
+      doc(ctx(MALLORY), 'conversations', cid, 'messages', 'reactable'),
+      { likedByIds: arrayUnion(MALLORY) }
+    ));
+    await assertFails(updateDoc(aliceRef, {
+      likedByIds: arrayRemove(ALICE),
+      text: 'Reaction write cannot edit content',
+    }));
+    await assertFails(updateDoc(aliceRef, { likedByIds: [ALICE, BOB, MALLORY] }));
+    await assertSucceeds(updateDoc(aliceRef, { likedByIds: arrayRemove(ALICE) }));
+
+    const saved = await assertSucceeds(getDoc(aliceRef));
+    assert.deepEqual(saved.data().likedByIds, [BOB]);
+  });
+
+  it('blocks DM reactions after either participant blocks the other', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/reactable`, {
+      senderId: ALICE, text: 'Sent before block', createdAt: Timestamp.now(),
+    });
+    await seed(`userBlocks/${BOB}__${ALICE}`, {
+      blockerUserId: BOB, blockedUserId: ALICE, createdAt: Timestamp.now(),
+    });
+
+    await assertFails(updateDoc(
+      doc(ctx(ALICE), 'conversations', cid, 'messages', 'reactable'),
+      { likedByIds: arrayUnion(ALICE) }
+    ));
+    await assertFails(updateDoc(
+      doc(ctx(BOB), 'conversations', cid, 'messages', 'reactable'),
+      { likedByIds: arrayUnion(BOB) }
+    ));
+  });
+
   it('lets the sender edit for 15 minutes while preserving the first version', async () => {
     const cid = convoId(ALICE, BOB);
     const messageRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'editable');
@@ -1638,6 +1693,7 @@ describe('conversations + messages', () => {
     await seed(`conversations/${cid}/messages/editable`, {
       senderId: ALICE,
       text: 'Original plan',
+      likedByIds: [BOB],
       createdAt: Timestamp.fromMillis(Date.now() - 60_000),
     });
 
@@ -1657,6 +1713,7 @@ describe('conversations + messages', () => {
     const saved = await assertSucceeds(getDoc(messageRef));
     assert.equal(saved.data().text, 'Final plan');
     assert.equal(saved.data().originalText, 'Original plan');
+    assert.deepEqual(saved.data().likedByIds, [BOB]);
   });
 
   it('rejects late, empty, objectionable, and identity-changing DM edits', async () => {
@@ -1698,11 +1755,13 @@ describe('conversations + messages', () => {
     });
     await seed(`conversations/${cid}/messages/fresh`, {
       senderId: ALICE, text: 'Remove this', originalText: 'First version',
-      editedAt: Timestamp.now(), createdAt: Timestamp.fromMillis(Date.now() - 60_000),
+      editedAt: Timestamp.now(), likedByIds: [BOB],
+      createdAt: Timestamp.fromMillis(Date.now() - 60_000),
     });
     const freshRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'fresh');
     await assertSucceeds(updateDoc(freshRef, {
       text: '', originalText: deleteField(), editedAt: deleteField(),
+      likedByIds: deleteField(),
       unsentAt: serverTimestamp(),
     }));
 
@@ -1710,6 +1769,7 @@ describe('conversations + messages', () => {
     assert.equal(saved.data().text, '');
     assert.equal('originalText' in saved.data(), false);
     assert.equal('editedAt' in saved.data(), false);
+    assert.equal('likedByIds' in saved.data(), false);
     await assertFails(updateDoc(freshRef, { unsentAt: serverTimestamp() }));
     await assertFails(deleteDoc(freshRef));
   });
@@ -1792,6 +1852,52 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     }));
   });
 
+  it('lets session participants add and remove only their own reactions', async () => {
+    await seedChatSession();
+    await seed('sessions/s1/messages/reactable', {
+      senderId: ALICE, text: 'Group message', createdAt: Timestamp.now(),
+    });
+
+    const aliceRef = doc(ctx(ALICE), 'sessions', 's1', 'messages', 'reactable');
+    const bobRef = doc(ctx(BOB), 'sessions', 's1', 'messages', 'reactable');
+    await assertSucceeds(updateDoc(bobRef, { likedByIds: arrayUnion(BOB) }));
+    await assertSucceeds(updateDoc(aliceRef, { likedByIds: arrayUnion(ALICE) }));
+    await assertFails(updateDoc(bobRef, { likedByIds: arrayRemove(ALICE) }));
+    await assertFails(updateDoc(
+      doc(ctx(MALLORY), 'sessions', 's1', 'messages', 'reactable'),
+      { likedByIds: arrayUnion(MALLORY) }
+    ));
+    await assertFails(updateDoc(bobRef, {
+      likedByIds: arrayRemove(BOB),
+      text: 'Reaction write cannot edit content',
+    }));
+    await assertSucceeds(updateDoc(bobRef, { likedByIds: arrayRemove(BOB) }));
+
+    const saved = await assertSucceeds(getDoc(aliceRef));
+    assert.deepEqual(saved.data().likedByIds, [ALICE]);
+  });
+
+  it('denies reactions when a session chat is cancelled or over the fanout cap', async () => {
+    await seedChatSession('cancelled', { status: 'cancelled' });
+    await seed('sessions/cancelled/messages/m1', {
+      senderId: ALICE, text: 'Before cancellation', createdAt: Timestamp.now(),
+    });
+    await assertFails(updateDoc(
+      doc(ctx(BOB), 'sessions', 'cancelled', 'messages', 'm1'),
+      { likedByIds: arrayUnion(BOB) }
+    ));
+
+    const twentyOne = [ALICE, BOB, ...Array.from({ length: 19 }, (_, i) => `filler${i}`)];
+    await seedChatSession('oversized', { participantIds: twentyOne });
+    await seed('sessions/oversized/messages/m1', {
+      senderId: ALICE, text: 'Legacy group', createdAt: Timestamp.now(),
+    });
+    await assertFails(updateDoc(
+      doc(ctx(BOB), 'sessions', 'oversized', 'messages', 'm1'),
+      { likedByIds: arrayUnion(BOB) }
+    ));
+  });
+
   it('send without the rate-limit batch is denied; too-soon resend is denied', async () => {
     await seedChatSession();
     await assertFails(setDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1'), {
@@ -1843,6 +1949,7 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     await seedChatSession();
     await seed('sessions/s1/messages/m1', {
       senderId: BOB, text: 'original',
+      likedByIds: [ALICE],
       createdAt: Timestamp.fromMillis(Date.now() - 60_000),
     });
     const messageRef = doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1');
@@ -1852,12 +1959,14 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     }));
     await assertSucceeds(updateDoc(messageRef, {
       text: '', originalText: deleteField(), editedAt: deleteField(),
+      likedByIds: deleteField(),
       unsentAt: serverTimestamp(),
     }));
 
     const saved = await assertSucceeds(getDoc(messageRef));
     assert.equal(saved.data().text, '');
     assert.equal('originalText' in saved.data(), false);
+    assert.equal('likedByIds' in saved.data(), false);
     await assertFails(deleteDoc(messageRef));
     await assertFails(deleteDoc(doc(ctx(ALICE), 'sessions', 's1', 'messages', 'm1')));
     await assertFails(deleteDoc(doc(ctx(MALLORY), 'sessions', 's1', 'messages', 'm1')));

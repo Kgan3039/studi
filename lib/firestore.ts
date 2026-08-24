@@ -41,6 +41,7 @@ import { auth, db } from "../firebaseConfig";
 import { track } from "./analytics";
 import { assertAllowedUserGeneratedText } from "./content-moderation";
 import { createBlockIdempotently } from "./idempotent-block";
+import { normalizeMessageLikedByIds } from "./message-actions";
 import {
   CreateSessionValidationError,
   createWithStaleVerificationRetry,
@@ -238,6 +239,7 @@ export type ConversationMessage = {
   conversationId: string;
   createdAt?: unknown;
   editedAt?: unknown;
+  likedByIds: string[];
   messageId: string;
   originalText?: string;
   pending: boolean;
@@ -252,6 +254,7 @@ export type ConversationMessage = {
 export type SessionMessage = {
   createdAt?: unknown;
   editedAt?: unknown;
+  likedByIds: string[];
   messageId: string;
   originalText?: string;
   /** True while the local optimistic write hasn't been acknowledged yet. */
@@ -676,8 +679,9 @@ export async function saveNotificationPref(
 
 /**
  * Notification records (users/{uid}/notifications) — written only by Cloud
- * Functions; the client reads them and flips readAt. group_message /
- * friend_* types are reserved by the schema but not produced yet.
+ * Functions; the client reads them and flips readAt. Message creation and
+ * lifecycle activity use dm_message/group_message. friend_* types remain
+ * reserved by the schema but are not produced yet.
  */
 export type AppNotification = {
   notificationId: string;
@@ -1529,6 +1533,7 @@ export function subscribeToConversationMessages(
         text: typeof data.text === "string" ? data.text : "",
         createdAt: data.createdAt,
         editedAt: data.editedAt,
+        likedByIds: normalizeMessageLikedByIds(data.likedByIds),
         originalText: typeof data.originalText === "string" ? data.originalText : undefined,
         unsentAt: data.unsentAt,
       };
@@ -1686,6 +1691,7 @@ export async function unsendChatMessage(
 
     transaction.update(messageRef, {
       editedAt: deleteField(),
+      likedByIds: deleteField(),
       originalText: deleteField(),
       text: "",
       unsentAt: serverTimestamp(),
@@ -1693,6 +1699,22 @@ export async function unsendChatMessage(
   });
 
   track("message_unsent", { thread_type: threadType });
+}
+
+export async function setChatMessageLiked(
+  threadType: ChatThreadType,
+  threadId: string,
+  messageId: string,
+  userId: string,
+  liked: boolean
+) {
+  if (!threadId || !messageId || !userId) {
+    throw new Error("This message is no longer available.");
+  }
+
+  await updateDoc(chatMessageRef(threadType, threadId, messageId), {
+    likedByIds: liked ? arrayUnion(userId) : arrayRemove(userId),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1739,6 +1761,7 @@ function mapSessionMessageDoc(
     text: typeof data.text === "string" ? data.text : "",
     createdAt: data.createdAt,
     editedAt: data.editedAt,
+    likedByIds: normalizeMessageLikedByIds(data.likedByIds),
     originalText: typeof data.originalText === "string" ? data.originalText : undefined,
     unsentAt: data.unsentAt,
   };

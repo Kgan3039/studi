@@ -5,12 +5,15 @@ import { describe, it } from 'mocha';
 import messageActions from '../lib/message-actions.js';
 
 const {
+  MESSAGE_DOUBLE_TAP_WINDOW_MS,
   MESSAGE_EDIT_WINDOW_MS,
   MESSAGE_UNSEND_WINDOW_MS,
   buildSelectedMessageCopy,
   canEditMessage,
   canUnsendMessage,
   hasMessageTextChanged,
+  isMessageDoubleTap,
+  normalizeMessageLikedByIds,
   toggleSelectedMessageId,
 } = messageActions;
 const timestamp = (millis) => ({ toMillis: () => millis });
@@ -49,6 +52,27 @@ describe('message edit confirmation', () => {
     assert.equal(hasMessageTextChanged('Same text', ' Same text '), false);
     assert.equal(hasMessageTextChanged('Same text', '   '), false);
     assert.equal(hasMessageTextChanged('Same text', 'Changed text'), true);
+  });
+});
+
+describe('message reactions', () => {
+  it('recognizes only a quick second tap', () => {
+    assert.equal(isMessageDoubleTap(1_000, 1_000 + MESSAGE_DOUBLE_TAP_WINDOW_MS), true);
+    assert.equal(isMessageDoubleTap(1_000, 1_001 + MESSAGE_DOUBLE_TAP_WINDOW_MS), false);
+    assert.equal(isMessageDoubleTap(0, 100), false);
+    assert.equal(isMessageDoubleTap(2_000, 1_900), false);
+  });
+
+  it('normalizes, deduplicates, and bounds stored reaction user ids', () => {
+    assert.deepEqual(
+      normalizeMessageLikedByIds(['alice', '', 'alice', null, 'bob']),
+      ['alice', 'bob']
+    );
+    assert.equal(
+      normalizeMessageLikedByIds(Array.from({ length: 25 }, (_, index) => `user${index}`)).length,
+      20
+    );
+    assert.deepEqual(normalizeMessageLikedByIds('alice'), []);
   });
 });
 
@@ -93,6 +117,7 @@ describe('multi-message selection', () => {
 
 describe('message action production wiring', () => {
   const directChat = readFileSync('app/conversation/[conversationId].tsx', 'utf8');
+  const messageActionsHook = readFileSync('hooks/use-message-actions.ts', 'utf8');
   const messageActionsUi = readFileSync('components/ui/MessageActions.tsx', 'utf8');
   const sessionChat = readFileSync('app/session-chat/[sessionId].tsx', 'utf8');
   const firestore = readFileSync('lib/firestore.ts', 'utf8');
@@ -105,15 +130,37 @@ describe('message action production wiring', () => {
       assert.match(source, /useMessageActions\(/);
       assert.match(source, /<MessageSelectionBar/);
       assert.match(source, /<MessageSelectionTarget/);
+      assert.match(source, /<MessageReactionBadge/);
+      assert.match(source, /onDoublePress=/);
+      assert.match(source, /isActive/);
       assert.match(source, /<MessageEditedIndicator/);
       assert.match(source, /<MessageActionOverlays/);
+      assert.doesNotMatch(source, />Report message<\/Text>/);
     });
   }
 
   it('uses the full message row as the active multi-selection target', () => {
     assert.match(messageActionsUi, /if \(selecting\)[\s\S]*onPress=\{onToggleSelection\}/);
     assert.match(messageActionsUi, /<MessageSelectionMarker selected=\{selected\} \/>/);
-    assert.match(messageActionsUi, /onLongPress=\{onOpenActions\}/);
+    assert.match(messageActionsUi, /onLongPress=\{handleLongPress\}/);
+  });
+
+  it('keeps reports private to the action sheet and unavailable for your own messages', () => {
+    assert.match(messageActionsUi, /label="Report Message"/);
+    assert.match(messageActionsUi, /controller\.canReportActive/);
+    assert.match(messageActionsHook, /activeMessage\.senderId !== currentUserId/);
+    assert.match(messageActionsHook, /onReportMessage\(message\)/);
+  });
+
+  it('uses atomic shared-message reactions and a stronger active-message backdrop', () => {
+    assert.match(firestore, /likedByIds: liked \? arrayUnion\(userId\) : arrayRemove\(userId\)/);
+    assert.match(messageActionsUi, /scrimTone="strong"/);
+    assert.match(messageActionsUi, /title="Liked By"/);
+    assert.match(sessionChat, /\.flatMap\(\(message\) => \[message\.senderId, \.\.\.message\.likedByIds\]\)/);
+    assert.match(
+      sessionChat,
+      /likedByIds: message\.likedByIds\.filter\(\(userId\) => !blockedIds\.has\(userId\)\)/
+    );
   });
 
   it('uses owner-scoped markers instead of mutating shared docs for delete-for-self', () => {

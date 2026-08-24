@@ -1,9 +1,11 @@
 export const MESSAGE_EDIT_WINDOW_MS: number;
+export const MESSAGE_DOUBLE_TAP_WINDOW_MS: number;
 export const MESSAGE_UNSEND_WINDOW_MS: number;
 
 export type MessageActionRecord = {
   createdAt?: unknown;
   editedAt?: unknown;
+  likedByIds?: string[];
   messageId: string;
   originalText?: string;
   pending?: boolean;
@@ -14,6 +16,8 @@ export type MessageActionRecord = {
 
 export function timestampToMillis(value: unknown): number;
 export function isMessageUnsent(message?: Partial<MessageActionRecord> | null): boolean;
+export function isMessageDoubleTap(previousTapMs: number, currentTapMs: number): boolean;
+export function normalizeMessageLikedByIds(value: unknown): string[];
 export function canEditMessage(
   message: Partial<MessageActionRecord> | null | undefined,
   userId: string | null | undefined,

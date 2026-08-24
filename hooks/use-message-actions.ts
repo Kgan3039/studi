@@ -1,11 +1,12 @@
 import * as Clipboard from 'expo-clipboard';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
 import { ObjectionableContentError } from '@/lib/content-moderation';
 import {
   editChatMessage,
   hideChatMessagesForUser,
+  setChatMessageLiked,
   subscribeToHiddenMessageIds,
   unsendChatMessage,
   type ChatThreadType,
@@ -22,9 +23,11 @@ import {
 
 type UseMessageActionsOptions = {
   allowEditing?: boolean;
+  allowReactions?: boolean;
   allowUnsend?: boolean;
   currentUserId?: string;
   messages: MessageActionRecord[];
+  onReportMessage?: (message: MessageActionRecord) => void;
   onSuccess?: (headline: string, body?: string) => void;
   threadId?: string;
   threadType: ChatThreadType;
@@ -54,9 +57,11 @@ function actionErrorMessage(error: unknown, action: 'delete' | 'edit' | 'unsend'
 
 export function useMessageActions({
   allowEditing = true,
+  allowReactions = true,
   allowUnsend = true,
   currentUserId,
   messages,
+  onReportMessage,
   onSuccess,
   threadId,
   threadType,
@@ -65,6 +70,7 @@ export function useMessageActions({
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [originalMessageId, setOriginalMessageId] = useState<string | null>(null);
+  const [reactionMessageId, setReactionMessageId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const [confirmUnsendMessageId, setConfirmUnsendMessageId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{
@@ -75,17 +81,20 @@ export function useMessageActions({
   const [isSelecting, setIsSelecting] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
   const [actionNowMs, setActionNowMs] = useState(Date.now());
+  const likeWriteIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setHiddenMessageIds(new Set());
     setActiveMessageId(null);
     setEditingMessageId(null);
     setOriginalMessageId(null);
+    setReactionMessageId(null);
     setEditDraft('');
     setConfirmUnsendMessageId(null);
     setPendingDelete(null);
     setSelectedMessageIds(new Set());
     setIsSelecting(false);
+    likeWriteIdsRef.current.clear();
     if (!currentUserId || !threadId) {
       return;
     }
@@ -121,18 +130,32 @@ export function useMessageActions({
     if (originalMessageId && hiddenMessageIds.has(originalMessageId)) {
       setOriginalMessageId(null);
     }
+    if (reactionMessageId && hiddenMessageIds.has(reactionMessageId)) {
+      setReactionMessageId(null);
+    }
     setSelectedMessageIds((current) => {
       const next = new Set([...current].filter((messageId) => !hiddenMessageIds.has(messageId)));
       return next.size === current.size ? current : next;
     });
-  }, [activeMessageId, editingMessageId, hiddenMessageIds, originalMessageId]);
+  }, [activeMessageId, editingMessageId, hiddenMessageIds, originalMessageId, reactionMessageId]);
 
   const findMessage = (messageId: string | null) =>
     messageId ? messages.find((message) => message.messageId === messageId) ?? null : null;
   const activeMessage = findMessage(activeMessageId);
   const editingMessage = findMessage(editingMessageId);
   const originalMessage = findMessage(originalMessageId);
+  const reactionMessage = findMessage(reactionMessageId);
   const unsendMessage = findMessage(confirmUnsendMessageId);
+
+  useEffect(() => {
+    if (
+      reactionMessageId
+      && (!reactionMessage || isMessageUnsent(reactionMessage) || !reactionMessage.likedByIds?.length)
+    ) {
+      setReactionMessageId(null);
+    }
+  }, [reactionMessage, reactionMessageId]);
+
   const selectedMessages = messages.filter((message) => selectedMessageIds.has(message.messageId));
   const selectedCopy = buildSelectedMessageCopy(selectedMessages, selectedMessageIds);
   const canCopyActive = !!activeMessage && !isMessageUnsent(activeMessage) && !!activeMessage.text;
@@ -140,6 +163,12 @@ export function useMessageActions({
     allowEditing && canEditMessage(activeMessage, currentUserId, actionNowMs);
   const canUnsendActive =
     allowUnsend && canUnsendMessage(activeMessage, currentUserId, actionNowMs);
+  const canReportActive =
+    !!activeMessage
+    && !!currentUserId
+    && activeMessage.senderId !== currentUserId
+    && !isMessageUnsent(activeMessage)
+    && !!onReportMessage;
   const canConfirmEdit =
     !!editingMessage && hasMessageTextChanged(editingMessage.text, editDraft) && !isWorking;
 
@@ -153,6 +182,15 @@ export function useMessageActions({
 
   function closeMessageActions() {
     setActiveMessageId(null);
+  }
+
+  function reportActiveMessage() {
+    if (!activeMessage || !canReportActive || !onReportMessage) {
+      return;
+    }
+    const message = activeMessage;
+    closeMessageActions();
+    onReportMessage(message);
   }
 
   async function copyText(text: string, count?: number) {
@@ -335,21 +373,83 @@ export function useMessageActions({
     }
   }
 
+  function showMessageLikes(message: MessageActionRecord) {
+    if (!isMessageUnsent(message) && (message.likedByIds?.length ?? 0) > 0) {
+      setReactionMessageId(message.messageId);
+    }
+  }
+
+  function closeMessageLikes() {
+    setReactionMessageId(null);
+  }
+
+  function canReactToMessage(message: MessageActionRecord) {
+    return (
+      allowReactions
+      && !!currentUserId
+      && !!threadId
+      && !message.pending
+      && !isMessageUnsent(message)
+    );
+  }
+
+  async function toggleMessageLike(message: MessageActionRecord) {
+    if (
+      !currentUserId
+      || !threadId
+      || !canReactToMessage(message)
+      || likeWriteIdsRef.current.has(message.messageId)
+    ) {
+      return;
+    }
+
+    const shouldLike = !message.likedByIds?.includes(currentUserId);
+    likeWriteIdsRef.current.add(message.messageId);
+    try {
+      await setChatMessageLiked(
+        threadType,
+        threadId,
+        message.messageId,
+        currentUserId,
+        shouldLike
+      );
+    } catch (error) {
+      const code =
+        error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+          ? error.code
+          : '';
+      Alert.alert(
+        'Reaction Failed',
+        code.includes('unavailable') || code.includes('network-request-failed')
+          ? 'Check your connection and try again.'
+          : code.includes('permission-denied')
+            ? 'This message cannot be liked right now. The chat may be read-only.'
+            : "We couldn't update that reaction. Please try again."
+      );
+    } finally {
+      likeWriteIdsRef.current.delete(message.messageId);
+    }
+  }
+
   return {
     activeMessage,
     beginEditingActiveMessage,
     beginSelectingActiveMessage,
+    canReactToMessage,
     canConfirmEdit,
     canCopyActive,
     canEditActive,
+    canReportActive,
     canUnsendActive,
     closeEditor,
+    closeMessageLikes,
     closeMessageActions,
     confirmDeleteForSelf,
     confirmEdit,
     confirmUnsend,
     copyActiveMessage,
     copySelectedMessages,
+    currentUserId,
     editDraft,
     editingMessage,
     finishSelecting,
@@ -359,6 +459,8 @@ export function useMessageActions({
     openMessageActions,
     originalMessage,
     pendingDelete,
+    reactionMessage,
+    reportActiveMessage,
     requestDeleteActiveMessage,
     requestDeleteSelectedMessages,
     requestUnsendActiveMessage,
@@ -369,6 +471,8 @@ export function useMessageActions({
     setOriginalMessageId,
     setPendingDelete,
     showOriginalMessage,
+    showMessageLikes,
+    toggleMessageLike,
     toggleMessageSelection,
     unsendMessage,
   };

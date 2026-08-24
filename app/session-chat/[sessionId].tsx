@@ -20,6 +20,7 @@ import { IconButton } from '@/components/ui/IconButton';
 import {
   MessageActionOverlays,
   MessageEditedIndicator,
+  MessageReactionBadge,
   MessageSelectionBar,
   MessageSelectionTarget,
 } from '@/components/ui/MessageActions';
@@ -133,7 +134,8 @@ export default function SessionChatScreen() {
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   // Accumulated by ID so messages that scroll out of the live listener window
-  // never vanish and never gap against older pages (docs are immutable).
+  // never vanish and never gap against older pages. Live snapshots replace
+  // matching entries when message text or reactions change.
   const [messagesById, setMessagesById] = useState<Map<string, SessionMessage>>(new Map());
   const [threadLoaded, setThreadLoaded] = useState(false);
   const [profilesById, setProfilesById] = useState<Map<string, UserProfile>>(new Map());
@@ -344,13 +346,17 @@ export default function SessionChatScreen() {
     markRead,
   ]);
 
-  // Resolve display names for senders no longer in the attendee list
-  // (people who left the session but whose messages remain).
+  // Resolve display names for senders and reactors no longer in the attendee
+  // list (including people who left after sending or liking a message).
   useEffect(() => {
     const missing = [...messagesById.values()]
-      .map((message) => message.senderId)
+      .flatMap((message) => [message.senderId, ...message.likedByIds])
       .filter(
-        (uid) => uid && !profilesById.has(uid) && !requestedProfileIdsRef.current.has(uid)
+        (uid) =>
+          uid
+          && !blockedUserIds.includes(uid)
+          && !profilesById.has(uid)
+          && !requestedProfileIdsRef.current.has(uid)
       );
 
     if (missing.length === 0) {
@@ -376,7 +382,7 @@ export default function SessionChatScreen() {
       .catch(() => {
         // Names fall back to "Student"; retry happens naturally on next mount.
       });
-  }, [messagesById, profilesById]);
+  }, [blockedUserIds, messagesById, profilesById]);
 
   useFocusEffect(
     useCallback(() => {
@@ -405,15 +411,35 @@ export default function SessionChatScreen() {
   }, [session, isParticipant, source, markRead, focusNonce]);
 
   const actionMessages = useMemo(() => {
+    const blockedIds = new Set(blockedUserIds);
     return [...messagesById.values()]
-      .filter((message) => !blockedUserIds.includes(message.senderId))
+      .filter((message) => !blockedIds.has(message.senderId))
+      .map((message) => ({
+        ...message,
+        likedByIds: message.likedByIds.filter((userId) => !blockedIds.has(userId)),
+      }))
       .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
   }, [messagesById, blockedUserIds]);
   const messageActions = useMessageActions({
     allowEditing: !isReadOnly,
+    allowReactions: !isReadOnly,
     allowUnsend: !isReadOnly,
     currentUserId: currentUser?.uid,
     messages: actionMessages,
+    onReportMessage: (message) => {
+      router.push({
+        pathname: '/report-user',
+        params: {
+          reportedUserId: message.senderId,
+          reportedUserName:
+            profilesById.get(message.senderId)?.displayName.trim() || 'Student',
+          context: 'session_chat',
+          contentType: 'session_message',
+          contentId: message.messageId,
+          threadId: sessionId,
+        },
+      });
+    },
     onSuccess: showToast,
     threadId: sessionId,
     threadType: 'session',
@@ -752,6 +778,7 @@ export default function SessionChatScreen() {
             !!messageDate &&
             (!previousDate || previousDate.toDateString() !== messageDate.toDateString());
           const isSelected = messageActions.selectedMessageIds.has(message.messageId);
+          const isActive = messageActions.activeMessage?.messageId === message.messageId;
           const isUnsent = !!message.unsentAt;
 
           return (
@@ -770,6 +797,7 @@ export default function SessionChatScreen() {
                 accessibilityLabel={isUnsent ? 'Message unsent' : message.text}
                 bubbleStyle={[
                   styles.bubble,
+                  message.likedByIds.length > 0 && styles.bubbleWithReaction,
                   isUnsent
                     ? [
                         styles.unsentBubble,
@@ -789,7 +817,16 @@ export default function SessionChatScreen() {
                           },
                         ],
                   isSelected && { borderColor: palette.tint, borderWidth: 2 },
+                  isActive && [
+                    styles.activeBubble,
+                    { backgroundColor: palette.tint, borderColor: '#FFFFFF' },
+                  ],
                 ]}
+                onDoublePress={
+                  messageActions.canReactToMessage(message)
+                    ? () => void messageActions.toggleMessageLike(message)
+                    : undefined
+                }
                 onOpenActions={() => messageActions.openMessageActions(message)}
                 onToggleSelection={() =>
                   messageActions.toggleMessageSelection(message.messageId)
@@ -805,16 +842,24 @@ export default function SessionChatScreen() {
                       styles.bubbleText,
                       isUnsent && styles.unsentText,
                       {
-                        color: isUnsent
-                          ? palette.icon
-                          : isCurrentUser
+                        color: isActive
+                          ? '#FFFFFF'
+                          : isUnsent
+                            ? palette.icon
+                            : isCurrentUser
                             ? '#FFFFFF'
                             : palette.text,
                       },
                     ]}>
                     {isUnsent ? 'Message unsent' : message.text}
                   </Text>
-              </MessageSelectionTarget>
+                  <MessageReactionBadge
+                    currentUserId={currentUser?.uid}
+                    likedByIds={message.likedByIds}
+                    onPress={() => messageActions.showMessageLikes(message)}
+                    selecting={messageActions.isSelecting}
+                  />
+                </MessageSelectionTarget>
               {showTime || (!!message.editedAt && !isUnsent) ? (
                 <View style={styles.messageMeta}>
                   {!messageActions.isSelecting ? (
@@ -829,27 +874,6 @@ export default function SessionChatScreen() {
                     </Text>
                   ) : null}
                 </View>
-              ) : null}
-              {!isCurrentUser && !isUnsent && !messageActions.isSelecting ? (
-                <Pressable
-                  accessibilityLabel={`Report message from ${senderName(message.senderId)}`}
-                  accessibilityRole="button"
-                  hitSlop={8}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/report-user',
-                      params: {
-                        reportedUserId: message.senderId,
-                        reportedUserName: senderName(message.senderId),
-                        context: 'session_chat',
-                        contentType: 'session_message',
-                        contentId: message.messageId,
-                        threadId: sessionId,
-                      },
-                    })
-                  }>
-                  <Text style={[styles.reportMessage, { color: palette.icon }]}>Report message</Text>
-                </Pressable>
               ) : null}
             </View>
           );
@@ -911,7 +935,14 @@ export default function SessionChatScreen() {
         </View>
       )}
       </KeyboardAvoidingView>
-      <MessageActionOverlays controller={messageActions} />
+      <MessageActionOverlays
+        controller={messageActions}
+        userNameForId={(userId) =>
+          userId === currentUser?.uid
+            ? profilesById.get(userId)?.displayName.trim() || 'You'
+            : senderName(userId)
+        }
+      />
       <SuccessToast toast={toast} />
     </>
   );
@@ -1025,6 +1056,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.md + 2,
     paddingVertical: Space.sm + 2,
   },
+  bubbleWithReaction: {
+    marginTop: Space.sm,
+  },
+  activeBubble: {
+    borderWidth: 2,
+    transform: [{ scale: 1.025 }],
+    zIndex: 3,
+  },
   mineBubble: {
     borderBottomRightRadius: Radius.sm - 2,
   },
@@ -1055,10 +1094,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 13,
     paddingHorizontal: Space.xs,
-  },
-  reportMessage: {
-    ...TypeScale.caption,
-    textDecorationLine: 'underline',
   },
   emptyThread: {
     alignItems: 'center',
