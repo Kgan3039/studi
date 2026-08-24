@@ -660,6 +660,7 @@ export default function ProfileScreen() {
               );
             }}>
             <TextInput
+              autoCapitalize="sentences"
               editable={!isSaving}
               maxLength={PROFILE_BIO_MAX_LENGTH}
               multiline

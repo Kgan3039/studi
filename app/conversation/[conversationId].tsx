@@ -699,6 +699,7 @@ export default function ConversationScreen() {
               { backgroundColor: palette.surfaceMuted, opacity: isMessagingDisabled ? 0.55 : 1 },
             ]}>
             <TextInput
+              autoCapitalize="sentences"
               editable={!isSending && !isMessagingDisabled}
               multiline
               onChangeText={setDraft}

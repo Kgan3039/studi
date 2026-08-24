@@ -36,6 +36,7 @@ export function SearchBar({
   onClear,
   containerStyle,
   editable = true,
+  autoCapitalize = 'sentences',
   ...inputProps
 }: SearchBarProps) {
   const colorScheme = useColorScheme() ?? 'light';
@@ -63,7 +64,7 @@ export function SearchBar({
       ) : null}
       <TextInput
         accessibilityLabel={accessibilityLabel}
-        autoCapitalize="none"
+        autoCapitalize={autoCapitalize}
         autoCorrect={false}
         editable={editable}
         onChangeText={onChangeText}

@@ -33,6 +33,7 @@ export function Input({
   helper,
   containerStyle,
   secureTextEntry,
+  autoCapitalize,
   ...inputProps
 }: InputProps) {
   const colorScheme = useColorScheme() ?? 'light';
@@ -49,6 +50,7 @@ export function Input({
       ) : null}
       <View>
         <TextInput
+          autoCapitalize={autoCapitalize ?? (secureTextEntry ? 'none' : 'sentences')}
           placeholderTextColor={placeholderColor}
           {...inputProps}
           secureTextEntry={secureTextEntry && !passwordVisible}

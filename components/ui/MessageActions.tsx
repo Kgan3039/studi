@@ -220,6 +220,7 @@ export function MessageActionOverlays({
         title="Edit Message"
         visible={!!controller.editingMessage}>
         <TextInput
+          autoCapitalize="sentences"
           autoFocus
           maxLength={2000}
           multiline

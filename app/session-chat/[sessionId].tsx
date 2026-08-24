@@ -897,6 +897,7 @@ export default function SessionChatScreen() {
               { backgroundColor: palette.surfaceMuted, opacity: isReadOnly ? 0.55 : 1 },
             ]}>
             <TextInput
+              autoCapitalize="sentences"
               editable={!isSending && !isReadOnly}
               multiline
               onChangeText={setDraft}
