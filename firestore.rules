@@ -347,6 +347,7 @@ service cloud.firestore {
         && incoming().createdAt == resource.data.createdAt
         && incoming().text is string
         && incoming().text.size() >= 1
+        && !incoming().text.matches("^[ \\t\\r\\n 　]*$")
         && incoming().text.size() <= 2000
         && incoming().text != resource.data.text
         && isAllowedUserGeneratedText(incoming().text)
