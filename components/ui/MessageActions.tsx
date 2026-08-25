@@ -1,5 +1,7 @@
-import { useRef, type ReactNode } from 'react';
+import { useMemo, useRef, type ReactNode } from 'react';
 import {
+  Animated,
+  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -20,7 +22,11 @@ import { Sheet } from '@/components/ui/Sheet';
 import { Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { MessageActionController } from '@/hooks/use-message-actions';
-import { isMessageDoubleTap, type MessageActionRecord } from '@/lib/message-actions';
+import {
+  isMessageDoubleTap,
+  type MessageActionRecord,
+  type MessageReplyReference,
+} from '@/lib/message-actions';
 
 type MessageSelectionTargetProps = {
   accessibilityLabel: string;
@@ -28,6 +34,7 @@ type MessageSelectionTargetProps = {
   children: ReactNode;
   onDoublePress?: () => void;
   onOpenActions: () => void;
+  onReply?: () => void;
   onToggleSelection: () => void;
   rowStyle: StyleProp<ViewStyle>;
   selected: boolean;
@@ -41,6 +48,7 @@ export function MessageSelectionTarget({
   children,
   onDoublePress,
   onOpenActions,
+  onReply,
   onToggleSelection,
   rowStyle,
   selected,
@@ -48,6 +56,47 @@ export function MessageSelectionTarget({
 }: MessageSelectionTargetProps) {
   const lastTapAtRef = useRef(0);
   const longPressTriggeredRef = useRef(false);
+  const replyOffset = useRef(new Animated.Value(0)).current;
+  const replyProgress = replyOffset.interpolate({
+    inputRange: [0, 56],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+  const replyPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          !!onReply
+          && !selecting
+          && gesture.dx > 8
+          && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+        onPanResponderMove: (_event, gesture) => {
+          replyOffset.setValue(Math.min(Math.max(gesture.dx, 0), 56));
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          const shouldReply = gesture.dx >= 52 && Math.abs(gesture.dy) < 48;
+          Animated.spring(replyOffset, {
+            toValue: 0,
+            useNativeDriver: true,
+            damping: 18,
+            stiffness: 240,
+          }).start(() => {
+            if (shouldReply) {
+              onReply?.();
+            }
+          });
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(replyOffset, {
+            toValue: 0,
+            useNativeDriver: true,
+            damping: 18,
+            stiffness: 240,
+          }).start();
+        },
+      }),
+    [onReply, replyOffset, selecting]
+  );
 
   function handlePress() {
     if (longPressTriggeredRef.current || !onDoublePress) {
@@ -95,7 +144,11 @@ export function MessageSelectionTarget({
           { name: 'activate', label: 'Open message actions' },
           ...(onDoublePress ? [{ name: 'magicTap' as const, label: 'Like message' }] : []),
         ]}
-        accessibilityHint="Double tap quickly to like. Long press for message actions."
+        accessibilityHint={
+          onReply
+            ? 'Swipe right to reply. Double tap quickly to like. Long press for message actions.'
+            : 'Double tap quickly to like. Long press for message actions.'
+        }
         accessibilityLabel={accessibilityLabel}
         accessibilityRole="button"
         delayLongPress={350}
@@ -109,8 +162,17 @@ export function MessageSelectionTarget({
         onPressIn={() => {
           longPressTriggeredRef.current = false;
         }}
-        style={bubbleStyle}>
-        {children}
+        style={styles.messagePressTarget}>
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.replyCue, { opacity: replyProgress }]}>
+          <IconSymbol color="#FFFFFF" name="arrow.uturn.backward" size={17} />
+        </Animated.View>
+        <Animated.View
+          {...(onReply ? replyPanResponder.panHandlers : {})}
+          style={{ transform: [{ translateX: replyOffset }] }}>
+          <View style={bubbleStyle}>{children}</View>
+        </Animated.View>
       </Pressable>
     </View>
   );
@@ -127,6 +189,7 @@ export function MessageActionOverlays({
   const palette = Colors[colorScheme];
   const deleteCount = controller.pendingDelete?.messageIds.length ?? 0;
   const likedByIds = controller.reactionMessage?.likedByIds ?? [];
+  const isSessionChat = controller.threadType === 'session';
 
   return (
     <>
@@ -134,66 +197,68 @@ export function MessageActionOverlays({
         onClose={controller.closeMessageActions}
         scroll={false}
         scrimTone="strong"
-        subtitle="Choose what to do with this message."
-        title="Message Actions"
+        title="Message options"
         visible={!!controller.activeMessage}>
         <View
           style={[
             styles.actionList,
-            { backgroundColor: palette.surface, borderColor: palette.border },
+            { borderColor: palette.border, backgroundColor: palette.surfaceMuted },
           ]}>
-          {controller.canCopyActive ? (
+          {!isSessionChat && controller.canCopyActive ? (
             <ActionRow
               icon="doc.on.doc"
               label="Copy"
               onPress={controller.copyActiveMessage}
               showChevron={false}
+              style={styles.actionRow}
             />
           ) : null}
-          {controller.canEditActive ? (
+          {!isSessionChat && controller.canEditActive ? (
             <ActionRow
-              description="Available for 15 minutes after sending."
               icon="square.and.pencil"
               label="Edit"
               onPress={controller.beginEditingActiveMessage}
               showChevron={false}
+              style={styles.actionRow}
             />
           ) : null}
-          {controller.canUnsendActive ? (
+          {!isSessionChat && controller.canUnsendActive ? (
             <ActionRow
-              description="Removes it for everyone within 2 minutes."
               icon="arrow.uturn.backward"
               label="Unsend"
               onPress={controller.requestUnsendActiveMessage}
               showChevron={false}
+              style={styles.actionRow}
             />
           ) : null}
-          {controller.canReportActive ? (
+          {!isSessionChat && controller.canReportActive ? (
             <ActionRow
-              description="Send this message privately to Studi for review."
               destructive
               icon="exclamationmark.triangle"
-              label="Report Message"
+              label="Report"
               onPress={controller.reportActiveMessage}
               showChevron={false}
+              style={styles.actionRow}
             />
           ) : null}
           <ActionRow
-            description="Removes it only from your view."
             destructive
             icon="trash.fill"
             label="Delete"
             onPress={controller.requestDeleteActiveMessage}
             showChevron={false}
+            style={styles.actionRow}
           />
-          <ActionRow
-            divided={false}
-            description="Choose multiple messages to copy or delete."
-            icon="checkmark.circle"
-            label="Select"
-            onPress={controller.beginSelectingActiveMessage}
-            showChevron={false}
-          />
+          {!isSessionChat ? (
+            <ActionRow
+              divided={false}
+              icon="checkmark.circle"
+              label="Select"
+              onPress={controller.beginSelectingActiveMessage}
+              showChevron={false}
+              style={styles.actionRow}
+            />
+          ) : null}
         </View>
       </Sheet>
 
@@ -216,8 +281,7 @@ export function MessageActionOverlays({
           </View>
         }
         onClose={controller.closeEditor}
-        subtitle="The original stays available from the Edited indicator."
-        title="Edit Message"
+        title="Edit message"
         visible={!!controller.editingMessage}>
         <TextInput
           autoCapitalize="sentences"
@@ -230,8 +294,8 @@ export function MessageActionOverlays({
           style={[
             styles.editInput,
             {
-              backgroundColor: palette.surface,
-              borderColor: palette.outline,
+              backgroundColor: palette.surfaceMuted,
+              borderColor: palette.border,
               color: palette.text,
             },
           ]}
@@ -244,13 +308,12 @@ export function MessageActionOverlays({
 
       <Sheet
         onClose={() => controller.setOriginalMessageId(null)}
-        subtitle="This is the message before its first edit."
-        title="Original Message"
+        title="Before edit"
         visible={!!controller.originalMessage}>
         <View
           style={[
             styles.originalCard,
-            { backgroundColor: palette.surface, borderColor: palette.border },
+            { backgroundColor: palette.surfaceMuted, borderColor: palette.tint },
           ]}>
           <Text style={[styles.originalText, { color: palette.text }]}>
             {controller.originalMessage?.originalText}
@@ -270,7 +333,7 @@ export function MessageActionOverlays({
         <View
           style={[
             styles.likesList,
-            { backgroundColor: palette.surface, borderColor: palette.border },
+            { backgroundColor: palette.surfaceMuted, borderColor: palette.border },
           ]}>
           {likedByIds.map((userId, index) => {
             const name = userNameForId(userId) || 'Student';
@@ -345,6 +408,78 @@ export function MessageEditedIndicator({
       style={styles.editedButton}
       variant="ghost"
     />
+  );
+}
+
+export function MessageReplyPreview({
+  replyTo,
+  senderName,
+  onClear,
+}: {
+  replyTo: MessageReplyReference;
+  senderName: string;
+  onClear: () => void;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+
+  return (
+    <View style={[styles.replyPreview, { backgroundColor: palette.surfaceMuted, borderColor: palette.tint }]}>
+      <View style={styles.replyPreviewCopy}>
+        <Text style={[TypeScale.caption, styles.replyPreviewSender, { color: palette.tint }]} numberOfLines={1}>
+          Replying to {senderName || 'Student'}
+        </Text>
+        <Text style={[TypeScale.meta, { color: palette.icon }]} numberOfLines={1}>
+          {replyTo.text}
+        </Text>
+      </View>
+      <Pressable
+        accessibilityLabel="Cancel reply"
+        accessibilityRole="button"
+        hitSlop={8}
+        onPress={onClear}
+        style={({ pressed }) => [styles.replyClearButton, { opacity: pressed ? 0.58 : 1 }]}>
+        <IconSymbol color={palette.icon} name="xmark" size={16} />
+      </Pressable>
+    </View>
+  );
+}
+
+export function MessageReplyQuote({
+  replyTo,
+  senderName,
+  inverted = false,
+}: {
+  replyTo?: MessageReplyReference;
+  senderName: string;
+  inverted?: boolean;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+
+  if (!replyTo) {
+    return null;
+  }
+
+  const textColor = inverted ? '#FFFFFF' : palette.text;
+  const mutedColor = inverted ? 'rgba(255, 255, 255, 0.76)' : palette.icon;
+
+  return (
+    <View
+      style={[
+        styles.replyQuote,
+        {
+          backgroundColor: inverted ? 'rgba(255, 255, 255, 0.14)' : palette.surfaceMuted,
+          borderLeftColor: inverted ? '#FFFFFF' : palette.tint,
+        },
+      ]}>
+      <Text style={[TypeScale.caption, styles.replyQuoteSender, { color: textColor }]} numberOfLines={1}>
+        {senderName || 'Student'}
+      </Text>
+      <Text style={[TypeScale.caption, { color: mutedColor }]} numberOfLines={1}>
+        {replyTo.text}
+      </Text>
+    </View>
   );
 }
 
@@ -470,10 +605,14 @@ export function MessageSelectionMarker({ selected }: { selected: boolean }) {
 
 const styles = StyleSheet.create({
   actionList: {
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    margin: Space.lg,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: StyleSheet.hairlineWidth,
     overflow: 'hidden',
+  },
+  actionRow: {
+    backgroundColor: 'transparent',
+    paddingHorizontal: Space.md,
   },
   editActions: {
     flexDirection: 'row',
@@ -494,8 +633,8 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   originalCard: {
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderLeftWidth: 3,
+    borderRadius: Radius.lg,
     padding: Space.lg,
   },
   originalText: {
@@ -503,10 +642,60 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 23,
   },
+  replyPreview: {
+    alignItems: 'center',
+    borderLeftWidth: 3,
+    flexDirection: 'row',
+    gap: Space.sm,
+    marginBottom: Space.sm,
+    minHeight: 46,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+  },
+  replyPreviewCopy: {
+    flex: 1,
+    gap: 1,
+    minWidth: 0,
+  },
+  replyPreviewSender: {
+    fontFamily: FontFamily.bodySemiBold,
+  },
+  replyClearButton: {
+    alignItems: 'center',
+    height: 28,
+    justifyContent: 'center',
+    width: 28,
+  },
+  replyQuote: {
+    borderLeftWidth: 2,
+    borderRadius: Radius.sm,
+    gap: 1,
+    marginBottom: Space.sm,
+    paddingHorizontal: Space.sm,
+    paddingVertical: Space.xs,
+  },
+  replyQuoteSender: {
+    fontFamily: FontFamily.bodySemiBold,
+  },
   likesList: {
-    borderRadius: Radius.xl,
-    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
+  },
+  messagePressTarget: {
+    alignSelf: 'flex-start',
+    position: 'relative',
+  },
+  replyCue: {
+    alignItems: 'center',
+    backgroundColor: '#A31621',
+    borderRadius: Radius.pill,
+    bottom: Space.sm,
+    height: 32,
+    justifyContent: 'center',
+    left: -Space.md,
+    position: 'absolute',
+    width: 32,
   },
   likeRow: {
     alignItems: 'center',

@@ -2,6 +2,12 @@ export const MESSAGE_EDIT_WINDOW_MS: number;
 export const MESSAGE_DOUBLE_TAP_WINDOW_MS: number;
 export const MESSAGE_UNSEND_WINDOW_MS: number;
 
+export type MessageReplyReference = {
+  messageId: string;
+  senderId: string;
+  text: string;
+};
+
 export type MessageActionRecord = {
   createdAt?: unknown;
   editedAt?: unknown;
@@ -9,6 +15,7 @@ export type MessageActionRecord = {
   messageId: string;
   originalText?: string;
   pending?: boolean;
+  replyTo?: MessageReplyReference;
   senderId: string;
   text: string;
   unsentAt?: unknown;

@@ -4,6 +4,8 @@ import { Alert, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Tex
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
+import { ActionRow } from '@/components/ui/ActionRow';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -14,9 +16,16 @@ import {
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
+import { Sheet } from '@/components/ui/Sheet';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useFriendRequestCooldown } from '@/lib/friend-request-cooldown';
+import {
+  canAttemptFriendRequest,
+  runFriendRequestSend,
+} from '@/lib/friend-request-control';
+import { presentFriendRequestFailure } from '@/lib/friend-request-feedback';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
   confirmChatRemoval,
@@ -28,9 +37,18 @@ import {
   isMessageRowVisible,
 } from '@/lib/message-history';
 import {
+  acceptFriendRequest,
+  cancelFriendRequest,
+  getFriendStatus,
+  removeFriend,
+  sendFriendRequest,
+  type FriendStatus,
+} from '@/lib/friends';
+import {
+  blockUser,
   getBlockedUserIds,
   getGroupChatListItem,
-  removeSessionChatFromUserHistory,
+  removeChatFromUserHistory,
   SESSION_CHAT_GRACE_PERIOD_MS,
   subscribeToHiddenChats,
   subscribeToKeptSessionChats,
@@ -41,6 +59,8 @@ import {
   type HiddenChat,
   type KeptSessionChat,
 } from '@/lib/firestore';
+import { getReportedUserIds } from '@/lib/reported-users';
+import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import { Timestamp } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 
@@ -63,6 +83,23 @@ function sessionChatHistoryKey(sessionId: string) {
   return `group:${sessionId}`;
 }
 
+function directChatHistoryKey(conversationId: string) {
+  return `dm:${conversationId}`;
+}
+
+type DirectChatOptions = {
+  conversationId: string;
+  friendStatus: FriendStatus;
+  hasReported: boolean;
+  isRelationshipReady: boolean;
+  name: string;
+  userId: string;
+};
+
+type ChatOptionsTarget =
+  | DirectChatOptions & { type: 'dm' }
+  | { id: string; name: string; type: 'group' };
+
 function timestampMillis(value: unknown) {
   return value instanceof Timestamp ? value.toMillis() : 0;
 }
@@ -74,6 +111,7 @@ export default function MessagesScreen() {
   const insets = useSafeAreaInsets();
   const { onPullScroll, pullDistance } = usePullToRefreshDistance();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const friendRequestCooldown = useFriendRequestCooldown(currentUser?.uid);
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [groupChats, setGroupChats] = useState<GroupChatListItem[]>([]);
   const [keptOnlyGroupChats, setKeptOnlyGroupChats] = useState<GroupChatListItem[]>([]);
@@ -81,7 +119,7 @@ export default function MessagesScreen() {
   const [keptSessionChats, setKeptSessionChats] = useState<Map<string, KeptSessionChat>>(new Map());
   const [pendingRemovalKeys, setPendingRemovalKeys] = useState<Set<string>>(new Set());
   const pendingRemovalKeysRef = useRef(new Set<string>());
-  const longPressSessionChatRef = useRef<string | null>(null);
+  const longPressChatRef = useRef<string | null>(null);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isDmLoading, setIsDmLoading] = useState(true);
@@ -92,6 +130,11 @@ export default function MessagesScreen() {
   const [hasLoadError, setHasLoadError] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [nowMs, setNowMs] = useState(Date.now());
+  const [chatOptionsTarget, setChatOptionsTarget] = useState<ChatOptionsTarget | null>(null);
+  const [confirmBlockTarget, setConfirmBlockTarget] = useState<DirectChatOptions | null>(null);
+  const [confirmAddBuddyTarget, setConfirmAddBuddyTarget] = useState<DirectChatOptions | null>(null);
+  const [confirmRemoveBuddyTarget, setConfirmRemoveBuddyTarget] = useState<DirectChatOptions | null>(null);
+  const [isActionPending, setIsActionPending] = useState(false);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -343,19 +386,17 @@ export default function MessagesScreen() {
 
     return dedupeMessageRows(chats)
       .filter((chat) => {
-        if (chat.type === "dm") {
-          return true;
-        }
-
         if (
-          nowMs >= chat.groupChat.endTime.toMillis() + SESSION_CHAT_GRACE_PERIOD_MS &&
-          !keptSessionChats.has(chat.id)
+          chat.type === "group"
+          && nowMs >= chat.groupChat.endTime.toMillis() + SESSION_CHAT_GRACE_PERIOD_MS
+          && !keptSessionChats.has(chat.id)
         ) {
           return false;
         }
 
-        const key = sessionChatHistoryKey(chat.id);
-        // Session-chat removal is persistent. New messages do not silently
+        const key =
+          chat.type === 'group' ? sessionChatHistoryKey(chat.id) : directChatHistoryKey(chat.id);
+        // Personal chat deletion is persistent. New messages do not silently
         // override an explicit owner-scoped hidden marker.
         return isMessageRowVisible({
           type: chat.type,
@@ -390,12 +431,15 @@ export default function MessagesScreen() {
     });
   }, [allChats, searchQuery]);
 
-  async function handleRemoveSessionChat(sessionId: string) {
+  async function handleRemoveChat(target: ChatOptionsTarget) {
     if (!currentUser) {
       return;
     }
 
-    const key = sessionChatHistoryKey(sessionId);
+    const key =
+      target.type === 'group'
+        ? sessionChatHistoryKey(target.id)
+        : directChatHistoryKey(target.conversationId);
     if (pendingRemovalKeysRef.current.has(key)) {
       return;
     }
@@ -403,10 +447,11 @@ export default function MessagesScreen() {
     setPendingRemovalKeys((current) => new Set(current).add(key));
 
     try {
-      await removeSessionChatFromUserHistory(currentUser.uid, sessionId);
+      const threadId = target.type === 'group' ? target.id : target.conversationId;
+      await removeChatFromUserHistory(currentUser.uid, target.type, threadId);
       setHiddenChats((current) => {
         const next = new Map(current);
-        next.set(key, { chatType: "group", threadId: sessionId, removedAt: Timestamp.now() });
+        next.set(key, { chatType: target.type, threadId, removedAt: Timestamp.now() });
         return next;
       });
       setPendingRemovalKeys((current) => {
@@ -434,31 +479,72 @@ export default function MessagesScreen() {
     }
   }
 
-  function confirmRemoveSessionChat(sessionId: string) {
+  function confirmRemoveChat(target: ChatOptionsTarget) {
     confirmChatRemoval({
       platform: Platform.OS,
       showNativeAlert: Alert.alert,
       showWebConfirm: (message) =>
         typeof window !== "undefined" && window.confirm(message),
-      onConfirm: () => void handleRemoveSessionChat(sessionId),
+      onConfirm: () => void handleRemoveChat(target),
     });
   }
 
-  function handleLongPressSessionChat(sessionId: string) {
+  function openChatOptions(target: ChatOptionsTarget) {
+    const key = target.type === 'group' ? `group:${target.id}` : `dm:${target.conversationId}`;
     // Some platforms also emit onPress when the long press ends. Suppress that
-    // trailing tap so opening a removal prompt never opens the chat underneath.
-    longPressSessionChatRef.current = sessionId;
-    confirmRemoveSessionChat(sessionId);
+    // trailing tap so opening options never opens the chat underneath.
+    longPressChatRef.current = key;
+    setChatOptionsTarget(target);
+
+    if (target.type === 'dm' && currentUser) {
+      void Promise.all([
+        getFriendStatus(currentUser.uid, target.userId),
+        getReportedUserIds(),
+      ])
+        .then(([friendStatus, reportedUserIds]) => {
+          setChatOptionsTarget((current) =>
+            current?.type === 'dm' && current.conversationId === target.conversationId
+              ? {
+                  ...current,
+                  friendStatus,
+                  isRelationshipReady: true,
+                  hasReported: reportedUserIds.includes(target.userId),
+                }
+              : current
+          );
+        })
+        .catch(() => {
+          setChatOptionsTarget((current) =>
+            current?.type === 'dm' && current.conversationId === target.conversationId
+              ? { ...current, isRelationshipReady: true }
+              : current
+          );
+        });
+    }
     setTimeout(() => {
-      if (longPressSessionChatRef.current === sessionId) {
-        longPressSessionChatRef.current = null;
+      if (longPressChatRef.current === key) {
+        longPressChatRef.current = null;
       }
     }, 0);
   }
 
+  function openDirectChat(conversationId: string, otherUserId: string, otherUserName: string) {
+    const key = `dm:${conversationId}`;
+    if (longPressChatRef.current === key) {
+      longPressChatRef.current = null;
+      return;
+    }
+
+    router.push({
+      pathname: "/conversation/[conversationId]",
+      params: { conversationId, otherUserId, otherUserName },
+    });
+  }
+
   function openSessionChat(sessionId: string) {
-    if (longPressSessionChatRef.current === sessionId) {
-      longPressSessionChatRef.current = null;
+    const key = `group:${sessionId}`;
+    if (longPressChatRef.current === key) {
+      longPressChatRef.current = null;
       return;
     }
 
@@ -466,6 +552,120 @@ export default function MessagesScreen() {
       pathname: "/session-chat/[sessionId]",
       params: { sessionId },
     });
+  }
+
+  function closeChatOptions() {
+    if (!isActionPending) {
+      setChatOptionsTarget(null);
+    }
+  }
+
+  function handleReportUser(target: DirectChatOptions) {
+    setChatOptionsTarget(null);
+    router.push({
+      pathname: '/report-user',
+      params: {
+        reportedUserId: target.userId,
+        reportedUserName: target.name,
+        context: 'messages',
+      },
+    });
+  }
+
+  function handleStudyBuddyAction(target: DirectChatOptions) {
+    if (!currentUser || !target.isRelationshipReady || isActionPending) {
+      return;
+    }
+
+    setChatOptionsTarget(null);
+    if (target.friendStatus === 'friends') {
+      setConfirmRemoveBuddyTarget(target);
+      return;
+    }
+    if (target.friendStatus === 'none') {
+      setConfirmAddBuddyTarget(target);
+      return;
+    }
+
+    void (async () => {
+      try {
+        setIsActionPending(true);
+        if (target.friendStatus === 'incoming') {
+          await acceptFriendRequest(currentUser.uid, target.userId);
+        } else {
+          await cancelFriendRequest(currentUser.uid, target.userId);
+        }
+      } catch (error) {
+        Alert.alert('Study Buddy Error', getUserFacingErrorMessage(error, 'friend'));
+      } finally {
+        setIsActionPending(false);
+      }
+    })();
+  }
+
+  async function handleConfirmAddBuddy() {
+    if (
+      !currentUser
+      || !confirmAddBuddyTarget
+      || !canAttemptFriendRequest(currentUser.uid)
+    ) {
+      return;
+    }
+
+    try {
+      setIsActionPending(true);
+      const result = await runFriendRequestSend({
+        userId: currentUser.uid,
+        send: () => sendFriendRequest(currentUser.uid, confirmAddBuddyTarget.userId),
+      });
+      if (result.status === 'sent') {
+        setConfirmAddBuddyTarget(null);
+      }
+    } catch (error) {
+      presentFriendRequestFailure(error);
+    } finally {
+      setIsActionPending(false);
+    }
+  }
+
+  async function handleConfirmRemoveBuddy() {
+    if (!currentUser || !confirmRemoveBuddyTarget) {
+      return;
+    }
+
+    try {
+      setIsActionPending(true);
+      await removeFriend(currentUser.uid, confirmRemoveBuddyTarget.userId);
+      setConfirmRemoveBuddyTarget(null);
+    } catch (error) {
+      Alert.alert('Study Buddy Error', getUserFacingErrorMessage(error, 'friend'));
+    } finally {
+      setIsActionPending(false);
+    }
+  }
+
+  async function handleConfirmBlock() {
+    if (!currentUser || !confirmBlockTarget) {
+      return;
+    }
+
+    try {
+      setIsActionPending(true);
+      await blockUser(currentUser.uid, confirmBlockTarget.userId);
+      setBlockedUserIds((current) => [...new Set([...current, confirmBlockTarget.userId])]);
+      setConfirmBlockTarget(null);
+    } catch (error) {
+      Alert.alert('Block Error', getUserFacingErrorMessage(error, 'conversation'));
+    } finally {
+      setIsActionPending(false);
+    }
+  }
+
+  function buddyMenuLabel(friendStatus: FriendStatus) {
+    if (friendStatus === 'friends') return 'Remove buddy';
+    if (friendStatus === 'incoming') return 'Accept request';
+    if (friendStatus === 'outgoing') return 'Cancel request';
+    return 'Add buddy';
   }
 
   return (
@@ -595,16 +795,23 @@ export default function MessagesScreen() {
                             : `Conversation with ${otherName}`
                         }
                         accessibilityRole="button"
-                        onPress={() =>
-                          router.push({
-                            pathname: "/conversation/[conversationId]",
-                            params: {
-                              conversationId: chat.id,
-                              otherUserId,
-                              otherUserName: otherName,
-                            },
-                          })
+                        accessibilityHint="Hold for conversation options"
+                        delayLongPress={400}
+                        onLongPress={
+                          otherUserId
+                            ? () =>
+                                openChatOptions({
+                                  type: 'dm',
+                                  conversationId: chat.id,
+                                  friendStatus: 'none',
+                                  hasReported: false,
+                                  isRelationshipReady: false,
+                                  name: otherName,
+                                  userId: otherUserId,
+                                })
+                            : undefined
                         }
+                        onPress={() => openDirectChat(chat.id, otherUserId, otherName)}
                         style={({ pressed }) => [
                           styles.threadRow,
                           index > 0 && {
@@ -629,7 +836,9 @@ export default function MessagesScreen() {
                       accessibilityRole="button"
                       delayLongPress={400}
                       disabled={isRemoving}
-                      onLongPress={() => handleLongPressSessionChat(chat.id)}
+                      onLongPress={() =>
+                        openChatOptions({ type: 'group', id: chat.id, name: otherName })
+                      }
                       onPress={() => openSessionChat(chat.id)}
                       style={({ pressed }) => [
                         styles.threadRow,
@@ -665,6 +874,110 @@ export default function MessagesScreen() {
         </ScreenTransition>
       </ScrollView>
       <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
+      <Sheet
+        onClose={closeChatOptions}
+        scroll={false}
+        subtitle={chatOptionsTarget?.type === 'group' ? 'Session chat' : 'Conversation'}
+        title={chatOptionsTarget?.name || 'Conversation'}
+        visible={!!chatOptionsTarget}>
+        {chatOptionsTarget ? (
+          <View
+            style={[
+              styles.chatOptions,
+              { backgroundColor: palette.surfaceMuted, borderColor: palette.border },
+            ]}>
+            {chatOptionsTarget.type === 'dm' ? (
+              <>
+                <ActionRow
+                  accessory={
+                    !chatOptionsTarget.isRelationshipReady ? (
+                      <Text style={[TypeScale.meta, { color: palette.icon }]}>Loading…</Text>
+                    ) : undefined
+                  }
+                  icon={
+                    chatOptionsTarget.friendStatus === 'friends'
+                    || chatOptionsTarget.friendStatus === 'outgoing'
+                      ? 'person.badge.minus'
+                      : 'person.badge.plus'
+                  }
+                  divided={false}
+                  label={buddyMenuLabel(chatOptionsTarget.friendStatus)}
+                  onPress={
+                    chatOptionsTarget.isRelationshipReady
+                      ? () => handleStudyBuddyAction(chatOptionsTarget)
+                      : undefined
+                  }
+                  showChevron={false}
+                  style={styles.chatOptionRow}
+                />
+                <ActionRow
+                  divided={false}
+                  icon="exclamationmark.triangle"
+                  label={chatOptionsTarget.hasReported ? 'Report again' : 'Report'}
+                  onPress={() => handleReportUser(chatOptionsTarget)}
+                  showChevron={false}
+                  style={styles.chatOptionRow}
+                />
+                {!blockedUserIds.includes(chatOptionsTarget.userId) ? (
+                  <ActionRow
+                    destructive
+                    divided={false}
+                    icon="nosign"
+                    label="Block"
+                    onPress={() => {
+                      setChatOptionsTarget(null);
+                      setConfirmBlockTarget(chatOptionsTarget);
+                    }}
+                    showChevron={false}
+                    style={styles.chatOptionRow}
+                  />
+                ) : null}
+              </>
+            ) : null}
+            <ActionRow
+              destructive
+              divided={false}
+              icon="trash.fill"
+              label="Delete"
+              onPress={() => {
+                const target = chatOptionsTarget;
+                setChatOptionsTarget(null);
+                setTimeout(() => confirmRemoveChat(target), 0);
+              }}
+              showChevron={false}
+              style={styles.chatOptionRow}
+            />
+          </View>
+        ) : null}
+      </Sheet>
+      <ConfirmDialog
+        body="They will no longer be able to message you."
+        confirmLabel="Block"
+        loading={isActionPending}
+        onCancel={() => setConfirmBlockTarget(null)}
+        onConfirm={handleConfirmBlock}
+        title={`Block ${confirmBlockTarget?.name || 'this student'}?`}
+        visible={!!confirmBlockTarget}
+      />
+      <ConfirmDialog
+        body="They will get a study buddy request."
+        confirmDisabled={friendRequestCooldown > 0}
+        confirmLabel={friendRequestCooldown > 0 ? `Try again in ${friendRequestCooldown}s` : 'Add'}
+        loading={isActionPending}
+        onCancel={() => setConfirmAddBuddyTarget(null)}
+        onConfirm={handleConfirmAddBuddy}
+        title={`Add ${confirmAddBuddyTarget?.name || 'this student'}?`}
+        visible={!!confirmAddBuddyTarget}
+      />
+      <ConfirmDialog
+        body="You will no longer be study buddies."
+        confirmLabel="Remove"
+        loading={isActionPending}
+        onCancel={() => setConfirmRemoveBuddyTarget(null)}
+        onConfirm={handleConfirmRemoveBuddy}
+        title={`Remove ${confirmRemoveBuddyTarget?.name || 'this student'}?`}
+        visible={!!confirmRemoveBuddyTarget}
+      />
     </View>
   );
 }
@@ -724,5 +1037,15 @@ const styles = StyleSheet.create({
   },
   threadTimestamp: {
     flexShrink: 0,
+  },
+  chatOptions: {
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: StyleSheet.hairlineWidth,
+    margin: Space.lg,
+    overflow: 'hidden',
+  },
+  chatOptionRow: {
+    paddingHorizontal: Space.md,
   },
 });

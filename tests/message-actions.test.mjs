@@ -182,10 +182,34 @@ describe('message action production wiring', () => {
   });
 
   it('keeps reports private to the action sheet and unavailable for your own messages', () => {
-    assert.match(messageActionsUi, /label="Report Message"/);
+    assert.match(messageActionsUi, /label="Report"/);
     assert.match(messageActionsUi, /controller\.canReportActive/);
     assert.match(messageActionsHook, /activeMessage\.senderId !== currentUserId/);
     assert.match(messageActionsHook, /onReportMessage\(message\)/);
+  });
+
+  it('keeps session-chat message holds delete-only', () => {
+    assert.match(messageActionsUi, /const isSessionChat = controller\.threadType === 'session'/);
+    assert.match(messageActionsUi, /!isSessionChat && controller\.canCopyActive/);
+    assert.match(messageActionsUi, /!isSessionChat && controller\.canEditActive/);
+    assert.match(messageActionsUi, /!isSessionChat && controller\.canUnsendActive/);
+    assert.match(messageActionsUi, /!isSessionChat && controller\.canReportActive/);
+    assert.doesNotMatch(sessionChat, /onReportMessage:/);
+  });
+
+  it('supports right-swipe replies with a durable, bounded preview on both chat screens', () => {
+    assert.match(messageActionsUi, /PanResponder\.create/);
+    assert.match(messageActionsUi, /Swipe right to reply/);
+    assert.match(messageActionsUi, /export function MessageReplyPreview/);
+    assert.match(messageActionsUi, /export function MessageReplyQuote/);
+    for (const source of [directChat, sessionChat]) {
+      assert.match(source, /onReply=/);
+      assert.match(source, /<MessageReplyPreview/);
+      assert.match(source, /<MessageReplyQuote/);
+    }
+    assert.match(firestore, /replyTo\?: MessageReplyReference/);
+    assert.match(firestore, /replyTo: normalizeMessageReply\(data\.replyTo\)/);
+    assert.match(firestore, /replyTo: deleteField\(\)/);
   });
 
   it('uses atomic, message-bound shared reactions and a stronger active-message backdrop', () => {

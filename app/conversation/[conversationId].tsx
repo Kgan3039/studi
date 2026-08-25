@@ -23,6 +23,8 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import {
   MessageActionOverlays,
   MessageEditedIndicator,
+  MessageReplyPreview,
+  MessageReplyQuote,
   MessageReactionBadge,
   MessageSelectionBar,
   MessageSelectionTarget,
@@ -121,6 +123,7 @@ export default function ConversationScreen() {
   const friendRequestCooldown = useFriendRequestCooldown(currentUser?.uid);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [draft, setDraft] = useState('');
+  const [replyingTo, setReplyingTo] = useState<ConversationMessage | null>(null);
   const [status, setStatus] = useState('Loading conversation...');
   const [isSending, setIsSending] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -311,8 +314,20 @@ export default function ConversationScreen() {
 
     try {
       setIsSending(true);
-      await sendDirectMessage(conversationId, currentUser.uid, draft);
+      await sendDirectMessage(
+        conversationId,
+        currentUser.uid,
+        draft,
+        replyingTo && !replyingTo.unsentAt
+          ? {
+              messageId: replyingTo.messageId,
+              senderId: replyingTo.senderId,
+              text: replyingTo.text.slice(0, 280),
+            }
+          : undefined
+      );
       setDraft('');
+      setReplyingTo(null);
     } catch (error) {
       const message =
         error instanceof ObjectionableContentError
@@ -631,6 +646,11 @@ export default function ConversationScreen() {
                       : undefined
                   }
                   onOpenActions={() => messageActions.openMessageActions(message)}
+                  onReply={
+                    isUnsent || messageActions.isSelecting
+                      ? undefined
+                      : () => setReplyingTo(message)
+                  }
                   onToggleSelection={() =>
                     messageActions.toggleMessageSelection(message.messageId)
                   }
@@ -638,8 +658,17 @@ export default function ConversationScreen() {
                     styles.messageRow,
                     isCurrentUser ? styles.messageRowMine : styles.messageRowTheirs,
                   ]}
-                  selected={isSelected}
-                  selecting={messageActions.isSelecting}>
+                selected={isSelected}
+                selecting={messageActions.isSelecting}>
+                    <MessageReplyQuote
+                      inverted={isCurrentUser || isActive}
+                      replyTo={message.replyTo}
+                      senderName={
+                        message.replyTo?.senderId === currentUser?.uid
+                          ? currentUser?.displayName?.trim() || 'You'
+                          : partnerName || 'Student'
+                      }
+                    />
                     <Text
                       style={[
                         styles.bubbleText,
@@ -703,6 +732,21 @@ export default function ConversationScreen() {
               paddingBottom: Math.max(insets.bottom, Space.md),
             },
           ]}>
+          {replyingTo ? (
+            <MessageReplyPreview
+              onClear={() => setReplyingTo(null)}
+              replyTo={{
+                messageId: replyingTo.messageId,
+                senderId: replyingTo.senderId,
+                text: replyingTo.text.slice(0, 280),
+              }}
+              senderName={
+                replyingTo.senderId === currentUser?.uid
+                  ? currentUser.displayName?.trim() || 'You'
+                  : partnerName || 'Student'
+              }
+            />
+          ) : null}
           <View
             style={[
               styles.composer,
