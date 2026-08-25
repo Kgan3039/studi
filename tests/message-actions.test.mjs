@@ -153,6 +153,7 @@ describe('hidden-message hydration scope', () => {
 
 describe('message action production wiring', () => {
   const directChat = readFileSync('app/conversation/[conversationId].tsx', 'utf8');
+  const messagesScreen = readFileSync('app/(tabs)/messages.tsx', 'utf8');
   const messageActionsHook = readFileSync('hooks/use-message-actions.ts', 'utf8');
   const messageActionsUi = readFileSync('components/ui/MessageActions.tsx', 'utf8');
   const sessionChat = readFileSync('app/session-chat/[sessionId].tsx', 'utf8');
@@ -195,6 +196,13 @@ describe('message action production wiring', () => {
     assert.match(messageActionsUi, /!isSessionChat && controller\.canUnsendActive/);
     assert.match(messageActionsUi, /!isSessionChat && controller\.canReportActive/);
     assert.doesNotMatch(sessionChat, /onReportMessage:/);
+  });
+
+  it('lets a session chat menu open its group and member profiles', () => {
+    assert.match(messagesScreen, /label="View group"/);
+    assert.match(messagesScreen, /getSessionById\(groupMembersSessionId\)/);
+    assert.match(messagesScreen, /accessibilityLabel=\{`View \$\{memberName\}'s profile`\}/);
+    assert.match(messagesScreen, /router\.push\(`\/user\/\$\{userId\}`\)/);
   });
 
   it('supports right-swipe replies with a durable, bounded preview on both chat screens', () => {

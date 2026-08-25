@@ -1,6 +1,16 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
@@ -48,6 +58,7 @@ import {
   blockUser,
   getBlockedUserIds,
   getGroupChatListItem,
+  getSessionById,
   removeChatFromUserHistory,
   SESSION_CHAT_GRACE_PERIOD_MS,
   subscribeToHiddenChats,
@@ -58,6 +69,7 @@ import {
   type GroupChatListItem,
   type HiddenChat,
   type KeptSessionChat,
+  type UserProfile,
 } from '@/lib/firestore';
 import { getReportedUserIds } from '@/lib/reported-users';
 import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
@@ -96,9 +108,11 @@ type DirectChatOptions = {
   userId: string;
 };
 
+type GroupChatOptions = { id: string; name: string; type: 'group' };
+
 type ChatOptionsTarget =
   | DirectChatOptions & { type: 'dm' }
-  | { id: string; name: string; type: 'group' };
+  | GroupChatOptions;
 
 function timestampMillis(value: unknown) {
   return value instanceof Timestamp ? value.toMillis() : 0;
@@ -131,10 +145,21 @@ export default function MessagesScreen() {
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [nowMs, setNowMs] = useState(Date.now());
   const [chatOptionsTarget, setChatOptionsTarget] = useState<ChatOptionsTarget | null>(null);
+  const [groupMembersTarget, setGroupMembersTarget] = useState<GroupChatOptions | null>(null);
+  const [groupMemberProfiles, setGroupMemberProfiles] = useState<UserProfile[]>([]);
+  const [groupMembersHostId, setGroupMembersHostId] = useState<string | null>(null);
+  const [groupMembersLoadState, setGroupMembersLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [confirmBlockTarget, setConfirmBlockTarget] = useState<DirectChatOptions | null>(null);
   const [confirmAddBuddyTarget, setConfirmAddBuddyTarget] = useState<DirectChatOptions | null>(null);
   const [confirmRemoveBuddyTarget, setConfirmRemoveBuddyTarget] = useState<DirectChatOptions | null>(null);
   const [isActionPending, setIsActionPending] = useState(false);
+  const groupProfileTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const groupMembersSessionId = groupMembersTarget?.id;
+  const visibleGroupMembers = useMemo(
+    () => groupMemberProfiles.filter((member) => !blockedUserIds.includes(member.uid)),
+    [blockedUserIds, groupMemberProfiles]
+  );
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -143,6 +168,55 @@ export default function MessagesScreen() {
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (groupProfileTimeoutRef.current) {
+        clearTimeout(groupProfileTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!groupMembersSessionId) {
+      setGroupMemberProfiles([]);
+      setGroupMembersHostId(null);
+      setGroupMembersLoadState('idle');
+      return;
+    }
+
+    let active = true;
+    setGroupMembersLoadState('loading');
+
+    void getSessionById(groupMembersSessionId)
+      .then((session) => {
+        if (!active) {
+          return;
+        }
+
+        if (!session) {
+          setGroupMembersLoadState('error');
+          return;
+        }
+
+        const membersById = new Map(session.attendeeProfiles.map((profile) => [profile.uid, profile]));
+        if (session.hostProfile) {
+          membersById.set(session.hostProfile.uid, session.hostProfile);
+        }
+        setGroupMemberProfiles([...membersById.values()]);
+        setGroupMembersHostId(session.hostId);
+        setGroupMembersLoadState('ready');
+      })
+      .catch(() => {
+        if (active) {
+          setGroupMembersLoadState('error');
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [groupMembersSessionId]);
 
   // A block is written outside the conversations collection, so its snapshot
   // cannot update this list by itself. Re-read when the tab regains focus —
@@ -560,6 +634,22 @@ export default function MessagesScreen() {
     }
   }
 
+  function openGroupMembers(target: GroupChatOptions) {
+    setChatOptionsTarget(null);
+    setGroupMembersTarget(target);
+  }
+
+  function openGroupMemberProfile(userId: string) {
+    setGroupMembersTarget(null);
+    if (groupProfileTimeoutRef.current) {
+      clearTimeout(groupProfileTimeoutRef.current);
+    }
+    groupProfileTimeoutRef.current = setTimeout(() => {
+      groupProfileTimeoutRef.current = null;
+      router.push(`/user/${userId}`);
+    }, 250);
+  }
+
   function handleReportUser(target: DirectChatOptions) {
     setChatOptionsTarget(null);
     router.push({
@@ -831,7 +921,7 @@ export default function MessagesScreen() {
                   return (
                     <Pressable
                       key={`group:${chat.id}`}
-                      accessibilityHint="Hold to remove this chat from your messages"
+                      accessibilityHint="Hold for group chat options"
                       accessibilityLabel={`Session chat for ${otherName}`}
                       accessibilityRole="button"
                       delayLongPress={400}
@@ -934,6 +1024,16 @@ export default function MessagesScreen() {
                 ) : null}
               </>
             ) : null}
+            {chatOptionsTarget.type === 'group' ? (
+              <ActionRow
+                divided={false}
+                icon="person.2.fill"
+                label="View group"
+                onPress={() => openGroupMembers(chatOptionsTarget)}
+                showChevron={false}
+                style={styles.chatOptionRow}
+              />
+            ) : null}
             <ActionRow
               destructive
               divided={false}
@@ -949,6 +1049,68 @@ export default function MessagesScreen() {
             />
           </View>
         ) : null}
+      </Sheet>
+      <Sheet
+        onClose={() => setGroupMembersTarget(null)}
+        subtitle={
+          groupMembersLoadState === 'ready'
+            ? `${visibleGroupMembers.length} ${visibleGroupMembers.length === 1 ? 'person' : 'people'} in this group`
+            : groupMembersTarget
+              ? `People in ${groupMembersTarget.name}`
+              : undefined
+        }
+        title={groupMembersTarget?.name || 'Group members'}
+        visible={!!groupMembersTarget}>
+        {groupMembersLoadState === 'loading' ? (
+          <View style={styles.groupMembersStatus}>
+            <ActivityIndicator color={palette.tint} />
+            <Text style={[TypeScale.caption, { color: palette.icon }]}>Loading people…</Text>
+          </View>
+        ) : groupMembersLoadState === 'error' ? (
+          <View style={styles.groupMembersStatus}>
+            <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Group unavailable</Text>
+            <Text style={[TypeScale.caption, styles.groupMembersStatusCopy, { color: palette.icon }]}>
+              Try opening the group again in a moment.
+            </Text>
+          </View>
+        ) : visibleGroupMembers.length > 0 ? (
+          <View style={styles.groupMemberList}>
+            {visibleGroupMembers.map((member) => {
+              const memberName = member.displayName.trim() || 'Student';
+              const isHost = member.uid === groupMembersHostId;
+
+              return (
+                <Pressable
+                  accessibilityHint="Opens profile"
+                  accessibilityLabel={`View ${memberName}'s profile`}
+                  accessibilityRole="button"
+                  key={member.uid}
+                  onPress={() => openGroupMemberProfile(member.uid)}
+                  style={({ pressed }) => [
+                    styles.groupMemberRow,
+                    { borderBottomColor: palette.border, opacity: pressed ? 0.7 : 1 },
+                  ]}>
+                  <Avatar name={memberName} size="md" verified />
+                  <View style={styles.groupMemberCopy}>
+                    <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
+                      {memberName}
+                    </Text>
+                    <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                      {isHost ? 'Host · Verified UW student' : 'Verified UW student'}
+                    </Text>
+                  </View>
+                  <IconSymbol color={palette.icon} name="chevron.right" size={18} />
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={styles.groupMembersStatus}>
+            <Text style={[TypeScale.caption, styles.groupMembersStatusCopy, { color: palette.icon }]}>
+              No group members are available right now.
+            </Text>
+          </View>
+        )}
       </Sheet>
       <ConfirmDialog
         body="They will no longer be able to message you."
@@ -1047,5 +1209,30 @@ const styles = StyleSheet.create({
   },
   chatOptionRow: {
     paddingHorizontal: Space.md,
+  },
+  groupMemberList: {
+    gap: 0,
+  },
+  groupMemberRow: {
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: Space.md,
+    minHeight: 68,
+    paddingVertical: Space.md,
+  },
+  groupMemberCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  groupMembersStatus: {
+    alignItems: 'center',
+    gap: Space.sm,
+    justifyContent: 'center',
+    minHeight: 120,
+  },
+  groupMembersStatusCopy: {
+    textAlign: 'center',
   },
 });
