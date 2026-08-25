@@ -17,7 +17,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
 import { IconButton } from '@/components/ui/IconButton';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import { Colors, Space, TypeScale } from '@/constants/theme';
+import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
@@ -287,18 +287,24 @@ export default function NotificationsScreen() {
                 style={({ pressed }) => [
                   styles.row,
                   {
-                    borderBottomColor: palette.border,
+                    borderColor: palette.border,
                     opacity: pressed ? 0.7 : 1,
                   },
                 ]}>
                 {unread ? (
                   <View style={[styles.unreadMarker, { backgroundColor: palette.tint }]} />
                 ) : null}
-                <IconSymbol
-                  name={ICON_BY_TYPE[item.type] ?? 'circle.dashed'}
-                  size={22}
-                  color={isReminder || unread ? palette.tint : palette.icon}
-                />
+                <View
+                  style={[
+                    styles.iconWrap,
+                    { backgroundColor: isReminder || unread ? palette.hero : palette.surfaceMuted },
+                  ]}>
+                  <IconSymbol
+                    name={ICON_BY_TYPE[item.type] ?? 'circle.dashed'}
+                    size={20}
+                    color={isReminder || unread ? palette.tint : palette.icon}
+                  />
+                </View>
                 <View style={styles.rowBody}>
                   <View style={styles.rowHeader}>
                     <Text
@@ -371,12 +377,21 @@ const styles = StyleSheet.create({
   },
   row: {
     alignItems: 'center',
-    borderBottomWidth: 1,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth * 2,
     flexDirection: 'row',
     gap: Space.md,
     minHeight: 68,
-    paddingHorizontal: Space.xs,
+    marginBottom: Space.sm,
+    paddingHorizontal: Space.md,
     paddingVertical: Space.md,
+  },
+  iconWrap: {
+    alignItems: 'center',
+    borderRadius: Radius.md,
+    height: 38,
+    justifyContent: 'center',
+    width: 38,
   },
   unreadMarker: {
     borderRadius: 2,

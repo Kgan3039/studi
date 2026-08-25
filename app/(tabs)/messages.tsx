@@ -17,7 +17,7 @@ import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SearchBar } from '@/components/ui/SearchBar';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors, Space, TypeScale } from '@/constants/theme';
+import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
@@ -495,9 +495,21 @@ export default function MessagesScreen() {
                   const isBlocked =
                     !!otherUserId && blockedUserIds.includes(otherUserId);
 
+                  const isSessionChat = chat.type === 'group';
                   const rowContents = (
                     <>
-                      <Avatar name={otherName} size="md" />
+                      {isSessionChat ? (
+                        <View
+                          accessibilityElementsHidden
+                          style={[
+                            styles.sessionChatAvatar,
+                            { backgroundColor: palette.hero, borderColor: palette.tint },
+                          ]}>
+                          <IconSymbol color={palette.tint} name="person.2.fill" size={22} />
+                        </View>
+                      ) : (
+                        <Avatar name={otherName} size="md" />
+                      )}
 
                       <View style={styles.threadBody}>
                         <View style={styles.threadHeader}>
@@ -523,20 +535,29 @@ export default function MessagesScreen() {
                           </Text>
                         </View>
 
-                        <View style={styles.threadPreview}>
-                          {isBlocked ? (
-                            <IconSymbol color={palette.tint} name="nosign" size={15} />
-                          ) : null}
+                        {isSessionChat ? (
+                          <View style={styles.sessionChatLabel}>
+                            <IconSymbol color={palette.tint} name="message.fill" size={15} />
+                            <Text style={[TypeScale.caption, { color: palette.tint }]}>
+                              Session chat · everyone going
+                            </Text>
+                          </View>
+                        ) : (
+                          <View style={styles.threadPreview}>
+                            {isBlocked ? (
+                              <IconSymbol color={palette.tint} name="nosign" size={15} />
+                            ) : null}
 
-                          <Text
-                            style={[
-                              TypeScale.body,
-                              { color: isBlocked ? palette.tint : palette.secondaryText },
-                            ]}
-                            numberOfLines={1}>
-                            {isBlocked ? "Blocked" : chat.preview}
-                          </Text>
-                        </View>
+                            <Text
+                              style={[
+                                TypeScale.body,
+                                { color: isBlocked ? palette.tint : palette.secondaryText },
+                              ]}
+                              numberOfLines={1}>
+                              {chat.preview}
+                            </Text>
+                          </View>
+                        )}
                       </View>
                     </>
                   );
@@ -698,6 +719,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Space.xs + 2,
     minWidth: 0,
+  },
+  sessionChatAvatar: {
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  sessionChatLabel: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.xs + 2,
   },
   threadName: {
     flexShrink: 1,
