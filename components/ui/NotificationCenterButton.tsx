@@ -208,11 +208,9 @@ export function NotificationCenterButton() {
         style={({ pressed }) => [
           styles.bellButton,
           {
-            backgroundColor: palette.surface,
-            borderColor: palette.border,
             opacity: pressed ? 0.7 : 1,
           },
-          pressed ? { backgroundColor: palette.hero, transform: [{ scale: 0.94 }] } : null,
+          pressed ? { backgroundColor: palette.surfaceMuted, transform: [{ scale: 0.94 }] } : null,
         ]}>
         <IconSymbol
           color={unreadCount > 0 ? palette.tint : palette.text}
@@ -331,7 +329,6 @@ const styles = StyleSheet.create({
   bellButton: {
     alignItems: 'center',
     borderRadius: Radius.md,
-    borderWidth: StyleSheet.hairlineWidth * 2,
     height: 44,
     justifyContent: 'center',
     width: 44,

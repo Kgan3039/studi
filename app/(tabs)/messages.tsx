@@ -1,13 +1,11 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { IconButton } from '@/components/ui/IconButton';
 import { LoadingState } from '@/components/ui/LoadingState';
 import {
   PullToRefreshIndicator,
@@ -83,6 +81,7 @@ export default function MessagesScreen() {
   const [keptSessionChats, setKeptSessionChats] = useState<Map<string, KeptSessionChat>>(new Map());
   const [pendingRemovalKeys, setPendingRemovalKeys] = useState<Set<string>>(new Set());
   const pendingRemovalKeysRef = useRef(new Set<string>());
+  const longPressSessionChatRef = useRef<string | null>(null);
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isDmLoading, setIsDmLoading] = useState(true);
@@ -445,8 +444,32 @@ export default function MessagesScreen() {
     });
   }
 
+  function handleLongPressSessionChat(sessionId: string) {
+    // Some platforms also emit onPress when the long press ends. Suppress that
+    // trailing tap so opening a removal prompt never opens the chat underneath.
+    longPressSessionChatRef.current = sessionId;
+    confirmRemoveSessionChat(sessionId);
+    setTimeout(() => {
+      if (longPressSessionChatRef.current === sessionId) {
+        longPressSessionChatRef.current = null;
+      }
+    }, 0);
+  }
+
+  function openSessionChat(sessionId: string) {
+    if (longPressSessionChatRef.current === sessionId) {
+      longPressSessionChatRef.current = null;
+      return;
+    }
+
+    router.push({
+      pathname: "/session-chat/[sessionId]",
+      params: { sessionId },
+    });
+  }
+
   return (
-    <GestureHandlerRootView style={[styles.screen, { backgroundColor: palette.background }]}>
+    <View style={[styles.screen, { backgroundColor: palette.background }]}>
       <ScrollView
         onScroll={onPullScroll}
         scrollEventThrottle={16}
@@ -539,7 +562,7 @@ export default function MessagesScreen() {
                           <View style={styles.sessionChatLabel}>
                             <IconSymbol color={palette.tint} name="message.fill" size={15} />
                             <Text style={[TypeScale.caption, { color: palette.tint }]}>
-                              Session chat · everyone going
+                              Session chat
                             </Text>
                           </View>
                         ) : (
@@ -599,60 +622,26 @@ export default function MessagesScreen() {
                   const isRemoving = pendingRemovalKeys.has(removalKey);
 
                   return (
-                    <Swipeable
+                    <Pressable
                       key={`group:${chat.id}`}
-                      overshootRight={false}
-                      renderRightActions={() => (
-                        <Pressable
-                          accessibilityLabel={`Remove ${otherName} from my Messages`}
-                          accessibilityRole="button"
-                          disabled={isRemoving}
-                          onPress={() => confirmRemoveSessionChat(chat.id)}
-                          style={({ pressed }) => [
-                            styles.removeAction,
-                            { backgroundColor: palette.destructive },
-                            { opacity: pressed ? 0.75 : 1 },
-                          ]}
-                        >
-                          <IconSymbol color="#FFFFFF" name="trash" size={21} />
-                          <Text style={styles.removeActionText}>Remove</Text>
-                        </Pressable>
-                      )}
-                      rightThreshold={44}
-                    >
-                      <View
-                        style={[
-                          styles.rowShell,
-                          index > 0 && {
-                            borderTopColor: palette.border,
-                            borderTopWidth: StyleSheet.hairlineWidth,
-                          },
-                          { backgroundColor: palette.background },
-                        ]}>
-                        <Pressable
-                          accessibilityLabel={`Session chat for ${otherName}`}
-                          accessibilityRole="button"
-                          onPress={() =>
-                            router.push({
-                              pathname: "/session-chat/[sessionId]",
-                              params: { sessionId: chat.id },
-                            })
-                          }
-                          style={({ pressed }) => [
-                            styles.threadRow,
-                            { opacity: pressed ? 0.7 : 1 },
-                          ]}>
-                          {rowContents}
-                        </Pressable>
-                        <IconButton
-                          accessibilityLabel={`Remove ${otherName} from my Messages`}
-                          disabled={isRemoving}
-                          icon="trash"
-                          onPress={() => confirmRemoveSessionChat(chat.id)}
-                        />
-                      </View>
-                    </Swipeable>
-                  );
+                      accessibilityHint="Hold to remove this chat from your messages"
+                      accessibilityLabel={`Session chat for ${otherName}`}
+                      accessibilityRole="button"
+                      delayLongPress={400}
+                      disabled={isRemoving}
+                      onLongPress={() => handleLongPressSessionChat(chat.id)}
+                      onPress={() => openSessionChat(chat.id)}
+                      style={({ pressed }) => [
+                        styles.threadRow,
+                        index > 0 && {
+                          borderTopColor: palette.border,
+                          borderTopWidth: StyleSheet.hairlineWidth,
+                        },
+                        { opacity: isRemoving ? 0.45 : pressed ? 0.7 : 1 },
+                      ]}>
+                      {rowContents}
+                    </Pressable>
+                 );
                 })}
               </View>
             ) : (
@@ -676,7 +665,7 @@ export default function MessagesScreen() {
         </ScreenTransition>
       </ScrollView>
       <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
-    </GestureHandlerRootView>
+    </View>
   );
 }
 
@@ -699,10 +688,6 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-  rowShell: {
-    alignItems: 'center',
-    flexDirection: 'row',
-  },
   threadBody: {
     flex: 1,
     gap: Space.xs,
@@ -722,7 +707,7 @@ const styles = StyleSheet.create({
   },
   sessionChatAvatar: {
     alignItems: 'center',
-    borderRadius: Radius.lg,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     height: 40,
     justifyContent: 'center',
@@ -739,16 +724,5 @@ const styles = StyleSheet.create({
   },
   threadTimestamp: {
     flexShrink: 0,
-  },
-  removeAction: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 92,
-    paddingHorizontal: Space.md,
-  },
-  removeActionText: {
-    ...TypeScale.meta,
-    color: '#FFFFFF',
-    marginTop: Space.xs,
   },
 });
