@@ -19,25 +19,6 @@ type PullToRefreshIndicatorProps = {
   refreshing: boolean;
 };
 
-function pullOffsetForDistance(distance: number) {
-  const clamped = Math.max(0, Math.min(distance, 120));
-
-  if (clamped <= 18) {
-    return -70 + clamped;
-  }
-  if (clamped <= 72) {
-    return -52 + ((clamped - 18) / 54) * 44;
-  }
-  return -8 + ((clamped - 72) / 48) * 34;
-}
-
-function pullScaleForDistance(distance: number) {
-  const clamped = Math.max(0, Math.min(distance, 120));
-  return clamped <= 72
-    ? 0.86 + (clamped / 72) * 0.08
-    : 0.94 + ((clamped - 72) / 48) * 0.06;
-}
-
 export function usePullToRefreshDistance() {
   const pullDistance = useRef(new Animated.Value(0)).current;
   const onPullScroll = useCallback(
@@ -62,20 +43,11 @@ export function PullToRefreshIndicator({ pullDistance, refreshing }: PullToRefre
   const [settling, setSettling] = useState(false);
   const fallbackPullDistance = useRef(new Animated.Value(0)).current;
   const activePullDistance = pullDistance ?? fallbackPullDistance;
-  const lastPullDistanceRef = useRef(0);
   const wasRefreshingRef = useRef(false);
   const opacity = useRef(new Animated.Value(0)).current;
   const pinOffset = useRef(new Animated.Value(18)).current;
   const pinScale = useRef(new Animated.Value(1)).current;
   const pulse = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const listenerId = activePullDistance.addListener(({ value }) => {
-      lastPullDistanceRef.current = Math.max(0, value);
-    });
-
-    return () => activePullDistance.removeListener(listenerId);
-  }, [activePullDistance]);
 
   useEffect(() => {
     void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
@@ -105,15 +77,15 @@ export function PullToRefreshIndicator({ pullDistance, refreshing }: PullToRefre
           useNativeDriver: true,
         }),
         Animated.timing(pinOffset, {
-          duration: reduceMotion ? 0 : 240,
-          easing: Easing.out(Easing.cubic),
-          toValue: 58,
+          duration: reduceMotion ? 0 : 260,
+          easing: Easing.in(Easing.cubic),
+          toValue: 76,
           useNativeDriver: true,
         }),
         Animated.timing(pinScale, {
-          duration: reduceMotion ? 0 : 210,
-          easing: Easing.out(Easing.quad),
-          toValue: 0.94,
+          duration: reduceMotion ? 0 : 220,
+          easing: Easing.in(Easing.quad),
+          toValue: 0.88,
           useNativeDriver: true,
         }),
       ]);
@@ -127,27 +99,21 @@ export function PullToRefreshIndicator({ pullDistance, refreshing }: PullToRefre
     wasRefreshingRef.current = true;
     setSettling(false);
     opacity.setValue(1);
-    // Continue from the pin's pull position instead of resetting it before
-    // the refresh settles. The release now flows into the live state.
-    pinOffset.setValue(
-      reduceMotion ? 18 : pullOffsetForDistance(lastPullDistanceRef.current),
-    );
-    pinScale.setValue(
-      reduceMotion ? 1 : pullScaleForDistance(lastPullDistanceRef.current),
-    );
+    pinOffset.setValue(reduceMotion ? 18 : 4);
+    pinScale.setValue(reduceMotion ? 1 : 0.96);
 
     const entrance = Animated.parallel([
       Animated.spring(pinOffset, {
-        damping: 18,
+        damping: 12,
         mass: 0.72,
-        stiffness: 160,
+        stiffness: 180,
         toValue: 18,
         useNativeDriver: true,
       }),
       Animated.spring(pinScale, {
-        damping: 18,
+        damping: 12,
         mass: 0.7,
-        stiffness: 160,
+        stiffness: 180,
         toValue: 1,
         useNativeDriver: true,
       }),
@@ -165,13 +131,13 @@ export function PullToRefreshIndicator({ pullDistance, refreshing }: PullToRefre
     const breathing = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
-          duration: 960,
+          duration: 720,
           easing: Easing.inOut(Easing.quad),
           toValue: 1,
           useNativeDriver: true,
         }),
         Animated.timing(pulse, {
-          duration: 960,
+          duration: 720,
           easing: Easing.inOut(Easing.quad),
           toValue: 0,
           useNativeDriver: true,
@@ -208,7 +174,7 @@ export function PullToRefreshIndicator({ pullDistance, refreshing }: PullToRefre
   });
   const refreshPulseScale = pulse.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.99, 1.015],
+    outputRange: [0.985, 1.025],
   });
   // A soft wash behind the pin so the gesture registers against the page
   // instead of a lone icon drifting over content.
