@@ -17,13 +17,24 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/Avatar';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { IconButton } from '@/components/ui/IconButton';
+import { LoadingState } from '@/components/ui/LoadingState';
+import {
+  MessageActionOverlays,
+  MessageEditedIndicator,
+  MessageReactionBadge,
+  MessageSelectionBar,
+  MessageSelectionTarget,
+} from '@/components/ui/MessageActions';
 import {
   PullToRefreshIndicator,
   usePullToRefreshDistance,
 } from '@/components/ui/PullToRefreshIndicator';
+import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useMessageActions } from '@/hooks/use-message-actions';
 import { ObjectionableContentError } from '@/lib/content-moderation';
 import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
 import { track } from '@/lib/analytics';
@@ -105,6 +116,7 @@ export default function ConversationScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const palette = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const { toast, show: showToast } = useSuccessToast();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const friendRequestCooldown = useFriendRequestCooldown(currentUser?.uid);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -135,6 +147,35 @@ export default function ConversationScreen() {
 
   const partnerName = otherUserName?.trim() || resolvedPartner?.name || '';
   const partnerId = otherUserId || resolvedPartner?.userId || '';
+  const hasBlockedOther = !!partnerId && blockedUserIds.includes(partnerId);
+  const hasReportedOther = !!partnerId && reportedUserIds.includes(partnerId);
+  const isMessagingDisabled = hasBlockedOther || isBlockedByOther;
+  const messageActions = useMessageActions({
+    allowEditing: !isMessagingDisabled,
+    allowReactions: !isMessagingDisabled,
+    currentUserId: currentUser?.uid,
+    messages,
+    onReportMessage: (message) => {
+      if (!partnerId) return;
+      router.push({
+        pathname: '/report-user',
+        params: {
+          reportedUserId: message.senderId,
+          reportedUserName: partnerName,
+          context: 'conversation',
+          contentType: 'direct_message',
+          contentId: message.messageId,
+          threadId: conversationId,
+        },
+      });
+    },
+    onSuccess: showToast,
+    threadId: conversationId,
+    threadType: 'direct',
+  });
+  const visibleMessages = messageActions.hiddenMessagesReady
+    ? messages.filter((message) => !messageActions.hiddenMessageIds.has(message.messageId))
+    : [];
 
   useEffect(() => {
     let cancelled = false;
@@ -411,9 +452,6 @@ export default function ConversationScreen() {
     setRefreshNonce((value) => value + 1);
   }
 
-  const hasBlockedOther = !!partnerId && blockedUserIds.includes(partnerId);
-  const hasReportedOther = !!partnerId && reportedUserIds.includes(partnerId);
-  const isMessagingDisabled = hasBlockedOther || isBlockedByOther;
   const canSend = !isSending && !isMessagingDisabled && draft.trim().length > 0;
   const friendActionLabel =
     friendStatus === 'friends'
@@ -526,17 +564,28 @@ export default function ConversationScreen() {
         }
         scrollEventThrottle={16}
         contentContainerStyle={styles.threadContent}>
-        {messages.length > 0 ? (
-          messages.map((message, index) => {
+        {messageActions.hiddenMessagesError ? (
+          <ErrorState
+            title="Unable to load this conversation"
+            body="Please try again."
+            onRetry={messageActions.retryHiddenMessages}
+          />
+        ) : !messageActions.hiddenMessagesReady ? (
+          <LoadingState title="Loading messages" />
+        ) : visibleMessages.length > 0 ? (
+          visibleMessages.map((message, index) => {
             const isCurrentUser = currentUser?.uid === message.senderId;
-            const nextMessage = messages[index + 1];
+            const nextMessage = visibleMessages[index + 1];
             const showTime =
               !nextMessage || (currentUser?.uid === nextMessage.senderId) !== isCurrentUser;
             const messageDate = toDate(message.createdAt);
-            const previousDate = index > 0 ? toDate(messages[index - 1].createdAt) : null;
+            const previousDate = index > 0 ? toDate(visibleMessages[index - 1].createdAt) : null;
             const showDaySeparator =
               !!messageDate &&
               (!previousDate || previousDate.toDateString() !== messageDate.toDateString());
+            const isSelected = messageActions.selectedMessageIds.has(message.messageId);
+            const isActive = messageActions.activeMessage?.messageId === message.messageId;
+            const isUnsent = !!message.unsentAt;
 
             return (
               <View
@@ -547,53 +596,87 @@ export default function ConversationScreen() {
                     {formatDaySeparator(messageDate)}
                   </Text>
                 ) : null}
-                <View
-                  style={[
+                <MessageSelectionTarget
+                  accessibilityLabel={isUnsent ? 'Message unsent' : message.text}
+                  bubbleStyle={[
                     styles.bubble,
-                    isCurrentUser
-                      ? [styles.mineBubble, { backgroundColor: palette.tint }]
-                      : [
-                          styles.theirsBubble,
+                    message.likedByIds.length > 0 && styles.bubbleWithReaction,
+                    isUnsent
+                      ? [
+                          styles.unsentBubble,
                           {
-                            backgroundColor: palette.surface,
-                            borderColor: palette.border,
-                            borderWidth: StyleSheet.hairlineWidth * 2,
+                            backgroundColor: palette.surfaceMuted,
+                            borderColor: palette.outline,
                           },
-                        ],
-                  ]}>
-                  <Text
-                    style={[
-                      styles.bubbleText,
-                      { color: isCurrentUser ? '#FFFFFF' : palette.text },
-                    ]}>
-                    {message.text}
-                  </Text>
-                </View>
-                {showTime ? (
-                  <Text style={[styles.bubbleTime, { color: palette.icon }]}>
-                    {formatTimestamp(message.createdAt)}
-                  </Text>
-                ) : null}
-                {!isCurrentUser && partnerId ? (
-                  <Pressable
-                    accessibilityLabel={`Report message from ${partnerName || 'student'}`}
-                    accessibilityRole="button"
-                    hitSlop={8}
-                    onPress={() =>
-                      router.push({
-                        pathname: '/report-user',
-                        params: {
-                          reportedUserId: partnerId,
-                          reportedUserName: partnerName,
-                          context: 'conversation',
-                          contentType: 'direct_message',
-                          contentId: message.messageId,
-                          threadId: conversationId,
+                        ]
+                      : isCurrentUser
+                        ? [styles.mineBubble, { backgroundColor: palette.tint }]
+                        : [
+                            styles.theirsBubble,
+                            {
+                              backgroundColor: palette.surface,
+                              borderColor: palette.border,
+                              borderWidth: StyleSheet.hairlineWidth * 2,
+                            },
+                          ],
+                    isSelected && { borderColor: palette.tint, borderWidth: 2 },
+                    isActive && [
+                      styles.activeBubble,
+                      { backgroundColor: palette.tint, borderColor: '#FFFFFF' },
+                    ],
+                  ]}
+                  onDoublePress={
+                    messageActions.canReactToMessage(message)
+                      ? () => void messageActions.toggleMessageLike(message)
+                      : undefined
+                  }
+                  onOpenActions={() => messageActions.openMessageActions(message)}
+                  onToggleSelection={() =>
+                    messageActions.toggleMessageSelection(message.messageId)
+                  }
+                  rowStyle={[
+                    styles.messageRow,
+                    isCurrentUser ? styles.messageRowMine : styles.messageRowTheirs,
+                  ]}
+                  selected={isSelected}
+                  selecting={messageActions.isSelecting}>
+                    <Text
+                      style={[
+                        styles.bubbleText,
+                        isUnsent && styles.unsentText,
+                        {
+                          color: isActive
+                            ? '#FFFFFF'
+                            : isUnsent
+                              ? palette.icon
+                              : isCurrentUser
+                              ? '#FFFFFF'
+                              : palette.text,
                         },
-                      })
-                    }>
-                    <Text style={[styles.reportMessage, { color: palette.icon }]}>Report message</Text>
-                  </Pressable>
+                      ]}>
+                      {isUnsent ? 'Message unsent' : message.text}
+                    </Text>
+                    <MessageReactionBadge
+                      currentUserId={currentUser?.uid}
+                      likedByIds={message.likedByIds}
+                      onPress={() => messageActions.showMessageLikes(message)}
+                      selecting={messageActions.isSelecting}
+                    />
+                  </MessageSelectionTarget>
+                {showTime || (!!message.editedAt && !isUnsent) ? (
+                  <View style={styles.messageMeta}>
+                    {!messageActions.isSelecting ? (
+                      <MessageEditedIndicator
+                        message={message}
+                        onPress={() => messageActions.showOriginalMessage(message)}
+                      />
+                    ) : null}
+                    {showTime ? (
+                      <Text style={[styles.bubbleTime, { color: palette.icon }]}>
+                        {formatTimestamp(message.createdAt)}
+                      </Text>
+                    ) : null}
+                  </View>
                 ) : null}
               </View>
             );
@@ -609,54 +692,59 @@ export default function ConversationScreen() {
       </ScrollView>
       <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
 
-      <View
-        style={[
-          styles.composerBar,
-          {
-            borderTopColor: palette.border,
-            paddingBottom: Math.max(insets.bottom, Space.md),
-          },
-        ]}>
+      {messageActions.isSelecting ? (
+        <MessageSelectionBar controller={messageActions} />
+      ) : (
         <View
           style={[
-            styles.composer,
-            { backgroundColor: palette.surfaceMuted, opacity: isMessagingDisabled ? 0.55 : 1 },
+            styles.composerBar,
+            {
+              borderTopColor: palette.border,
+              paddingBottom: Math.max(insets.bottom, Space.md),
+            },
           ]}>
-          <TextInput
-            editable={!isSending && !isMessagingDisabled}
-            multiline
-            onChangeText={setDraft}
-            placeholder={
-              hasBlockedOther
-                ? 'This user is blocked.'
-                : isBlockedByOther
-                  ? 'Messaging unavailable.'
-                  : 'Message…'
-            }
-            placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
-            style={[styles.composerInput, { color: palette.text }]}
-            value={draft}
-          />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Send message"
-            disabled={!canSend}
-            onPress={handleSendMessage}
-            style={({ pressed }) => [
-              styles.sendButton,
-              {
-                backgroundColor: palette.tint,
-                opacity: !canSend ? 0.4 : pressed ? 0.8 : 1,
-              },
+          <View
+            style={[
+              styles.composer,
+              { backgroundColor: palette.surfaceMuted, opacity: isMessagingDisabled ? 0.55 : 1 },
             ]}>
-            {isSending ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <Text style={styles.sendGlyph}>↑</Text>
-            )}
-          </Pressable>
+            <TextInput
+              autoCapitalize="sentences"
+              editable={!isSending && !isMessagingDisabled}
+              multiline
+              onChangeText={setDraft}
+              placeholder={
+                hasBlockedOther
+                  ? 'This user is blocked.'
+                  : isBlockedByOther
+                    ? 'Messaging unavailable.'
+                    : 'Message…'
+              }
+              placeholderTextColor={colorScheme === 'dark' ? '#8A8174' : Brand.textSubtle}
+              style={[styles.composerInput, { color: palette.text }]}
+              value={draft}
+            />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Send message"
+              disabled={!canSend}
+              onPress={handleSendMessage}
+              style={({ pressed }) => [
+                styles.sendButton,
+                {
+                  backgroundColor: palette.tint,
+                  opacity: !canSend ? 0.4 : pressed ? 0.8 : 1,
+                },
+              ]}>
+              {isSending ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.sendGlyph}>↑</Text>
+              )}
+            </Pressable>
+          </View>
         </View>
-      </View>
+      )}
       <ConfirmDialog
         visible={confirmBlock}
         title={`Block ${partnerName || 'this student'}?`}
@@ -698,6 +786,15 @@ export default function ConversationScreen() {
         onConfirm={handleRemoveFriend}
         onCancel={() => setConfirmRemoveFriend(false)}
       />
+      <MessageActionOverlays
+        controller={messageActions}
+        userNameForId={(userId) =>
+          userId === currentUser?.uid
+            ? currentUser.displayName?.trim() || 'You'
+            : partnerName || 'Student'
+        }
+      />
+      <SuccessToast toast={toast} bottomOffset={72} />
     </KeyboardAvoidingView>
   );
 }
@@ -743,6 +840,18 @@ const styles = StyleSheet.create({
   messageGroup: {
     gap: Space.xs,
   },
+  messageRow: {
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  messageRowMine: {
+    justifyContent: 'flex-end',
+  },
+  messageRowTheirs: {
+    justifyContent: 'flex-start',
+  },
   daySeparator: {
     alignSelf: 'center',
     fontFamily: FontFamily.bodySemiBold,
@@ -763,6 +872,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.md + 2,
     paddingVertical: Space.sm + 2,
   },
+  bubbleWithReaction: {
+    marginTop: Space.sm,
+  },
+  activeBubble: {
+    borderWidth: 2,
+    transform: [{ scale: 1.025 }],
+    zIndex: 3,
+  },
   mineBubble: {
     borderBottomRightRadius: Radius.sm - 2,
   },
@@ -774,15 +891,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 19,
   },
+  unsentBubble: {
+    borderWidth: StyleSheet.hairlineWidth * 2,
+  },
+  unsentText: {
+    fontStyle: 'italic',
+  },
+  messageMeta: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.xs,
+  },
   bubbleTime: {
     fontFamily: FontFamily.bodyMedium,
     fontSize: 10,
     lineHeight: 13,
     paddingHorizontal: Space.xs,
-  },
-  reportMessage: {
-    ...TypeScale.caption,
-    textDecorationLine: 'underline',
   },
   emptyThread: {
     alignItems: 'center',

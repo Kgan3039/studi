@@ -77,10 +77,10 @@ service cloud.firestore {
 
     function isKnownRateLimitedAction(action) {
       return action in ['sendMessage', 'createSession', 'reportUser', 'catalogRequest', 'locationRating',
-                        'friendRequest', 'createConversation', 'updateSession'];
+                        'friendRequest', 'createConversation', 'updateSession', 'updateMessage'];
     }
 
-    // Four rate-limit shapes share the rateLimits/{uid}/actions/{action} path:
+    // Rate-limit shapes share the rateLimits/{uid}/actions/{action} path:
     //
     //  - INTERVAL: `updatedAt` is bound to one exact resource path in
     //    `lastResourceId`.
@@ -88,9 +88,9 @@ service cloud.firestore {
     //    `updatedAt` plus the exact request
     //    document id authorized by that limiter update. Binding the id prevents
     //    one atomic limiter write from authorizing multiple request creates.
-    //  - STRICT BOUND RESOURCE (updateSession): every material edit requires
-    //    `{ updatedAt, lastResourceId }` atomically bound to that session. This
-    //    feature is unreleased, so there is no legacy unbound compatibility.
+    //  - STRICT BOUND RESOURCE (updateSession and updateMessage): every
+    //    protected update requires `{ updatedAt, lastResourceId }` atomically
+    //    bound to the exact resource. There is no unbound compatibility.
     //  - COUNTER (createConversation): a fixed 24h window with a hard cap.
     //    Unsolicited DM threads need total reach bounded, not just slowed, so
     //    an interval throttle is the wrong instrument (security audit H3).
@@ -104,7 +104,7 @@ service cloud.firestore {
     }
 
     function isStrictBoundResourceRateLimitedAction(action) {
-      return action == 'updateSession';
+      return action in ['updateSession', 'updateMessage'];
     }
 
     // New conversation partners allowed per window. A conversation ID is the
@@ -200,10 +200,14 @@ service cloud.firestore {
           // permits quick corrections while bounding persistent/push spam.
           || (action == 'updateSession'
             && previousUpdatedAt <= request.time - duration.value(30, 's'))
+          // One second preserves ordinary double-tap/edit interactions while
+          // preventing automated edit/reaction churn and notification spam.
+          || (action == 'updateMessage'
+            && previousUpdatedAt <= request.time - duration.value(1, 's'))
         );
     }
 
-    function isValidStrictBoundResourceRateLimitWrite(userId, action) {
+    function isValidUpdateSessionRateLimitWrite(userId, action) {
       let parts = incoming().lastResourceId is string
         ? incoming().lastResourceId.split('/')
         : [];
@@ -230,6 +234,53 @@ service cloud.firestore {
             && respectsRateLimit(userId, action, resource.data.updatedAt)
           )
         );
+    }
+
+    function isValidUpdateMessageRateLimitWrite(userId, action) {
+      let parts = incoming().lastResourceId is string
+        ? incoming().lastResourceId.split('/')
+        : [];
+      let isDirectMessage = parts.size() == 4
+        && parts[0] == 'conversations'
+        && parts[2] == 'messages';
+      let isSessionMessage = parts.size() == 4
+        && parts[0] == 'sessions'
+        && parts[2] == 'messages';
+      let messageRef = isDirectMessage
+        ? /databases/$(database)/documents/conversations/$(parts[1])/messages/$(parts[3])
+        : (
+          isSessionMessage
+            ? /databases/$(database)/documents/sessions/$(parts[1])/messages/$(parts[3])
+            : /databases/$(database)/documents/conversations/__invalid__/messages/__invalid__
+        );
+      return action == 'updateMessage'
+        && incoming().keys().hasOnly(['updatedAt', 'lastResourceId'])
+        && incoming().updatedAt == request.time
+        && hasValidBoundResourceId()
+        && parts.size() == 4
+        && parts[1].size() > 0
+        && parts[3].size() > 0
+        && (isDirectMessage || isSessionMessage)
+        && exists(messageRef)
+        && existsAfter(messageRef)
+        // The limiter cannot be advanced alone: the same atomic request must
+        // actually edit text/history fields or change the reaction set.
+        && getAfter(messageRef).data.diff(get(messageRef).data).affectedKeys().hasAny([
+             'text', 'editedAt', 'originalText', 'likedByIds'
+           ])
+        && (
+          !exists(rateLimitRef(userId, action))
+          || (
+            resource.data.updatedAt is timestamp
+            && respectsRateLimit(userId, action, resource.data.updatedAt)
+          )
+        );
+    }
+
+    function isValidStrictBoundResourceRateLimitWrite(userId, action) {
+      return action == 'updateSession'
+        ? isValidUpdateSessionRateLimitWrite(userId, action)
+        : isValidUpdateMessageRateLimitWrite(userId, action);
     }
 
     function isValidBoundIntervalRateLimitWrite(userId, action) {
@@ -328,6 +379,93 @@ service cloud.firestore {
       return value is string
         && !value.lower().matches(
           "^[ \\t\\r\\n 　]*[.!?]*(((go|please|you[ \\t\\r\\n 　]+should|hey,?)[ \\t\\r\\n 　]+)?kill[ \\t\\r\\n 　]+yourself|kys|i[ \\t\\r\\n 　]+(am[ \\t\\r\\n 　]+going[ \\t\\r\\n 　]+to|will)[ \\t\\r\\n 　]+kill[ \\t\\r\\n 　]+you|i('|’)(m[ \\t\\r\\n 　]+going[ \\t\\r\\n 　]+to|ll)[ \\t\\r\\n 　]+kill[ \\t\\r\\n 　]+you|nigg(er|a)s?|fagg?ots?|ｋｙｓ|ｋｉｌｌ[ \\t\\r\\n 　]+ｙｏｕｒｓｅｌｆ|ｎｉｇｇ(ｅｒ|ａ)ｓ?|ｆａｇｇ?ｏｔｓ?)[.!?]*[ \\t\\r\\n 　]*$"
+        );
+    }
+
+    // Message lifecycle fields are server-clocked and preserve the first
+    // version only. Sender, creation time, and every unrelated field remain
+    // immutable. An unsend removes both current and original content while
+    // retaining a content-free tombstone so conversation order stays intact.
+    function isValidMessageEdit() {
+      return request.auth.uid == resource.data.senderId
+        && !('unsentAt' in resource.data)
+        && request.time <= resource.data.createdAt + duration.value(15, 'm')
+        && affectedKeys().hasOnly(['text', 'editedAt', 'originalText'])
+        && incoming().keys().hasOnly([
+             'senderId', 'text', 'createdAt', 'editedAt', 'originalText', 'likedByIds'
+           ])
+        && incoming().senderId == resource.data.senderId
+        && incoming().createdAt == resource.data.createdAt
+        && incoming().text is string
+        && incoming().text.size() >= 1
+        && !incoming().text.matches("^[ \\t\\r\\n 　]*$")
+        && incoming().text.size() <= 2000
+        && incoming().text != resource.data.text
+        && isAllowedUserGeneratedText(incoming().text)
+        && incoming().editedAt == request.time
+        && incoming().originalText is string
+        && incoming().originalText.size() >= 1
+        && incoming().originalText.size() <= 2000
+        && (
+          (!('likedByIds' in resource.data) && !('likedByIds' in incoming()))
+          || (('likedByIds' in resource.data) && ('likedByIds' in incoming())
+            && incoming().likedByIds == resource.data.likedByIds)
+        )
+        && (
+          (('originalText' in resource.data)
+            && incoming().originalText == resource.data.originalText)
+          || (!('originalText' in resource.data)
+            && incoming().originalText == resource.data.text)
+        );
+    }
+
+    function isValidMessageUnsend() {
+      return request.auth.uid == resource.data.senderId
+        && !('unsentAt' in resource.data)
+        && request.time <= resource.data.createdAt + duration.value(2, 'm')
+        && affectedKeys().hasOnly([
+             'text', 'editedAt', 'originalText', 'likedByIds', 'unsentAt'
+           ])
+        && incoming().keys().hasOnly(['senderId', 'text', 'createdAt', 'unsentAt'])
+        && incoming().senderId == resource.data.senderId
+        && incoming().createdAt == resource.data.createdAt
+        && incoming().text == ''
+        && incoming().unsentAt == request.time;
+    }
+
+    // Reactions live on the message so the existing bounded chat listeners
+    // receive them without opening one listener per message. A client may add
+    // or remove only its own uid, one at a time; every other message field is
+    // immutable. The caller supplies the thread's maximum participant count.
+    function isValidMessageReaction(maxLikes) {
+      return !('unsentAt' in resource.data)
+        && affectedKeys().hasOnly(['likedByIds'])
+        && incoming().keys().hasOnly([
+             'senderId', 'text', 'createdAt', 'editedAt', 'originalText', 'likedByIds'
+           ])
+        && incoming().likedByIds is list
+        && incoming().likedByIds.size() <= maxLikes
+        && incoming().likedByIds.size() == incoming().likedByIds.toSet().size()
+        && (
+          (!('likedByIds' in resource.data)
+            && incoming().likedByIds.size() == 1
+            && incoming().likedByIds[0] == request.auth.uid)
+          || (('likedByIds' in resource.data)
+            && resource.data.likedByIds is list
+            && resource.data.likedByIds.size() == resource.data.likedByIds.toSet().size()
+            && !resource.data.likedByIds.hasAny([request.auth.uid])
+            && incoming().likedByIds.hasAny([request.auth.uid])
+            && incoming().likedByIds.toSet()
+                 == resource.data.likedByIds.toSet().union([request.auth.uid].toSet())
+            && incoming().likedByIds.size() == resource.data.likedByIds.size() + 1)
+          || (('likedByIds' in resource.data)
+            && resource.data.likedByIds is list
+            && resource.data.likedByIds.size() == resource.data.likedByIds.toSet().size()
+            && resource.data.likedByIds.hasAny([request.auth.uid])
+            && !incoming().likedByIds.hasAny([request.auth.uid])
+            && incoming().likedByIds.toSet()
+                 == resource.data.likedByIds.toSet().difference([request.auth.uid].toSet())
+            && incoming().likedByIds.size() == resource.data.likedByIds.size() - 1)
         );
     }
 
@@ -511,6 +649,51 @@ service cloud.firestore {
         // Deleting the owner's marker is the explicit restore operation. There
         // is no restore UI in this beta; account deletion also removes the user
         // tree recursively through the existing Admin path.
+        allow delete: if isOwner(userId);
+      }
+
+      // Per-message "Delete for Me" markers. The shared message remains
+      // untouched; markers are private, owner-scoped, and nested by thread so
+      // each chat subscribes only to its own deletion set.
+      match /messageHides/{threadKey}/messages/{messageId} {
+        function isOwnDirectMessage() {
+          return incoming().threadType == 'direct'
+            && exists(
+              /databases/$(database)/documents/conversations/$(incoming().threadId)
+            )
+            && request.auth.uid in get(
+              /databases/$(database)/documents/conversations/$(incoming().threadId)
+            ).data.participantIds
+            && exists(
+              /databases/$(database)/documents/conversations/$(incoming().threadId)/messages/$(messageId)
+            );
+        }
+
+        function isOwnSessionMessage() {
+          return incoming().threadType == 'session'
+            && exists(/databases/$(database)/documents/sessions/$(incoming().threadId))
+            && request.auth.uid in get(
+              /databases/$(database)/documents/sessions/$(incoming().threadId)
+            ).data.participantIds
+            && exists(
+              /databases/$(database)/documents/sessions/$(incoming().threadId)/messages/$(messageId)
+            );
+        }
+
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && incoming().keys().hasOnly([
+               'threadType', 'threadId', 'messageId', 'hiddenAt'
+             ])
+          && incoming().threadType in ['direct', 'session']
+          && incoming().threadId is string
+          && incoming().threadId.size() >= 1
+          && incoming().threadId.size() <= 300
+          && incoming().messageId == messageId
+          && messageId.matches('^[A-Za-z0-9_-]{1,128}$')
+          && threadKey == incoming().threadType + '__' + incoming().threadId
+          && incoming().hiddenAt == request.time
+          && (isOwnDirectMessage() || isOwnSessionMessage());
         allow delete: if isOwner(userId);
       }
 
@@ -758,8 +941,9 @@ service cloud.firestore {
       // the ACTUAL participant count so legacy uncapped sessions can't force
       // unbounded notification fanout (mirrors MAX_GROUP_CHAT_PARTICIPANTS
       // in functions/notification-validation.js and lib/firestore.ts; change
-      // all three together). Messages are fully immutable from the client —
-      // no edits, no deletes; account deletion cleans them up server-side.
+      // all three together). Senders may edit or unsend within their time
+      // windows, and participants may add/remove only their own reaction;
+      // immutable fields and reaction bounds are enforced below.
       match /messages/{messageId} {
         function parentSession() {
           return get(/databases/$(database)/documents/sessions/$(sessionId)).data;
@@ -790,7 +974,24 @@ service cloud.firestore {
                'sendMessage',
                'sessions/' + sessionId + '/messages/' + messageId
              );
-        allow update: if false;
+        allow update: if isVerifiedUwUser()
+          && request.auth.uid in parentSession().participantIds
+          && parentSession().status in ['open', 'full']
+          && request.time < parentSession().endTime + duration.value(2, 'h')
+          && parentSession().participantIds.size() <= 20
+          && (
+            isValidMessageEdit()
+            || isValidMessageUnsend()
+            || isValidMessageReaction(20)
+          )
+          && (
+            isValidMessageUnsend()
+            || hasFreshStrictBoundRateLimit(
+                 request.auth.uid,
+                 'updateMessage',
+                 'sessions/' + sessionId + '/messages/' + messageId
+               )
+          );
         allow delete: if false;
       }
     }
@@ -882,8 +1083,25 @@ service cloud.firestore {
                parentConversation().participantIds[0],
                parentConversation().participantIds[1]
              );
-        allow update: if false;
-        allow delete: if isVerifiedUwUser() && request.auth.uid == resource.data.senderId;
+        allow update: if isVerifiedUwUser()
+          && request.auth.uid in parentConversation().participantIds
+          && (
+            isValidMessageUnsend()
+            || ((isValidMessageEdit() || isValidMessageReaction(2))
+              && !isBlockedEitherWay(
+                   parentConversation().participantIds[0],
+                   parentConversation().participantIds[1]
+                 ))
+          )
+          && (
+            isValidMessageUnsend()
+            || hasFreshStrictBoundRateLimit(
+                 request.auth.uid,
+                 'updateMessage',
+                 'conversations/' + conversationId + '/messages/' + messageId
+               )
+          );
+        allow delete: if false;
       }
     }
 
@@ -1045,7 +1263,14 @@ service cloud.firestore {
         return isDeterministicPairMember(incoming().threadId)
           && request.auth.uid in conversation.participantIds
           && message.senderId == incoming().reportedUserId
-          && message.text == incoming().messageText;
+          && message.text == incoming().messageText
+          && (
+            (('originalText' in message)
+              && ('originalMessageText' in incoming())
+              && message.originalText == incoming().originalMessageText)
+            || (!('originalText' in message)
+              && !('originalMessageText' in incoming()))
+          );
       }
 
       function sessionMessageReportIsAuthentic() {
@@ -1063,13 +1288,21 @@ service cloud.firestore {
             )
           )
           && message.senderId == incoming().reportedUserId
-          && message.text == incoming().messageText;
+          && message.text == incoming().messageText
+          && (
+            (('originalText' in message)
+              && ('originalMessageText' in incoming())
+              && message.originalText == incoming().originalMessageText)
+            || (!('originalText' in message)
+              && !('originalMessageText' in incoming()))
+          );
       }
 
       allow create: if isVerifiedUwUser()
         && incoming().keys().hasOnly([
              'reporterUserId', 'reportedUserId', 'reason', 'details',
-             'context', 'contentType', 'contentId', 'threadId', 'messageText', 'createdAt'
+             'context', 'contentType', 'contentId', 'threadId', 'messageText',
+             'originalMessageText', 'createdAt'
            ])
         && incoming().reporterUserId == request.auth.uid
         && incoming().reportedUserId is string
@@ -1088,6 +1321,11 @@ service cloud.firestore {
              && incoming().messageText is string
              && incoming().messageText.size() >= 1
              && incoming().messageText.size() <= 2000
+             && (!('originalMessageText' in incoming()) || (
+                  incoming().originalMessageText is string
+                  && incoming().originalMessageText.size() >= 1
+                  && incoming().originalMessageText.size() <= 2000
+                ))
              && (
                (incoming().contentType == 'direct_message'
                  && directMessageReportIsAuthentic())
@@ -1099,7 +1337,8 @@ service cloud.firestore {
         && (('contentType' in incoming())
              || (!('contentId' in incoming())
                && !('threadId' in incoming())
-               && !('messageText' in incoming())))
+               && !('messageText' in incoming())
+               && !('originalMessageText' in incoming())))
         && incoming().createdAt == request.time
         && hasFreshBoundRateLimit(
              request.auth.uid, 'reportUser', 'reports/' + reportId

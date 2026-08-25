@@ -1,6 +1,9 @@
-// functions/index.js — firebase-functions v6 (2nd gen), Node 20.
+// functions/index.js — firebase-functions v7 (2nd gen), Node 22.
 // Replaces the previous v1-style functions/index.js in full.
 
+const { initializeApp } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
+const { FieldValue, getFirestore, Timestamp } = require("firebase-admin/firestore");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const {
   onDocumentCreated,
@@ -9,11 +12,19 @@ const {
 } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { setGlobalOptions } = require("firebase-functions/v2");
-const admin = require("firebase-admin");
 const crypto = require("crypto");
 const { Expo } = require("expo-server-sdk");
 const { loadPushPreference } = require("./notification-preferences");
-const { deriveDirectMessageMetadata } = require("./direct-message-metadata");
+const {
+  deriveDirectMessageMetadata,
+  deriveDirectMessageUpdateMetadata,
+} = require("./direct-message-metadata");
+const {
+  classifyMessageUpdate,
+  formatMessageUpdateBody,
+  isMessageUpdateStillCurrent,
+  messageLifecycleRecipientCandidates,
+} = require("./message-lifecycle");
 const {
   blockPairIdsFor,
   dmNotificationId,
@@ -25,6 +36,7 @@ const {
   getSessionChangedFields,
   groupMessageNotificationId,
   isWithinGroupChatFanoutLimit,
+  messageLifecycleNotificationId,
   normalizeNotificationPayload,
   reminderNotificationId,
   sessionEventNotificationId,
@@ -47,10 +59,11 @@ const {
   releasePushTokenOwnership,
 } = require("./push-token-ownership");
 
-admin.initializeApp();
+initializeApp();
 setGlobalOptions({ region: "us-central1", maxInstances: 5 });
 
-const db = admin.firestore();
+const db = getFirestore();
+const auth = getAuth();
 const expo = new Expo();
 const DELETE_ACCOUNT_MAX_AUTH_AGE_SECONDS = 5 * 60;
 const DELETE_ACCOUNT_RATE_LIMIT_SECONDS = 10 * 60;
@@ -102,6 +115,36 @@ async function getDisplayName(uid) {
   return typeof displayName === "string" ? displayName.trim() : "";
 }
 
+async function getUnblockedRecipients(actorIds, candidates) {
+  const uniqueActorIds = [...new Set(
+    (Array.isArray(actorIds) ? actorIds : [actorIds]).filter(Boolean)
+  )];
+  if (uniqueActorIds.length === 0 || candidates.length === 0) {
+    return [];
+  }
+
+  const blockIds = new Set(
+    uniqueActorIds.flatMap((actorId) =>
+      candidates
+        .filter((uid) => uid !== actorId)
+        .flatMap((uid) => blockPairIdsFor(actorId, uid))
+    )
+  );
+  if (blockIds.size === 0) {
+    return candidates;
+  }
+
+  const blockRefs = [...blockIds].map((id) => db.collection("userBlocks").doc(id));
+  const blockSnaps = await db.getAll(...blockRefs);
+  const existingBlockIds = new Set(
+    blockSnaps.filter((snap) => snap.exists).map((snap) => snap.id)
+  );
+  return uniqueActorIds.reduce(
+    (recipients, actorId) => filterBlockedRecipients(actorId, recipients, existingBlockIds),
+    candidates
+  );
+}
+
 async function getEnabledPushTokenDocs(uid) {
   const snap = await db
     .collection("users")
@@ -127,7 +170,7 @@ async function disablePushToken(ref) {
     await ref.set(
       {
         enabled: false,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }
     );
@@ -244,9 +287,9 @@ async function notifyUser(uid, { id, ...rawPayload }) {
   try {
     await ref.create({
       ...payload,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
       readAt: null,
-      expiresAt: admin.firestore.Timestamp.fromMillis(
+      expiresAt: Timestamp.fromMillis(
         Date.now() + NOTIFICATION_RETENTION_DAYS * 24 * 60 * 60 * 1000
       ),
     });
@@ -366,7 +409,7 @@ exports.registerPushToken = onCall(async (request) => {
   ) {
     throw new HttpsError("invalid-argument", "Invalid push registration identity.");
   }
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
 
   try {
     const result = await claimPushTokenOwnership({
@@ -435,7 +478,7 @@ exports.unregisterPushToken = onCall(async (request) => {
   ) {
     throw new HttpsError("invalid-argument", "Invalid push registration identity.");
   }
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
 
   const removed = await releasePushTokenOwnership({
     db,
@@ -475,33 +518,50 @@ exports.onDirectMessageCreated = onDocumentCreated(
     }
 
     const conversationRef = db.collection("conversations").doc(conversationId);
-    const participantIds = await db.runTransaction(async (transaction) => {
+    const currentState = await db.runTransaction(async (transaction) => {
       const conversationSnap = await transaction.get(conversationRef);
       if (!conversationSnap.exists) {
-        return [];
+        return { notificationText: "", participantIds: [] };
       }
+      // Re-read current state so a fast edit/unsend that races this create
+      // trigger wins, regardless of Eventarc delivery order.
+      const currentMessageSnap = await transaction.get(event.data.ref);
+      if (!currentMessageSnap.exists) {
+        return { notificationText: "", participantIds: [] };
+      }
+      const currentMessage = currentMessageSnap.data();
       const data = conversationSnap.data();
       const participants = Array.isArray(data?.participantIds)
         ? data.participantIds.filter((id) => typeof id === "string")
         : [];
-      if (!participants.includes(senderId)) {
-        return [];
+      if (!participants.includes(senderId) || currentMessage?.senderId !== senderId) {
+        return { notificationText: "", participantIds: [] };
       }
       const metadata = deriveDirectMessageMetadata(
-        message,
+        currentMessage,
         messageId,
         data?.lastMessageAt,
         data?.lastMessageId
       );
       if (!metadata) {
-        return participants;
+        return {
+          notificationText: currentMessage?.unsentAt
+            ? ""
+            : normalizePreview(currentMessage?.text),
+          participantIds: participants,
+        };
       }
       transaction.update(conversationRef, metadata);
-      return participants;
+      return {
+        notificationText: currentMessage?.unsentAt
+          ? ""
+          : normalizePreview(currentMessage?.text),
+        participantIds: participants,
+      };
     });
-    const recipients = participantIds.filter((uid) => uid !== senderId);
+    const recipients = currentState.participantIds.filter((uid) => uid !== senderId);
 
-    if (recipients.length === 0) {
+    if (recipients.length === 0 || !currentState.notificationText) {
       return;
     }
 
@@ -514,9 +574,119 @@ exports.onDirectMessageCreated = onDocumentCreated(
           id: dmNotificationId(conversationId, event.id),
           type: "dm_message",
           title: senderName || "New message",
-          body: text,
+          body: currentState.notificationText,
           url: `/conversation/${conversationId}`,
           actorId: senderId,
+          conversationId,
+        })
+      )
+    );
+  }
+);
+
+// Every update re-derives the newest-message preview. A valid like, edit, or
+// unsend also produces one content-free, deduplicated lifecycle notification.
+exports.onDirectMessageUpdated = onDocumentUpdated(
+  "conversations/{conversationId}/messages/{messageId}",
+  async (event) => {
+    const conversationId = event.params.conversationId;
+    const messageId = event.params.messageId;
+
+    if (!event.data || !conversationId || !messageId) {
+      return;
+    }
+
+    const before = event.data.before.data();
+    const after = event.data.after.data();
+    const update = classifyMessageUpdate(before, after);
+    const shouldRefreshPreview = before.text !== after.text || (!before.unsentAt && after.unsentAt);
+    if (!update && !shouldRefreshPreview) {
+      return;
+    }
+    const conversationRef = db.collection("conversations").doc(conversationId);
+    const currentState = await db.runTransaction(async (transaction) => {
+      const conversationSnap = await transaction.get(conversationRef);
+      if (!conversationSnap.exists) {
+        return null;
+      }
+      // Every update event re-derives from the current document, not its event
+      // snapshot. Retries and out-of-order edit/unsend events therefore cannot
+      // restore stale or already-unsent content to the inbox preview.
+      const currentMessageSnap = await transaction.get(event.data.after.ref);
+      if (!currentMessageSnap.exists) {
+        return null;
+      }
+
+      const conversation = conversationSnap.data();
+      const currentMessage = currentMessageSnap.data();
+
+      const metadata = shouldRefreshPreview
+        ? deriveDirectMessageUpdateMetadata(
+            currentMessage,
+            messageId,
+            conversation?.lastMessageId
+          )
+        : null;
+      if (metadata) {
+        transaction.update(conversationRef, metadata);
+      }
+
+      return {
+        currentMessage,
+        participantIds: Array.isArray(conversation?.participantIds)
+          ? conversation.participantIds.filter((uid) => typeof uid === "string")
+          : [],
+      };
+    });
+
+    if (
+      !update
+      || !currentState
+      || !currentState.participantIds.includes(update.actorId)
+      || !currentState.participantIds.includes(update.messageSenderId)
+      || !isMessageUpdateStillCurrent(update, currentState.currentMessage)
+    ) {
+      return;
+    }
+
+    const candidates = messageLifecycleRecipientCandidates(
+      update,
+      currentState.participantIds
+    );
+    const recipients = await getUnblockedRecipients(
+      [update.actorId, update.messageSenderId],
+      candidates
+    );
+    if (recipients.length === 0) {
+      return;
+    }
+    const [actorName, messageSenderName] = await Promise.all([
+      getDisplayName(update.actorId),
+      update.actorId === update.messageSenderId
+        ? Promise.resolve("")
+        : getDisplayName(update.messageSenderId),
+    ]);
+
+    await Promise.all(
+      recipients.map((uid) =>
+        notifyUser(uid, {
+          id: messageLifecycleNotificationId(
+            "direct",
+            conversationId,
+            messageId,
+            update.kind,
+            update.actorId
+          ),
+          type: "dm_message",
+          title: "Message Activity",
+          body: formatMessageUpdateBody({
+            actorName,
+            messageSenderName,
+            recipientId: uid,
+            update,
+          }),
+          url: `/conversation/${conversationId}`,
+          actorId: update.actorId,
           conversationId,
         })
       )
@@ -541,6 +711,18 @@ exports.onSessionMessageCreated = onDocumentCreated(
       return;
     }
     const session = sessionSnap.data();
+    // A quick edit/unsend may land before this create trigger runs. Use the
+    // current document for metadata and notification content so an already-
+    // completed unsend does not cause a delayed push containing removed text.
+    const currentMessageSnap = await event.data.ref.get();
+    if (!currentMessageSnap.exists) {
+      return;
+    }
+    const currentMessage = currentMessageSnap.data();
+    const currentText = normalizePreview(currentMessage?.text);
+    if (currentMessage?.senderId !== senderId) {
+      return;
+    }
 
     const participantIds = Array.isArray(session?.participantIds)
       ? session.participantIds.filter((id) => typeof id === "string")
@@ -563,11 +745,15 @@ exports.onSessionMessageCreated = onDocumentCreated(
     try {
       await sessionSnap.ref.update({
         lastMessageAt:
-          message.createdAt ?? admin.firestore.FieldValue.serverTimestamp(),
+          currentMessage.createdAt ?? FieldValue.serverTimestamp(),
         lastMessageSenderId: senderId,
       });
     } catch (error) {
       console.warn("Session chat metadata update failed", error);
+    }
+
+    if (currentMessage.unsentAt || !currentText) {
+      return;
     }
 
     const candidates = participantIds.filter((uid) => uid !== senderId);
@@ -584,14 +770,7 @@ exports.onSessionMessageCreated = onDocumentCreated(
     // → at most 38 lookups in a single RPC). A lookup failure throws so
     // Eventarc retries the whole event; the idempotent record IDs make that
     // retry safe.
-    const blockRefs = candidates.flatMap((uid) =>
-      blockPairIdsFor(senderId, uid).map((id) => db.collection("userBlocks").doc(id))
-    );
-    const blockSnaps = await db.getAll(...blockRefs);
-    const existingBlockIds = new Set(
-      blockSnaps.filter((snap) => snap.exists).map((snap) => snap.id)
-    );
-    const recipients = filterBlockedRecipients(senderId, candidates, existingBlockIds);
+    const recipients = await getUnblockedRecipients(senderId, candidates);
 
     if (recipients.length === 0) {
       return;
@@ -603,7 +782,7 @@ exports.onSessionMessageCreated = onDocumentCreated(
     const title =
       typeof session?.title === "string" && session.title.trim()
         ? session.title.trim()
-        : "Session chat";
+        : "Session Chat";
 
     await Promise.all(
       recipients.map((uid) =>
@@ -613,9 +792,95 @@ exports.onSessionMessageCreated = onDocumentCreated(
           id: groupMessageNotificationId(sessionId, event.id),
           type: "group_message",
           title,
-          body: `${senderName}: ${text}`,
+          body: `${senderName}: ${currentText}`,
           url: `/session-chat/${sessionId}`,
           actorId: senderId,
+          sessionId,
+        })
+      )
+    );
+  }
+);
+
+exports.onSessionMessageUpdated = onDocumentUpdated(
+  "sessions/{sessionId}/messages/{messageId}",
+  async (event) => {
+    const sessionId = event.params.sessionId;
+    const messageId = event.params.messageId;
+    if (!event.data || !sessionId || !messageId) {
+      return;
+    }
+
+    const update = classifyMessageUpdate(
+      event.data.before.data(),
+      event.data.after.data()
+    );
+    if (!update) {
+      return;
+    }
+
+    const [sessionSnap, currentMessageSnap] = await Promise.all([
+      db.collection("sessions").doc(sessionId).get(),
+      event.data.after.ref.get(),
+    ]);
+    if (!sessionSnap.exists || !currentMessageSnap.exists) {
+      return;
+    }
+
+    const session = sessionSnap.data();
+    const currentMessage = currentMessageSnap.data();
+    const participantIds = Array.isArray(session?.participantIds)
+      ? session.participantIds.filter((uid) => typeof uid === "string")
+      : [];
+    if (
+      !isWithinGroupChatFanoutLimit(participantIds.length)
+      || !participantIds.includes(update.actorId)
+      || !participantIds.includes(update.messageSenderId)
+      || !isMessageUpdateStillCurrent(update, currentMessage)
+    ) {
+      return;
+    }
+
+    const candidates = messageLifecycleRecipientCandidates(update, participantIds);
+    const recipients = await getUnblockedRecipients(
+      [update.actorId, update.messageSenderId],
+      candidates
+    );
+    if (recipients.length === 0) {
+      return;
+    }
+
+    const [actorName, messageSenderName] = await Promise.all([
+      getDisplayName(update.actorId),
+      update.actorId === update.messageSenderId
+        ? Promise.resolve("")
+        : getDisplayName(update.messageSenderId),
+    ]);
+    const title =
+      typeof session?.title === "string" && session.title.trim()
+        ? session.title.trim()
+        : "Session Chat";
+
+    await Promise.all(
+      recipients.map((uid) =>
+        notifyUser(uid, {
+          id: messageLifecycleNotificationId(
+            "session",
+            sessionId,
+            messageId,
+            update.kind,
+            update.actorId
+          ),
+          type: "group_message",
+          title,
+          body: formatMessageUpdateBody({
+            actorName,
+            messageSenderName,
+            recipientId: uid,
+            update,
+          }),
+          url: `/session-chat/${sessionId}`,
+          actorId: update.actorId,
           sessionId,
         })
       )
@@ -840,7 +1105,7 @@ const FRIEND_SUGGESTIONS_RATE_LIMIT_SECONDS = 3;
 
 async function enforceCallableRateLimit(uid, action, minIntervalSeconds) {
   const ref = db.collection("rateLimits").doc(uid).collection("actions").doc(action);
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -968,11 +1233,11 @@ const REMINDER_WINDOW_START_MINUTES = 20;
 const REMINDER_WINDOW_END_MINUTES = 30;
 
 exports.sendSessionReminders = onSchedule("every 10 minutes", async () => {
-  const now = admin.firestore.Timestamp.now();
-  const windowStart = admin.firestore.Timestamp.fromMillis(
+  const now = Timestamp.now();
+  const windowStart = Timestamp.fromMillis(
     now.toMillis() + REMINDER_WINDOW_START_MINUTES * 60 * 1000
   );
-  const windowEnd = admin.firestore.Timestamp.fromMillis(
+  const windowEnd = Timestamp.fromMillis(
     now.toMillis() + REMINDER_WINDOW_END_MINUTES * 60 * 1000
   );
 
@@ -1031,13 +1296,13 @@ exports.sendSessionReminders = onSchedule("every 10 minutes", async () => {
 
 const accountDeletion = createAccountDeletionRunner({
   db,
-  auth: admin.auth(),
-  FieldValue: admin.firestore.FieldValue,
+  auth,
+  FieldValue,
 });
 
 async function enforceDeleteAccountRateLimit(uid) {
   const ref = db.collection("rateLimits").doc(uid).collection("actions").doc("deleteAccount");
-  const now = admin.firestore.Timestamp.now();
+  const now = Timestamp.now();
 
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -1067,7 +1332,7 @@ exports.deleteUserAccount = onCall({ timeoutSeconds: 540 }, async (request) => {
 
   let userRecord;
   try {
-    userRecord = await admin.auth().getUser(uid);
+    userRecord = await auth.getUser(uid);
   } catch {
     throw new HttpsError("failed-precondition", "This account no longer exists.");
   }

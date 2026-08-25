@@ -10,7 +10,7 @@ these rules are deployed.
 ## Historical Phase 1
 
 Updated clients write `{ updatedAt, lastResourceId }` for `createSession`,
-`sendMessage`, `reportUser`, and `locationRating`. `lastResourceId` is the exact
+`sendMessage`, `updateMessage`, `reportUser`, and `locationRating`. `lastResourceId` is the exact
 Firestore path created by the same batch. Rules verify the path at the protected
 write, so one bound limiter cannot authorize two distinct resources.
 
@@ -23,6 +23,7 @@ clients without claiming to close the bypass globally.
 |---|---|
 | `createSession` | `sessions/{sessionId}` |
 | `sendMessage` | `conversations/{conversationId}/messages/{messageId}` or `sessions/{sessionId}/messages/{messageId}` |
+| `updateMessage` | The exact DM or session message edited or reacted to; 1-second interval |
 | `reportUser` | `reports/{reportId}` |
 | `locationRating` | `locationRatings/{locationId}__{uid}` |
 
@@ -34,6 +35,11 @@ clients without claiming to close the bypass globally.
 The legacy branches have been removed. The release candidate already contains
 every required bound write; old internal/TestFlight builds are unsupported once
 strict rules are enabled.
+
+Message edits and reactions use the strict `updateMessage` shape: the limiter
+write must be atomic with a real mutation of the bound message, and a one-second
+server interval limits automated churn without changing the 15-minute edit or
+2-minute unsend windows. Unsend does not consume this limiter.
 
 Before deploying the current rules, verify the build on iOS and Android for session create,
 DM send, session-chat send, report submission, and rating create/edit. These

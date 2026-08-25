@@ -1028,6 +1028,7 @@ export default function CreateSessionScreen() {
           icon="square.and.pencil"
           title={isEditMode ? 'Title' : 'Focus'}>
           <TextInput
+            autoCapitalize="sentences"
             maxLength={80}
             onChangeText={setFocusText}
             placeholder={isEditMode ? 'Session title' : 'Pset 4: pipelines and caching'}

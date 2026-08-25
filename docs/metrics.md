@@ -32,6 +32,9 @@ from them. If a number ends up on a slide or a resume, its definition lives here
 | `conversation_started` | `getOrCreateDirectConversation()` commits a NEW conversation. Never fires when an existing thread is reopened. | `quota_written` (`true` on any client that writes the quota counter; absent on pre-quota builds) |
 | `conversation_quota_blocked` | The new-conversation quota is spent, so the transaction is refused client-side and no conversation is created. Fires once per refused attempt, outside the transaction callback so retries never inflate it. | — |
 | `message_sent` | `sendDirectMessage()` succeeds | `length` (number, not content) |
+| `message_edited` | A DM or session-chat edit commits | `thread_type` (`direct` \| `session`) |
+| `message_unsent` | A DM or session-chat unsend commits | `thread_type` (`direct` \| `session`) |
+| `messages_deleted_for_self` | One or more private message-hide markers commit | `thread_type` (`direct` \| `session`), `count` |
 | `session_chat_opened` | Session chat screen gains focus (once per focus) | `classId`, `source` (`session_detail` \| `auto_join` \| `deeplink`) |
 | `group_message_sent` | `sendSessionMessage()` succeeds | `length` (number, not content) |
 | `report_submitted` | Report saved | `reason`, `context` |

@@ -102,8 +102,8 @@ function boundedErrorCode(error) {
 }
 
 /**
- * deps: { db, auth, FieldValue } — Firestore Admin instance, admin.auth(),
- * and admin.firestore.FieldValue (or fakes, in tests).
+ * deps: { db, auth, FieldValue } — modular Firestore/Auth Admin instances and
+ * firebase-admin/firestore FieldValue (or fakes, in tests).
  */
 function createAccountDeletionRunner({ db, auth, FieldValue }) {
   const jobRef = (uid) => db.collection("accountDeletionJobs").doc(uid);

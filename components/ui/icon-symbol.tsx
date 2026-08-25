@@ -39,6 +39,9 @@ const MAPPING = {
   // shape between a plus badge, a crossed-out avatar, and a checkmark.
   'person.badge.minus': 'person-remove-alt-1',
   'square.and.pencil': 'edit',
+  'doc.on.doc': 'content-copy',
+  'arrow.uturn.backward': 'undo',
+  'checkmark.circle': 'check-circle-outline',
   'checkmark.circle.fill': 'check-circle',
   xmark: 'close',
   'info.circle': 'info-outline',
@@ -49,6 +52,7 @@ const MAPPING = {
   'rectangle.portrait.and.arrow.right': 'logout',
   'trash.fill': 'delete',
   'hand.raised.fill': 'privacy-tip',
+  'hand.thumbsup.fill': 'thumb-up',
   // Blocking uses the universal "no entry" sign, not a raised hand.
   nosign: 'block',
   'person.crop.circle.badge.xmark': 'person-off',

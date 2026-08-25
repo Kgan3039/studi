@@ -41,6 +41,7 @@ import { auth, db } from "../firebaseConfig";
 import { track } from "./analytics";
 import { assertAllowedUserGeneratedText } from "./content-moderation";
 import { createBlockIdempotently } from "./idempotent-block";
+import { normalizeMessageLikedByIds } from "./message-actions";
 import {
   CreateSessionValidationError,
   createWithStaleVerificationRetry,
@@ -64,6 +65,7 @@ type BoundIntervalRateLimitedAction =
   | "locationRating"
   | "reportUser"
   | "sendMessage"
+  | "updateMessage"
   | "updateSession";
 
 type RateLimitedAction =
@@ -237,9 +239,14 @@ export type DirectConversation = {
 export type ConversationMessage = {
   conversationId: string;
   createdAt?: unknown;
+  editedAt?: unknown;
+  likedByIds: string[];
   messageId: string;
+  originalText?: string;
+  pending: boolean;
   senderId: string;
   text: string;
+  unsentAt?: unknown;
 };
 
 /** Session group-chat message — same shape as a DM message (senderId, text,
@@ -247,13 +254,19 @@ export type ConversationMessage = {
  *  nothing forgeable or stale is denormalized onto the doc. */
 export type SessionMessage = {
   createdAt?: unknown;
+  editedAt?: unknown;
+  likedByIds: string[];
   messageId: string;
+  originalText?: string;
   /** True while the local optimistic write hasn't been acknowledged yet. */
   pending: boolean;
   senderId: string;
   sessionId: string;
   text: string;
+  unsentAt?: unknown;
 };
+
+export type ChatThreadType = "direct" | "session";
 
 export type ConversationListItem = DirectConversation & {
   otherParticipant: UserProfile | null;
@@ -667,8 +680,9 @@ export async function saveNotificationPref(
 
 /**
  * Notification records (users/{uid}/notifications) — written only by Cloud
- * Functions; the client reads them and flips readAt. group_message /
- * friend_* types are reserved by the schema but not produced yet.
+ * Functions; the client reads them and flips readAt. Message creation and
+ * lifecycle activity use dm_message/group_message. friend_* types remain
+ * reserved by the schema but are not produced yet.
  */
 export type AppNotification = {
   notificationId: string;
@@ -1510,14 +1524,206 @@ export function subscribeToConversationMessages(
   );
 
   return onSnapshot(messagesQuery, (snapshot) => {
-    const messages = snapshot.docs.map((messageDoc) => ({
-      conversationId,
-      messageId: messageDoc.id,
-      ...(messageDoc.data() as Omit<ConversationMessage, "conversationId" | "messageId">),
-    }));
+    const messages = snapshot.docs.map((messageDoc) => {
+      const data = messageDoc.data({ serverTimestamps: "estimate" });
+      return {
+        conversationId,
+        messageId: messageDoc.id,
+        pending: messageDoc.metadata.hasPendingWrites,
+        senderId: typeof data.senderId === "string" ? data.senderId : "",
+        text: typeof data.text === "string" ? data.text : "",
+        createdAt: data.createdAt,
+        editedAt: data.editedAt,
+        likedByIds: normalizeMessageLikedByIds(data.likedByIds),
+        originalText: typeof data.originalText === "string" ? data.originalText : undefined,
+        unsentAt: data.unsentAt,
+      };
+    });
 
     listener(messages);
   });
+}
+
+function chatMessageRef(
+  threadType: ChatThreadType,
+  threadId: string,
+  messageId: string
+) {
+  return threadType === "direct"
+    ? doc(db, COLLECTIONS.conversations, threadId, "messages", messageId)
+    : doc(db, COLLECTIONS.sessions, threadId, "messages", messageId);
+}
+
+function messageHideThreadKey(threadType: ChatThreadType, threadId: string) {
+  return `${threadType}__${threadId}`;
+}
+
+function hiddenMessagesCollection(
+  userId: string,
+  threadType: ChatThreadType,
+  threadId: string
+) {
+  return collection(
+    db,
+    COLLECTIONS.users,
+    userId,
+    "messageHides",
+    messageHideThreadKey(threadType, threadId),
+    "messages"
+  );
+}
+
+/** Keeps one user's local deletion separate from the shared message document. */
+export function subscribeToHiddenMessageIds(
+  userId: string,
+  threadType: ChatThreadType,
+  threadId: string,
+  listener: (messageIds: Set<string>) => void,
+  onError?: (error: Error) => void
+) {
+  return onSnapshot(
+    hiddenMessagesCollection(userId, threadType, threadId),
+    (snapshot) => listener(new Set(snapshot.docs.map((messageDoc) => messageDoc.id))),
+    onError
+  );
+}
+
+export async function hideChatMessagesForUser(
+  userId: string,
+  threadType: ChatThreadType,
+  threadId: string,
+  messageIds: Iterable<string>
+) {
+  const uniqueMessageIds = [...new Set(messageIds)].filter(Boolean);
+  if (uniqueMessageIds.length === 0) {
+    return;
+  }
+
+  // Leave headroom under Firestore's 500-operation batch limit for future
+  // marker metadata without changing multi-select behavior.
+  for (let index = 0; index < uniqueMessageIds.length; index += 400) {
+    const batch = writeBatch(db);
+    for (const messageId of uniqueMessageIds.slice(index, index + 400)) {
+      batch.set(doc(hiddenMessagesCollection(userId, threadType, threadId), messageId), {
+        hiddenAt: serverTimestamp(),
+        messageId,
+        threadId,
+        threadType,
+      });
+    }
+    await batch.commit();
+  }
+
+  track("messages_deleted_for_self", {
+    count: uniqueMessageIds.length,
+    thread_type: threadType,
+  });
+}
+
+function messageTimestampMillis(value: unknown) {
+  return value instanceof Timestamp ? value.toMillis() : 0;
+}
+
+export async function editChatMessage(
+  threadType: ChatThreadType,
+  threadId: string,
+  messageId: string,
+  senderId: string,
+  text: string
+) {
+  const trimmedText = text.trim();
+  if (!trimmedText) {
+    throw new Error("An edited message can't be empty.");
+  }
+  if (trimmedText.length > 2000) {
+    throw new Error("Messages can be up to 2,000 characters.");
+  }
+  assertAllowedUserGeneratedText(trimmedText);
+
+  const messageRef = chatMessageRef(threadType, threadId, messageId);
+  await runTransaction(db, async (transaction) => {
+    const messageSnapshot = await transaction.get(messageRef);
+    if (!messageSnapshot.exists()) {
+      throw new Error("This message is no longer available.");
+    }
+
+    const message = messageSnapshot.data();
+    if (message.senderId !== senderId || message.unsentAt) {
+      throw new Error("This message can't be edited.");
+    }
+    if (Date.now() - messageTimestampMillis(message.createdAt) > 15 * 60 * 1000) {
+      throw new Error("Messages can only be edited for 15 minutes.");
+    }
+    if (message.text === trimmedText) {
+      throw new Error("Make a change before confirming your edit.");
+    }
+
+    transaction.update(messageRef, {
+      editedAt: serverTimestamp(),
+      originalText:
+        typeof message.originalText === "string" ? message.originalText : message.text,
+      text: trimmedText,
+    });
+    transaction.set(rateLimitDoc(senderId, "updateMessage"), {
+      lastResourceId: messageRef.path,
+      updatedAt: serverTimestamp(),
+    });
+  });
+
+  track("message_edited", { thread_type: threadType });
+}
+
+export async function unsendChatMessage(
+  threadType: ChatThreadType,
+  threadId: string,
+  messageId: string,
+  senderId: string
+) {
+  const messageRef = chatMessageRef(threadType, threadId, messageId);
+  await runTransaction(db, async (transaction) => {
+    const messageSnapshot = await transaction.get(messageRef);
+    if (!messageSnapshot.exists()) {
+      throw new Error("This message is no longer available.");
+    }
+
+    const message = messageSnapshot.data();
+    if (message.senderId !== senderId || message.unsentAt) {
+      throw new Error("This message can't be unsent.");
+    }
+    if (Date.now() - messageTimestampMillis(message.createdAt) > 2 * 60 * 1000) {
+      throw new Error("Messages can only be unsent for 2 minutes.");
+    }
+
+    transaction.update(messageRef, {
+      editedAt: deleteField(),
+      likedByIds: deleteField(),
+      originalText: deleteField(),
+      text: "",
+      unsentAt: serverTimestamp(),
+    });
+  });
+
+  track("message_unsent", { thread_type: threadType });
+}
+
+export async function setChatMessageLiked(
+  threadType: ChatThreadType,
+  threadId: string,
+  messageId: string,
+  userId: string,
+  liked: boolean
+) {
+  if (!threadId || !messageId || !userId) {
+    throw new Error("This message is no longer available.");
+  }
+
+  const batch = writeBatch(db);
+  const messageRef = chatMessageRef(threadType, threadId, messageId);
+  batch.update(messageRef, {
+    likedByIds: liked ? arrayUnion(userId) : arrayRemove(userId),
+  });
+  stageBoundRateLimit(batch, userId, "updateMessage", messageRef.path);
+  await batch.commit();
 }
 
 // ---------------------------------------------------------------------------
@@ -1563,6 +1769,10 @@ function mapSessionMessageDoc(
     senderId: typeof data.senderId === "string" ? data.senderId : "",
     text: typeof data.text === "string" ? data.text : "",
     createdAt: data.createdAt,
+    editedAt: data.editedAt,
+    likedByIds: normalizeMessageLikedByIds(data.likedByIds),
+    originalText: typeof data.originalText === "string" ? data.originalText : undefined,
+    unsentAt: data.unsentAt,
   };
 }
 
@@ -1948,6 +2158,7 @@ export async function reportUser(
   target?: { contentType: "direct_message" | "session_message"; contentId: string; threadId: string }
 ) {
   let messageText: string | undefined;
+  let originalMessageText: string | undefined;
   if (target) {
     const messageRef = target.contentType === "direct_message"
       ? doc(db, COLLECTIONS.conversations, target.threadId, "messages", target.contentId)
@@ -1963,6 +2174,8 @@ export async function reportUser(
       throw new Error("Invalid report target.");
     }
     messageText = message.text;
+    originalMessageText =
+      typeof message.originalText === "string" ? message.originalText : undefined;
   }
 
   const batch = writeBatch(db);
@@ -1980,6 +2193,7 @@ export async function reportUser(
           contentId: target.contentId.slice(0, 128),
           threadId: target.threadId.slice(0, 128),
           messageText,
+          ...(originalMessageText ? { originalMessageText } : {}),
         }
       : {}),
     createdAt: serverTimestamp(),

@@ -11,6 +11,7 @@ import {
   initializeTestEnvironment,
 } from '@firebase/rules-unit-testing';
 import {
+  arrayRemove,
   arrayUnion,
   collection,
   deleteDoc,
@@ -179,6 +180,27 @@ function createSessionChatMessage(db, uid, sessionId, messageId, message) {
     db, uid, 'sendMessage', `sessions/${sessionId}/messages/${messageId}`
   );
   batch.set(doc(db, 'sessions', sessionId, 'messages', messageId), message);
+  return batch.commit();
+}
+
+function updateMessageWithRateLimit(
+  db,
+  uid,
+  threadType,
+  threadId,
+  messageId,
+  update,
+  boundThreadId = threadId,
+  boundMessageId = messageId
+) {
+  const root = threadType === 'direct' ? 'conversations' : 'sessions';
+  const batch = batchWithBoundRateLimit(
+    db,
+    uid,
+    'updateMessage',
+    `${root}/${boundThreadId}/messages/${boundMessageId}`
+  );
+  batch.update(doc(db, root, threadId, 'messages', messageId), update);
   return batch.commit();
 }
 
@@ -655,6 +677,106 @@ describe('personal hidden chat history', () => {
       'messages',
       'message1'
     )));
+  });
+});
+
+describe('per-message delete-for-self markers', () => {
+  const directThreadId = convoId(ALICE, BOB);
+  const directThreadKey = `direct__${directThreadId}`;
+  const sessionThreadKey = 'session__sharedSession';
+
+  beforeEach(async () => {
+    await seed(`conversations/${directThreadId}`, {
+      ...validConversation(ALICE, BOB),
+      lastMessageAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    await seed(`conversations/${directThreadId}/messages/directMessage`, {
+      senderId: ALICE, text: 'Direct message', createdAt: Timestamp.now(),
+    });
+    await seed('sessions/sharedSession', {
+      ...validSession(ALICE),
+      participantIds: [ALICE, BOB],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    await seed('sessions/sharedSession/messages/sessionMessage', {
+      senderId: BOB, text: 'Session message', createdAt: Timestamp.now(),
+    });
+  });
+
+  it('lets a participant privately hide DM and session messages', async () => {
+    const db = ctx(ALICE);
+    await assertSucceeds(setDoc(
+      doc(db, 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'directMessage'),
+      {
+        threadType: 'direct', threadId: directThreadId,
+        messageId: 'directMessage', hiddenAt: serverTimestamp(),
+      }
+    ));
+    await assertSucceeds(setDoc(
+      doc(db, 'users', ALICE, 'messageHides', sessionThreadKey, 'messages', 'sessionMessage'),
+      {
+        threadType: 'session', threadId: 'sharedSession',
+        messageId: 'sessionMessage', hiddenAt: serverTimestamp(),
+      }
+    ));
+    await assertSucceeds(getDocs(collection(
+      db, 'users', ALICE, 'messageHides', directThreadKey, 'messages'
+    )));
+  });
+
+  it('keeps markers owner-only and does not alter shared messages', async () => {
+    const markerRef = doc(
+      ctx(ALICE), 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'directMessage'
+    );
+    await assertSucceeds(setDoc(markerRef, {
+      threadType: 'direct', threadId: directThreadId,
+      messageId: 'directMessage', hiddenAt: serverTimestamp(),
+    }));
+
+    await assertFails(getDoc(doc(
+      ctx(BOB), 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'directMessage'
+    )));
+    await assertFails(deleteDoc(doc(
+      ctx(BOB), 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'directMessage'
+    )));
+    await assertSucceeds(getDoc(doc(
+      ctx(BOB), 'conversations', directThreadId, 'messages', 'directMessage'
+    )));
+    await assertSucceeds(deleteDoc(markerRef));
+  });
+
+  it('rejects outsider, nonexistent-message, mismatched-id, and forged-time markers', async () => {
+    await assertFails(setDoc(
+      doc(ctx(MALLORY), 'users', MALLORY, 'messageHides', sessionThreadKey, 'messages', 'sessionMessage'),
+      {
+        threadType: 'session', threadId: 'sharedSession',
+        messageId: 'sessionMessage', hiddenAt: serverTimestamp(),
+      }
+    ));
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'missing'),
+      {
+        threadType: 'direct', threadId: directThreadId,
+        messageId: 'missing', hiddenAt: serverTimestamp(),
+      }
+    ));
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'directMessage'),
+      {
+        threadType: 'direct', threadId: directThreadId,
+        messageId: 'different', hiddenAt: serverTimestamp(),
+      }
+    ));
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', ALICE, 'messageHides', directThreadKey, 'messages', 'directMessage'),
+      {
+        threadType: 'direct', threadId: directThreadId,
+        messageId: 'directMessage', hiddenAt: Timestamp.fromMillis(0),
+      }
+    ));
   });
 });
 
@@ -1527,6 +1649,306 @@ describe('conversations + messages', () => {
       senderId: ALICE, text: 'still here', createdAt: serverTimestamp(),
     }));
   });
+
+  it('lets DM participants add and remove only their own message reaction', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/reactable`, {
+      senderId: ALICE, text: 'React to this', createdAt: Timestamp.now(),
+    });
+
+    const aliceDb = ctx(ALICE);
+    const bobDb = ctx(BOB);
+    await assertSucceeds(updateMessageWithRateLimit(
+      aliceDb, ALICE, 'direct', cid, 'reactable', { likedByIds: arrayUnion(ALICE) }
+    ));
+    await assertSucceeds(updateMessageWithRateLimit(
+      bobDb, BOB, 'direct', cid, 'reactable', { likedByIds: arrayUnion(BOB) }
+    ));
+
+    await assertFails(updateMessageWithRateLimit(
+      bobDb, BOB, 'direct', cid, 'reactable', { likedByIds: arrayRemove(ALICE) }
+    ));
+    await assertFails(updateMessageWithRateLimit(
+      ctx(MALLORY), MALLORY, 'direct', cid, 'reactable', { likedByIds: arrayUnion(MALLORY) }
+    ));
+    await assertFails(updateMessageWithRateLimit(aliceDb, ALICE, 'direct', cid, 'reactable', {
+      likedByIds: arrayRemove(ALICE),
+      text: 'Reaction write cannot edit content',
+    }));
+    await assertFails(updateMessageWithRateLimit(
+      aliceDb, ALICE, 'direct', cid, 'reactable', { likedByIds: [ALICE, BOB, MALLORY] }
+    ));
+    await seed(`rateLimits/${ALICE}/actions/updateMessage`, {
+      lastResourceId: `conversations/${cid}/messages/reactable`,
+      updatedAt: Timestamp.fromMillis(Date.now() - 2_000),
+    });
+    await assertSucceeds(updateMessageWithRateLimit(
+      aliceDb, ALICE, 'direct', cid, 'reactable', { likedByIds: arrayRemove(ALICE) }
+    ));
+
+    const saved = await assertSucceeds(getDoc(
+      doc(aliceDb, 'conversations', cid, 'messages', 'reactable')
+    ));
+    assert.deepEqual(saved.data().likedByIds, [BOB]);
+  });
+
+  it('enforces unique reaction sets and exact caller-only transitions', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    const cases = [
+      ['replace-other', [BOB, MALLORY], [ALICE, MALLORY]],
+      ['duplicate-padding', [BOB], [BOB, BOB, ALICE]],
+      ['add-two', [BOB], [BOB, ALICE, MALLORY]],
+      ['remove-other-keep-caller', [ALICE, BOB], [ALICE]],
+      ['duplicate-collapse', [ALICE, BOB, MALLORY], [BOB, BOB]],
+    ];
+    for (const [messageId, beforeLikes, afterLikes] of cases) {
+      await seed(`conversations/${cid}/messages/${messageId}`, {
+        senderId: BOB, text: 'Reaction integrity', likedByIds: beforeLikes,
+        createdAt: Timestamp.now(),
+      });
+      await assertFails(updateMessageWithRateLimit(
+        ctx(ALICE), ALICE, 'direct', cid, messageId, { likedByIds: afterLikes }
+      ));
+    }
+  });
+
+  it('binds one authoritative update limiter to exactly one message mutation', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/one`, {
+      senderId: BOB, text: 'One', createdAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/two`, {
+      senderId: BOB, text: 'Two', createdAt: Timestamp.now(),
+    });
+
+    await assertSucceeds(updateMessageWithRateLimit(
+      ctx(ALICE), ALICE, 'direct', cid, 'one', { likedByIds: [ALICE] }
+    ));
+    await assertFails(updateMessageWithRateLimit(
+      ctx(ALICE), ALICE, 'direct', cid, 'one', { likedByIds: [] }
+    ));
+    await seed(`rateLimits/${ALICE}/actions/updateMessage`, {
+      lastResourceId: `conversations/${cid}/messages/one`,
+      updatedAt: Timestamp.fromMillis(Date.now() - 2_000),
+    });
+    await assertSucceeds(updateMessageWithRateLimit(
+      ctx(ALICE), ALICE, 'direct', cid, 'one', { likedByIds: [] }
+    ));
+
+    await seed(`rateLimits/${ALICE}/actions/updateMessage`, {
+      lastResourceId: `conversations/${cid}/messages/one`,
+      updatedAt: Timestamp.fromMillis(Date.now() - 2_000),
+    });
+    await assertFails(updateMessageWithRateLimit(
+      ctx(ALICE), ALICE, 'direct', cid, 'two', { likedByIds: [ALICE] }, cid, 'one'
+    ));
+
+    const reuseDb = ctx(ALICE);
+    const reuseBatch = batchWithBoundRateLimit(
+      reuseDb, ALICE, 'updateMessage', `conversations/${cid}/messages/one`
+    );
+    reuseBatch.update(doc(reuseDb, 'conversations', cid, 'messages', 'one'), {
+      likedByIds: [ALICE],
+    });
+    reuseBatch.update(doc(reuseDb, 'conversations', cid, 'messages', 'two'), {
+      likedByIds: [ALICE],
+    });
+    await assertFails(reuseBatch.commit());
+
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'rateLimits', ALICE, 'actions', 'updateMessage'),
+      {
+        lastResourceId: `conversations/${cid}/messages/one`,
+        updatedAt: serverTimestamp(),
+      }
+    ));
+
+    await seed(`rateLimits/${ALICE}/actions/updateMessage`, {
+      lastResourceId: `conversations/${cid}/messages/one`,
+      updatedAt: Timestamp.fromMillis(Date.now() - 2_000),
+    });
+    await assertFails(updateMessageWithRateLimit(
+      ctx(ALICE), ALICE, 'direct', cid, 'one', { likedByIds: [ALICE, ALICE] }
+    ));
+    let limiterAfterFailure;
+    await env.withSecurityRulesDisabled(async (adminContext) => {
+      limiterAfterFailure = await getDoc(
+        doc(adminContext.firestore(), 'rateLimits', ALICE, 'actions', 'updateMessage')
+      );
+    });
+    assert.equal(
+      limiterAfterFailure.data().updatedAt.toMillis() <= Date.now() - 1_000,
+      true
+    );
+  });
+
+  it('blocks DM reactions after either participant blocks the other', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/reactable`, {
+      senderId: ALICE, text: 'Sent before block', createdAt: Timestamp.now(),
+    });
+    await seed(`userBlocks/${BOB}__${ALICE}`, {
+      blockerUserId: BOB, blockedUserId: ALICE, createdAt: Timestamp.now(),
+    });
+
+    await assertFails(updateMessageWithRateLimit(
+      ctx(ALICE), ALICE, 'direct', cid, 'reactable', { likedByIds: arrayUnion(ALICE) }
+    ));
+    await assertFails(updateMessageWithRateLimit(
+      ctx(BOB), BOB, 'direct', cid, 'reactable', { likedByIds: arrayUnion(BOB) }
+    ));
+  });
+
+  it('lets the sender edit for 15 minutes while preserving the first version', async () => {
+    const cid = convoId(ALICE, BOB);
+    const messageRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'editable');
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/editable`, {
+      senderId: ALICE,
+      text: 'Original plan',
+      likedByIds: [BOB],
+      createdAt: Timestamp.fromMillis(Date.now() - 60_000),
+    });
+
+    await assertSucceeds(updateMessageWithRateLimit(ctx(ALICE), ALICE, 'direct', cid, 'editable', {
+      text: 'Updated plan', originalText: 'Original plan', editedAt: serverTimestamp(),
+    }));
+    await seed(`rateLimits/${ALICE}/actions/updateMessage`, {
+      lastResourceId: `conversations/${cid}/messages/editable`,
+      updatedAt: Timestamp.fromMillis(Date.now() - 2_000),
+    });
+    await assertSucceeds(updateMessageWithRateLimit(ctx(ALICE), ALICE, 'direct', cid, 'editable', {
+      text: 'Final plan', originalText: 'Original plan', editedAt: serverTimestamp(),
+    }));
+    await assertFails(updateMessageWithRateLimit(ctx(ALICE), ALICE, 'direct', cid, 'editable', {
+      text: 'Forged history', originalText: 'Not the original', editedAt: serverTimestamp(),
+    }));
+    await assertFails(updateMessageWithRateLimit(ctx(BOB), BOB, 'direct', cid, 'editable', {
+      text: 'Hijacked', originalText: 'Original plan', editedAt: serverTimestamp(),
+    }));
+
+    const saved = await assertSucceeds(getDoc(messageRef));
+    assert.equal(saved.data().text, 'Final plan');
+    assert.equal(saved.data().originalText, 'Original plan');
+    assert.deepEqual(saved.data().likedByIds, [BOB]);
+  });
+
+  it('rejects late, empty, objectionable, and identity-changing DM edits', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/old`, {
+      senderId: ALICE, text: 'Old text',
+      createdAt: Timestamp.fromMillis(Date.now() - 16 * 60_000),
+    });
+    const oldRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'old');
+
+    await assertFails(updateMessageWithRateLimit(ctx(ALICE), ALICE, 'direct', cid, 'old', {
+      text: 'Too late', originalText: 'Old text', editedAt: serverTimestamp(),
+    }));
+    await seed(`conversations/${cid}/messages/fresh`, {
+      senderId: ALICE, text: 'Fresh text', createdAt: Timestamp.now(),
+    });
+    const freshRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'fresh');
+    await assertFails(updateMessageWithRateLimit(ctx(ALICE), ALICE, 'direct', cid, 'fresh', {
+      text: '', originalText: 'Fresh text', editedAt: serverTimestamp(),
+    }));
+    await assertFails(updateMessageWithRateLimit(ctx(ALICE), ALICE, 'direct', cid, 'fresh', {
+      text: 'kill yourself', originalText: 'Fresh text', editedAt: serverTimestamp(),
+    }));
+    await assertFails(updateMessageWithRateLimit(ctx(ALICE), ALICE, 'direct', cid, 'fresh', {
+      senderId: BOB, text: 'Changed identity',
+      originalText: 'Fresh text', editedAt: serverTimestamp(),
+    }));
+  });
+
+  it('lets the sender unsend for 2 minutes and removes all shared content', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/fresh`, {
+      senderId: ALICE, text: 'Remove this', originalText: 'First version',
+      editedAt: Timestamp.now(), likedByIds: [BOB],
+      createdAt: Timestamp.fromMillis(Date.now() - 60_000),
+    });
+    const freshRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'fresh');
+    await assertSucceeds(updateDoc(freshRef, {
+      text: '', originalText: deleteField(), editedAt: deleteField(),
+      likedByIds: deleteField(),
+      unsentAt: serverTimestamp(),
+    }));
+
+    const saved = await assertSucceeds(getDoc(freshRef));
+    assert.equal(saved.data().text, '');
+    assert.equal('originalText' in saved.data(), false);
+    assert.equal('editedAt' in saved.data(), false);
+    assert.equal('likedByIds' in saved.data(), false);
+    await assertFails(updateDoc(freshRef, { unsentAt: serverTimestamp() }));
+    await assertFails(deleteDoc(freshRef));
+  });
+
+  it('rejects late and non-sender unsends', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/old`, {
+      senderId: ALICE, text: 'Old text',
+      createdAt: Timestamp.fromMillis(Date.now() - 3 * 60_000),
+    });
+    const aliceRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'old');
+    const bobRef = doc(ctx(BOB), 'conversations', cid, 'messages', 'old');
+    const update = { text: '', unsentAt: serverTimestamp() };
+    await assertFails(updateDoc(aliceRef, update));
+    await assertFails(updateDoc(bobRef, update));
+  });
+
+  it('blocks post-block edits while still letting the sender remove content', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/fresh`, {
+      senderId: ALICE, text: 'Sent before block', createdAt: Timestamp.now(),
+    });
+    await seed(`userBlocks/${BOB}__${ALICE}`, {
+      blockerUserId: BOB, blockedUserId: ALICE, createdAt: Timestamp.now(),
+    });
+    const messageRef = doc(ctx(ALICE), 'conversations', cid, 'messages', 'fresh');
+
+    await assertFails(updateMessageWithRateLimit(ctx(ALICE), ALICE, 'direct', cid, 'fresh', {
+      text: 'Changed after block', originalText: 'Sent before block',
+      editedAt: serverTimestamp(),
+    }));
+    await assertSucceeds(updateDoc(messageRef, {
+      text: '', unsentAt: serverTimestamp(),
+    }));
+  });
 });
 
 // ------------------------------------------- session group chat (PR: group chat)
@@ -1564,6 +1986,61 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     await assertSucceeds(createSessionChatMessage(ctx(ALICE), ALICE, 's1', 'm2', {
       senderId: ALICE, text: 'no rush', createdAt: serverTimestamp(),
     }));
+  });
+
+  it('lets session participants add and remove only their own reactions', async () => {
+    await seedChatSession();
+    await seed('sessions/s1/messages/reactable', {
+      senderId: ALICE, text: 'Group message', createdAt: Timestamp.now(),
+    });
+
+    const aliceRef = doc(ctx(ALICE), 'sessions', 's1', 'messages', 'reactable');
+    const bobRef = doc(ctx(BOB), 'sessions', 's1', 'messages', 'reactable');
+    await assertSucceeds(updateMessageWithRateLimit(
+      ctx(BOB), BOB, 'session', 's1', 'reactable', { likedByIds: arrayUnion(BOB) }
+    ));
+    await assertSucceeds(updateMessageWithRateLimit(
+      ctx(ALICE), ALICE, 'session', 's1', 'reactable', { likedByIds: arrayUnion(ALICE) }
+    ));
+    await assertFails(updateMessageWithRateLimit(
+      ctx(BOB), BOB, 'session', 's1', 'reactable', { likedByIds: arrayRemove(ALICE) }
+    ));
+    await assertFails(updateMessageWithRateLimit(
+      ctx(MALLORY), MALLORY, 'session', 's1', 'reactable', { likedByIds: arrayUnion(MALLORY) }
+    ));
+    await assertFails(updateMessageWithRateLimit(ctx(BOB), BOB, 'session', 's1', 'reactable', {
+      likedByIds: arrayRemove(BOB),
+      text: 'Reaction write cannot edit content',
+    }));
+    await seed(`rateLimits/${BOB}/actions/updateMessage`, {
+      lastResourceId: 'sessions/s1/messages/reactable',
+      updatedAt: Timestamp.fromMillis(Date.now() - 2_000),
+    });
+    await assertSucceeds(updateMessageWithRateLimit(
+      ctx(BOB), BOB, 'session', 's1', 'reactable', { likedByIds: arrayRemove(BOB) }
+    ));
+
+    const saved = await assertSucceeds(getDoc(aliceRef));
+    assert.deepEqual(saved.data().likedByIds, [ALICE]);
+  });
+
+  it('denies reactions when a session chat is cancelled or over the fanout cap', async () => {
+    await seedChatSession('cancelled', { status: 'cancelled' });
+    await seed('sessions/cancelled/messages/m1', {
+      senderId: ALICE, text: 'Before cancellation', createdAt: Timestamp.now(),
+    });
+    await assertFails(updateMessageWithRateLimit(
+      ctx(BOB), BOB, 'session', 'cancelled', 'm1', { likedByIds: arrayUnion(BOB) }
+    ));
+
+    const twentyOne = [ALICE, BOB, ...Array.from({ length: 19 }, (_, i) => `filler${i}`)];
+    await seedChatSession('oversized', { participantIds: twentyOne });
+    await seed('sessions/oversized/messages/m1', {
+      senderId: ALICE, text: 'Legacy group', createdAt: Timestamp.now(),
+    });
+    await assertFails(updateMessageWithRateLimit(
+      ctx(BOB), BOB, 'session', 'oversized', 'm1', { likedByIds: arrayUnion(BOB) }
+    ));
   });
 
   it('send without the rate-limit batch is denied; too-soon resend is denied', async () => {
@@ -1613,18 +2090,62 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     }));
   });
 
-  it('messages are fully immutable — no client edits or deletes, even by the sender', async () => {
+  it('lets a sender edit and unsend inside the group-chat windows', async () => {
     await seedChatSession();
     await seed('sessions/s1/messages/m1', {
-      senderId: BOB, text: 'original', createdAt: Timestamp.now(),
+      senderId: BOB, text: 'original',
+      likedByIds: [ALICE],
+      createdAt: Timestamp.fromMillis(Date.now() - 60_000),
     });
+    const messageRef = doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1');
 
-    await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1'), {
-      text: 'edited',
+    await assertSucceeds(updateMessageWithRateLimit(ctx(BOB), BOB, 'session', 's1', 'm1', {
+      text: 'edited', originalText: 'original', editedAt: serverTimestamp(),
     }));
-    await assertFails(deleteDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'm1')));
+    await assertSucceeds(updateDoc(messageRef, {
+      text: '', originalText: deleteField(), editedAt: deleteField(),
+      likedByIds: deleteField(),
+      unsentAt: serverTimestamp(),
+    }));
+
+    const saved = await assertSucceeds(getDoc(messageRef));
+    assert.equal(saved.data().text, '');
+    assert.equal('originalText' in saved.data(), false);
+    assert.equal('likedByIds' in saved.data(), false);
+    await assertFails(deleteDoc(messageRef));
     await assertFails(deleteDoc(doc(ctx(ALICE), 'sessions', 's1', 'messages', 'm1')));
     await assertFails(deleteDoc(doc(ctx(MALLORY), 'sessions', 's1', 'messages', 'm1')));
+  });
+
+  it('rejects late, non-sender, and cancelled-session lifecycle updates', async () => {
+    await seedChatSession();
+    await seed('sessions/s1/messages/old', {
+      senderId: BOB, text: 'old edit',
+      createdAt: Timestamp.fromMillis(Date.now() - 16 * 60_000),
+    });
+    await seed('sessions/s1/messages/recent', {
+      senderId: BOB, text: 'recent',
+      createdAt: Timestamp.fromMillis(Date.now() - 3 * 60_000),
+    });
+
+    await assertFails(updateMessageWithRateLimit(ctx(BOB), BOB, 'session', 's1', 'old', {
+      text: 'too late', originalText: 'old edit', editedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(ctx(BOB), 'sessions', 's1', 'messages', 'recent'), {
+      text: '', unsentAt: serverTimestamp(),
+    }));
+    await assertFails(updateMessageWithRateLimit(ctx(ALICE), ALICE, 'session', 's1', 'recent', {
+      text: 'hijacked', originalText: 'recent', editedAt: serverTimestamp(),
+    }));
+
+    await seedChatSession('s1', { status: 'cancelled' });
+    await seed('sessions/s1/messages/cancelled', {
+      senderId: BOB, text: 'before cancellation', createdAt: Timestamp.now(),
+    });
+    await assertFails(updateMessageWithRateLimit(ctx(BOB), BOB, 'session', 's1', 'cancelled', {
+      text: 'after cancellation', originalText: 'before cancellation',
+      editedAt: serverTimestamp(),
+    }));
   });
 
   it('cancellation makes the chat read-only for retained participants', async () => {
@@ -2632,6 +3153,78 @@ describe('reports (immutable, write-only)', () => {
     }));
   });
 
+  it('binds edited-message reports to both current and original evidence', async () => {
+    const cid = convoId(ALICE, BOB);
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB), createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/edited-message`, {
+      senderId: BOB,
+      text: 'edited current text',
+      originalText: 'original reported text',
+      editedAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+    });
+    const evidence = {
+      ...valid(ALICE),
+      context: 'conversation',
+      contentType: 'direct_message',
+      contentId: 'edited-message',
+      threadId: cid,
+      messageText: 'edited current text',
+      originalMessageText: 'original reported text',
+    };
+
+    await assertSucceeds(createReportWithRateLimit(
+      ctx(ALICE), ALICE, 'edited-message-report', evidence
+    ));
+    await seed(`rateLimits/${ALICE}/actions/reportUser`, {
+      lastResourceId: 'reports/edited-message-report',
+      updatedAt: Timestamp.fromMillis(Date.now() - 11 * 60 * 1000),
+    });
+    await assertFails(createReportWithRateLimit(
+      ctx(ALICE), ALICE, 'missing-original-evidence',
+      Object.fromEntries(Object.entries(evidence).filter(([key]) => key !== 'originalMessageText'))
+    ));
+    await assertFails(createReportWithRateLimit(
+      ctx(ALICE), ALICE, 'forged-original-evidence',
+      { ...evidence, originalMessageText: 'forged original' }
+    ));
+
+    await env.withSecurityRulesDisabled(async (adminContext) => {
+      const saved = await getDoc(doc(adminContext.firestore(), 'reports', 'edited-message-report'));
+      assert.equal(saved.data().messageText, 'edited current text');
+      assert.equal(saved.data().originalMessageText, 'original reported text');
+    });
+
+    await seed(`rateLimits/${ALICE}/actions/reportUser`, {
+      lastResourceId: 'reports/edited-message-report',
+      updatedAt: Timestamp.fromMillis(Date.now() - 11 * 60 * 1000),
+    });
+    await seed('sessions/edited-report-session', validSession(ALICE, {
+      participantIds: [ALICE, BOB], createdAt: Timestamp.now(), updatedAt: Timestamp.now(),
+    }));
+    await seed('sessions/edited-report-session/messages/edited-session-message', {
+      senderId: BOB,
+      text: 'current session text',
+      originalText: 'original session text',
+      editedAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+    });
+    await assertSucceeds(createReportWithRateLimit(
+      ctx(ALICE), ALICE, 'edited-session-message-report', {
+        ...valid(ALICE),
+        context: 'session_chat',
+        contentType: 'session_message',
+        contentId: 'edited-session-message',
+        threadId: 'edited-report-session',
+        messageText: 'current session text',
+        originalMessageText: 'original session text',
+      }
+    ));
+  });
+
   it('rejects outsiders and self-reports for referenced messages', async () => {
     await seedSessionReportTarget();
     await assertFails(createReportWithRateLimit(ctx(MALLORY), MALLORY, 'outsider-report', {
@@ -3303,13 +3896,12 @@ describe('conversation quota enforcement', () => {
     updatedAt: Timestamp.now(), expiresAt: ttl(),
   });
   const seedUser = (uid) => seed(`users/${uid}`, { displayName: uid, classes: [] });
-  // The five pre-existing minimum-interval actions. Friend requests become
-  // owner-readable in their two-phase bound-limiter rollout; the other four
-  // remain unreadable.
+  // Minimum-interval actions. Friend requests are owner-readable for safe
+  // cooldown UX; the remaining action documents stay unreadable.
   const INTERVAL_ACTIONS = ['sendMessage', 'createSession', 'reportUser',
-                            'locationRating', 'friendRequest'];
+                            'locationRating', 'friendRequest', 'updateMessage'];
   const PRIVATE_INTERVAL_ACTIONS = ['sendMessage', 'createSession', 'reportUser',
-                                    'locationRating'];
+                                    'locationRating', 'updateMessage'];
 
   // A fresh-window counter write, as the client transaction emits it.
   const openWindow = (lastConversationId = convoId(ALICE, BOB)) => ({

@@ -4,10 +4,10 @@ Purpose
 - Callable function `deleteUserAccount` that performs admin-side cleanup of a user's Firestore data and deletes the Firebase Auth user. Use this instead of giving broad client-side delete permissions.
 
 Deploy
-1. From project root install functions deps:
+1. From the project root, install the locked Functions dependencies separately
+   from the Expo app dependencies:
 ```bash
-cd functions
-npm install
+npm ci --prefix functions
 ```
 2. Login and select project (if not already):
 ```bash

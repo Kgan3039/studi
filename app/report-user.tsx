@@ -236,6 +236,7 @@ export default function ReportUserScreen() {
             <Text style={[TypeScale.heading, { color: palette.text }]}>Add details</Text>
             <Text style={[TypeScale.caption, { color: palette.icon }]}>Optional</Text>
             <TextInput
+              autoCapitalize="sentences"
               maxLength={1000}
               multiline
               onChangeText={setDetails}

@@ -110,12 +110,10 @@ function normalizeNotificationPayload(input) {
 }
 
 // ---------------------------------------------------------------------------
-// Idempotent record IDs. Trigger-driven notifications key on the CloudEvent
-// ID: Eventarc reuses it across retries of one delivery (dedupe) and mints a
-// new one for every legitimate later event — so leave/rejoin, cancel/reopen/
-// re-cancel, and reverting a session back to a prior time/location all
-// notify again, while retries never double-write or double-push. No state
-// hashing: identical-looking state from distinct events must still notify.
+// Idempotent record IDs. Create/transition notifications key on CloudEvent ID,
+// which Eventarc reuses for retries. Message lifecycle activity keys on the
+// thread/message/action/actor tuple so retry delivery and unlike/re-like churn
+// cannot spam. Distinct session transitions still notify independently.
 // ---------------------------------------------------------------------------
 
 // Doc IDs must avoid `/` and the reserved `.`/`..` forms; event IDs are
@@ -173,6 +171,13 @@ function formatSessionChangedFields(changedFields) {
 /** Retries of one group-chat message event dedupe; session scoping mirrors dmNotificationId. */
 function groupMessageNotificationId(sessionId, eventId) {
   return `gm_${sanitizeIdPart(sessionId)}_${sanitizeIdPart(eventId)}`;
+}
+
+/** One lifecycle notification per actor/action/message, even after unlike/re-like churn. */
+function messageLifecycleNotificationId(threadType, threadId, messageId, kind, actorId) {
+  return ["ml", threadType, threadId, messageId, kind, actorId]
+    .map(sanitizeIdPart)
+    .join("_");
 }
 
 /** One record per friend-request create event; retries of that event dedupe. */
@@ -275,6 +280,7 @@ module.exports = {
   isAllowedNotificationUrl,
   isSafeId,
   isWithinGroupChatFanoutLimit,
+  messageLifecycleNotificationId,
   normalizeNotificationPayload,
   reminderNotificationId,
   sanitizeIdPart,

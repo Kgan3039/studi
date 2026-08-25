@@ -6,6 +6,7 @@
 // lib/notifications.ts — these tests are the executable spec for both.
 
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
 import validation from '../functions/notification-validation.js';
 
 const {
@@ -23,6 +24,7 @@ const {
   groupMessageNotificationId,
   isAllowedNotificationUrl,
   isWithinGroupChatFanoutLimit,
+  messageLifecycleNotificationId,
   normalizeNotificationPayload,
   reminderNotificationId,
   sessionEventNotificationId,
@@ -166,7 +168,7 @@ describe('notification payload validation', () => {
   });
 });
 
-describe('idempotent record IDs (CloudEvent-keyed)', () => {
+describe('idempotent notification record IDs', () => {
   it('DM: retries of one event dedupe; no cross-conversation collision', () => {
     // Same CloudEvent delivered twice (retry) → identical ID.
     assert.equal(dmNotificationId(CONVO, 'event-1'), dmNotificationId(CONVO, 'event-1'));
@@ -240,6 +242,29 @@ describe('idempotent record IDs (CloudEvent-keyed)', () => {
       groupMessageNotificationId('s2', 'event-1')
     );
     assert.equal(/^[A-Za-z0-9_-]+$/.test(groupMessageNotificationId('a/b', 'e.v')), true);
+  });
+
+  it('message lifecycle IDs dedupe repeated action churn without cross-thread collisions', () => {
+    const first = messageLifecycleNotificationId(
+      'direct', CONVO, 'message-a', 'liked', 'bobUid'
+    );
+    assert.equal(
+      first,
+      messageLifecycleNotificationId('direct', CONVO, 'message-a', 'liked', 'bobUid')
+    );
+    assert.notEqual(
+      first,
+      messageLifecycleNotificationId('direct', CONVO, 'message-a', 'liked', 'caraUid')
+    );
+    assert.notEqual(
+      first,
+      messageLifecycleNotificationId('direct', CONVO, 'message-a', 'edited', 'bobUid')
+    );
+    assert.notEqual(
+      first,
+      messageLifecycleNotificationId('session', 's1', 'message-a', 'liked', 'bobUid')
+    );
+    assert.equal(/^[A-Za-z0-9_-]+$/.test(first), true);
   });
 
   it('sanitizes unexpected characters out of doc IDs', () => {
@@ -400,5 +425,39 @@ describe('group-chat fanout ceiling', () => {
     assert.equal(isWithinGroupChatFanoutLimit(Number.NaN), false);
     assert.equal(isWithinGroupChatFanoutLimit('20'), false);
     assert.equal(isWithinGroupChatFanoutLimit(undefined), false);
+  });
+});
+
+describe('group-message lifecycle notification wiring', () => {
+  const functionSource = readFileSync('functions/index.js', 'utf8');
+  const groupTrigger = functionSource.slice(
+    functionSource.indexOf('exports.onSessionMessageCreated'),
+    functionSource.indexOf('exports.onSessionParticipantsUpdated')
+  );
+
+  it('re-reads current content and suppresses a delayed push after unsend', () => {
+    assert.match(groupTrigger, /event\.data\.ref\.get\(\)/);
+    assert.match(groupTrigger, /currentMessage\.unsentAt \|\| !currentText/);
+    assert.match(groupTrigger, /body: `\$\{senderName\}: \$\{currentText\}`/);
+  });
+});
+
+describe('Cloud Functions runtime wiring', () => {
+  const firebaseConfig = JSON.parse(readFileSync('firebase.json', 'utf8'));
+  const functionsPackage = JSON.parse(readFileSync('functions/package.json', 'utf8'));
+  const functionSource = readFileSync('functions/index.js', 'utf8');
+
+  it('uses the supported Node.js 22 runtime consistently', () => {
+    assert.equal(firebaseConfig.functions[0].runtime, 'nodejs22');
+    assert.equal(functionsPackage.engines.node, '22');
+  });
+
+  it('uses current Functions and Admin SDK versions with modular Admin imports', () => {
+    assert.equal(functionsPackage.dependencies['firebase-functions'], '^7.3.2');
+    assert.equal(functionsPackage.dependencies['firebase-admin'], '^14.3.0');
+    assert.match(functionSource, /require\("firebase-admin\/app"\)/);
+    assert.match(functionSource, /require\("firebase-admin\/firestore"\)/);
+    assert.doesNotMatch(functionSource, /require\("firebase-admin"\)/);
+    assert.doesNotMatch(functionSource, /\badmin\./);
   });
 });
