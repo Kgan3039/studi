@@ -206,13 +206,12 @@ function updateMessageWithRateLimit(
 
 // Mirrors sendDirectMessage in lib/firestore.ts: message + bound sendMessage
 // limiter. Conversation metadata is Admin-trigger-authored from this message.
-function clientSendFlow(db, uid, conversationId, messageId, text, replyTo) {
+function clientSendFlow(db, uid, conversationId, messageId, text) {
   const batch = batchWithBoundRateLimit(
     db, uid, 'sendMessage', `conversations/${conversationId}/messages/${messageId}`
   );
   batch.set(doc(db, 'conversations', conversationId, 'messages', messageId), {
     senderId: uid, text, createdAt: serverTimestamp(),
-    ...(replyTo ? { replyTo } : {}),
   });
   return batch.commit();
 }
@@ -546,9 +545,9 @@ describe('personal hidden chat history', () => {
     }));
   });
 
-  it('lets a participant hide their own direct chat without changing access', async () => {
+  it('rejects direct-chat hidden markers even for a conversation participant', async () => {
     const db = ctx(ALICE);
-    await assertSucceeds(setDoc(
+    await assertFails(setDoc(
       doc(db, 'users', ALICE, 'hiddenChats', `dm__${convoId(ALICE, BOB)}`),
       { chatType: 'dm', threadId: convoId(ALICE, BOB), removedAt: serverTimestamp() }
     ));
@@ -1609,31 +1608,27 @@ describe('conversations + messages', () => {
     await assertFails(clientSendFlow(ctx(MALLORY), MALLORY, cid, 'm2', 'intruder'));
   });
 
-  it('accepts a bounded reply snapshot and keeps it immutable until unsend', async () => {
+  it('rejects reply snapshots from direct-message clients', async () => {
     const cid = convoId(ALICE, BOB);
     const messageId = 'reply-message';
-    const messageRef = doc(ctx(ALICE), 'conversations', cid, 'messages', messageId);
-    const replyTo = { messageId: 'source-message', senderId: BOB, text: 'Meet at Memorial?' };
     await seed(`conversations/${cid}`, {
       ...validConversation(ALICE, BOB),
       createdAt: Timestamp.now(), updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
     });
 
-    await assertSucceeds(clientSendFlow(ctx(ALICE), ALICE, cid, messageId, 'Works for me.', replyTo));
-    await assertFails(updateMessageWithRateLimit(ctx(ALICE), ALICE, 'direct', cid, messageId, {
-      text: 'Changed reply', originalText: 'Works for me.', editedAt: serverTimestamp(),
-      replyTo: { ...replyTo, text: 'Forged context' },
-    }));
-    await assertSucceeds(updateMessageWithRateLimit(ctx(ALICE), ALICE, 'direct', cid, messageId, {
-      text: 'Confirmed.', originalText: 'Works for me.', editedAt: serverTimestamp(),
-    }));
-    await assertSucceeds(updateDoc(messageRef, {
-      text: '', originalText: deleteField(), editedAt: deleteField(),
-      replyTo: deleteField(), unsentAt: serverTimestamp(),
-    }));
-
-    const saved = await assertSucceeds(getDoc(messageRef));
-    assert.equal('replyTo' in saved.data(), false);
+    const db = ctx(ALICE);
+    const batch = batchWithBoundRateLimit(
+      db, ALICE, 'sendMessage', `conversations/${cid}/messages/${messageId}`
+    );
+    batch.set(doc(db, 'conversations', cid, 'messages', messageId), {
+      senderId: ALICE,
+      text: 'Works for me.',
+      replyTo: { messageId: 'source-message', senderId: BOB, text: 'Meet at Memorial?' },
+      createdAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
+    const saved = await assertSucceeds(getDoc(doc(db, 'conversations', cid, 'messages', messageId)));
+    assert.equal(saved.exists(), false);
   });
 
   it('client send flow accepts a max-length message without client metadata writes', async () => {
@@ -2130,21 +2125,12 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     }));
   });
 
-  it('allows valid session-chat replies and rejects forged reply shapes', async () => {
+  it('rejects reply snapshots from session-chat clients', async () => {
     await seedChatSession();
-    await assertSucceeds(createSessionChatMessage(ctx(BOB), BOB, 's1', 'reply-ok', {
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'reply-rejected', {
       senderId: BOB,
       text: 'I will be there.',
       replyTo: { messageId: 'source', senderId: ALICE, text: 'Meet at the library?' },
-      createdAt: serverTimestamp(),
-    }));
-    await seed(`rateLimits/${BOB}/actions/sendMessage`, {
-      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
-    });
-    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'reply-forged', {
-      senderId: BOB,
-      text: 'Forged reply.',
-      replyTo: { messageId: 'source', senderId: ALICE, text: 'x'.repeat(281) },
       createdAt: serverTimestamp(),
     }));
   });

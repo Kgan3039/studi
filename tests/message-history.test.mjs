@@ -55,14 +55,14 @@ describe("Messages beta history helpers", () => {
     );
   });
 
-  it("hides optimistic removals for both group and direct chats", () => {
+  it("hides session-chat removals while direct messages remain unaffected", () => {
     assert.equal(
       isMessageRowVisible({ type: "group", isHidden: false, isPendingRemoval: true }),
       false
     );
     assert.equal(
       isMessageRowVisible({ type: "dm", isHidden: true, isPendingRemoval: true }),
-      false
+      true
     );
   });
 });
@@ -208,12 +208,12 @@ describe("Messages beta production wiring", () => {
     assert.match(removalBody, /await showChatRemovalFailure/);
     assert.doesNotMatch(removalBody, /error\.message/);
     assert.equal(
-      (removalBody.match(/removeChatFromUserHistory/g) ?? []).length,
+      (removalBody.match(/removeSessionChatFromUserHistory/g) ?? []).length,
       1
     );
   });
 
-  it("offers hold options and one confirmation path for personal chat deletion", () => {
+  it("keeps session removal visible, accessible, and routed through one confirmation path", () => {
     assert.match(confirmationSource, /Remove from my Messages\?/);
     assert.match(confirmationSource, /This hides the chat only for you\./);
     assert.match(confirmationSource, /style: "cancel"/);
@@ -221,7 +221,10 @@ describe("Messages beta production wiring", () => {
     assert.match(messagesSource, /function openChatOptions/);
     assert.match(messagesSource, /<Sheet/);
     assert.match(messagesSource, /label="Delete"/);
-    assert.match(messagesSource, /removeChatFromUserHistory/);
+    assert.match(messagesSource, /removeSessionChatFromUserHistory/);
+    assert.match(messagesSource, /accessibilityLabel=\{`Remove \$\{otherName\} from my Messages`\}/);
+    assert.match(messagesSource, /<IconButton/);
+    assert.match(messagesSource, /name: 'remove', label: `Remove \$\{otherName\} from my Messages`/);
     assert.match(messagesSource, /platform: Platform\.OS/);
     assert.match(messagesSource, /window\.confirm\(message\)/);
   });
@@ -237,7 +240,9 @@ describe("Messages beta production wiring", () => {
     assert.match(messagesSource, /return 'Add buddy'/);
     assert.match(messagesSource, /label="Block"/);
     assert.match(messagesSource, /label=\{chatOptionsTarget\.hasReported \? 'Report again' : 'Report'\}/);
-    assert.match(firestoreSource, /chatType: \"dm\" \| \"group\"/);
+    assert.match(firestoreSource, /chatType: \"group\"/);
+    assert.doesNotMatch(firestoreSource, /chatType: \"dm\" \| \"group\"/);
+    assert.doesNotMatch(directMessageBranch, /confirmRemoveChat|removeSessionChatFromUserHistory/);
   });
 
   it("returns a blocked conversation through the existing Messages tab", () => {

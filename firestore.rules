@@ -382,34 +382,6 @@ service cloud.firestore {
         );
     }
 
-    // Replies store a bounded snapshot rather than a live document pointer so
-    // a sent reply remains understandable after the source message is edited,
-    // hidden locally, or unsent. It is immutable after creation like sender
-    // identity and createdAt.
-    function isValidMessageReply(value) {
-      return value is map
-        && value.keys().hasOnly(['messageId', 'senderId', 'text'])
-        && value.messageId is string
-        && value.messageId.size() >= 1
-        && value.messageId.size() <= 128
-        && value.senderId is string
-        && value.senderId.size() >= 1
-        && value.senderId.size() <= 128
-        && value.text is string
-        && value.text.size() >= 1
-        && value.text.size() <= 280
-        && isAllowedUserGeneratedText(value.text);
-    }
-
-    function preservesMessageReply() {
-      return (
-        (!('replyTo' in resource.data) && !('replyTo' in incoming()))
-        || (('replyTo' in resource.data)
-          && ('replyTo' in incoming())
-          && incoming().replyTo == resource.data.replyTo)
-      );
-    }
-
     // Message lifecycle fields are server-clocked and preserve the first
     // version only. Sender, creation time, and every unrelated field remain
     // immutable. An unsend removes both current and original content while
@@ -420,7 +392,7 @@ service cloud.firestore {
         && request.time <= resource.data.createdAt + duration.value(15, 'm')
         && affectedKeys().hasOnly(['text', 'editedAt', 'originalText'])
         && incoming().keys().hasOnly([
-             'senderId', 'text', 'createdAt', 'editedAt', 'originalText', 'likedByIds', 'replyTo'
+             'senderId', 'text', 'createdAt', 'editedAt', 'originalText', 'likedByIds'
            ])
         && incoming().senderId == resource.data.senderId
         && incoming().createdAt == resource.data.createdAt
@@ -434,7 +406,6 @@ service cloud.firestore {
         && incoming().originalText is string
         && incoming().originalText.size() >= 1
         && incoming().originalText.size() <= 2000
-        && preservesMessageReply()
         && (
           (!('likedByIds' in resource.data) && !('likedByIds' in incoming()))
           || (('likedByIds' in resource.data) && ('likedByIds' in incoming())
@@ -453,7 +424,7 @@ service cloud.firestore {
         && !('unsentAt' in resource.data)
         && request.time <= resource.data.createdAt + duration.value(2, 'm')
         && affectedKeys().hasOnly([
-             'text', 'editedAt', 'originalText', 'likedByIds', 'replyTo', 'unsentAt'
+             'text', 'editedAt', 'originalText', 'likedByIds', 'unsentAt'
            ])
         && incoming().keys().hasOnly(['senderId', 'text', 'createdAt', 'unsentAt'])
         && incoming().senderId == resource.data.senderId
@@ -470,9 +441,8 @@ service cloud.firestore {
       return !('unsentAt' in resource.data)
         && affectedKeys().hasOnly(['likedByIds'])
         && incoming().keys().hasOnly([
-             'senderId', 'text', 'createdAt', 'editedAt', 'originalText', 'likedByIds', 'replyTo'
+             'senderId', 'text', 'createdAt', 'editedAt', 'originalText', 'likedByIds'
            ])
-        && preservesMessageReply()
         && incoming().likedByIds is list
         && incoming().likedByIds.size() <= maxLikes
         && incoming().likedByIds.size() == incoming().likedByIds.toSet().size()
@@ -655,8 +625,8 @@ service cloud.firestore {
         allow delete: if false; // account deletion recursive-deletes the user tree
       }
 
-      // Personal chat history. Removing a row only records an owner-scoped
-      // timestamp; it never mutates shared conversations, sessions, or messages.
+      // Personal session-chat history. Removing a row only records an
+      // owner-scoped timestamp; it never mutates the shared session/messages.
       // The marker remains until its owner explicitly restores the row.
       match /hiddenChats/{hiddenChatId} {
         function isOwnHiddenSession() {
@@ -666,23 +636,16 @@ service cloud.firestore {
                get(/databases/$(database)/documents/sessions/$(incoming().threadId)).data.participantIds;
         }
 
-        function isOwnHiddenConversation() {
-          return incoming().chatType == 'dm'
-            && exists(/databases/$(database)/documents/conversations/$(incoming().threadId))
-            && request.auth.uid in
-               get(/databases/$(database)/documents/conversations/$(incoming().threadId)).data.participantIds;
-        }
-
         allow read: if isOwner(userId);
         allow create, update: if isOwner(userId)
           && hiddenChatId == incoming().chatType + '__' + incoming().threadId
           && incoming().keys().hasOnly(['chatType', 'threadId', 'removedAt'])
-          && incoming().chatType in ['dm', 'group']
+          && incoming().chatType == 'group'
           && incoming().threadId is string
           && incoming().threadId.size() >= 1
           && incoming().threadId.size() <= 300
           && incoming().removedAt == request.time
-          && (isOwnHiddenSession() || isOwnHiddenConversation());
+          && isOwnHiddenSession();
         // Deleting the owner's marker is the explicit restore operation. There
         // is no restore UI in this beta; account deletion also removes the user
         // tree recursively through the existing Admin path.
@@ -1000,12 +963,11 @@ service cloud.firestore {
           && request.auth.uid in parentSession().participantIds
           && request.time < parentSession().endTime + duration.value(2, 'h')
           && parentSession().participantIds.size() <= 20
-          && incoming().keys().hasOnly(['senderId', 'text', 'createdAt', 'replyTo'])
+          && incoming().keys().hasOnly(['senderId', 'text', 'createdAt'])
           && incoming().text is string
           && incoming().text.size() >= 1
           && incoming().text.size() <= 2000
           && isAllowedUserGeneratedText(incoming().text)
-          && (!('replyTo' in incoming()) || isValidMessageReply(incoming().replyTo))
           && incoming().createdAt == request.time
           && hasFreshBoundRateLimit(
                request.auth.uid,
@@ -1106,12 +1068,11 @@ service cloud.firestore {
         allow create: if isVerifiedUwUser()
           && request.auth.uid == incoming().senderId
           && request.auth.uid in parentConversation().participantIds
-          && incoming().keys().hasOnly(['senderId', 'text', 'createdAt', 'replyTo'])
+          && incoming().keys().hasOnly(['senderId', 'text', 'createdAt'])
           && incoming().text is string
           && incoming().text.size() >= 1
           && incoming().text.size() <= 2000
           && isAllowedUserGeneratedText(incoming().text)
-          && (!('replyTo' in incoming()) || isValidMessageReply(incoming().replyTo))
           && incoming().createdAt == request.time
           && hasFreshBoundRateLimit(
                request.auth.uid,

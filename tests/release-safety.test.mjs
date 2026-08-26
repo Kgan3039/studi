@@ -14,12 +14,13 @@ describe('release safety wiring', () => {
     assert.match(reportScreen, /disabled=\{blockRetryNeeded\}/);
   });
 
-  it('routes direct messages into the private report flow and keeps session chat holds delete-only', () => {
+  it('routes direct and session messages into their authoritative private report flows', () => {
     assert.match(dmScreen, /contentType: 'direct_message'/);
     assert.match(dmScreen, /contentId: message\.messageId/);
     assert.match(sessionChatScreen, /threadType: 'session'/);
-    assert.doesNotMatch(sessionChatScreen, /onReportMessage:/);
-    assert.doesNotMatch(sessionChatScreen, /contentType: 'session_message'/);
+    assert.match(sessionChatScreen, /onReportMessage:/);
+    assert.match(sessionChatScreen, /contentType: 'session_message'/);
+    assert.match(sessionChatScreen, /contentId: message\.messageId/);
   });
 
   it('uses the controlled moderation error for both message composers', () => {

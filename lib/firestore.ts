@@ -41,10 +41,7 @@ import { auth, db } from "../firebaseConfig";
 import { track } from "./analytics";
 import { assertAllowedUserGeneratedText } from "./content-moderation";
 import { createBlockIdempotently } from "./idempotent-block";
-import {
-  normalizeMessageLikedByIds,
-  type MessageReplyReference,
-} from "./message-actions";
+import { normalizeMessageLikedByIds } from "./message-actions";
 import {
   CreateSessionValidationError,
   createWithStaleVerificationRetry,
@@ -247,7 +244,6 @@ export type ConversationMessage = {
   messageId: string;
   originalText?: string;
   pending: boolean;
-  replyTo?: MessageReplyReference;
   senderId: string;
   text: string;
   unsentAt?: unknown;
@@ -264,7 +260,6 @@ export type SessionMessage = {
   originalText?: string;
   /** True while the local optimistic write hasn't been acknowledged yet. */
   pending: boolean;
-  replyTo?: MessageReplyReference;
   senderId: string;
   sessionId: string;
   text: string;
@@ -291,46 +286,10 @@ export type KeptSessionChat = {
 };
 
 export type HiddenChat = {
-  chatType: "dm" | "group";
+  chatType: "group";
   removedAt?: unknown;
   threadId: string;
 };
-
-function normalizeMessageReply(value: unknown): MessageReplyReference | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-
-  const reply = value as Record<string, unknown>;
-  const messageId = typeof reply.messageId === "string" ? reply.messageId.trim() : "";
-  const senderId = typeof reply.senderId === "string" ? reply.senderId.trim() : "";
-  const text = typeof reply.text === "string" ? reply.text.trim() : "";
-
-  if (
-    !messageId
-    || messageId.length > 128
-    || !senderId
-    || senderId.length > 128
-    || !text
-    || text.length > 280
-  ) {
-    return undefined;
-  }
-
-  return { messageId, senderId, text };
-}
-
-function prepareMessageReply(replyTo?: MessageReplyReference) {
-  if (!replyTo) {
-    return undefined;
-  }
-
-  const normalized = normalizeMessageReply(replyTo);
-  if (!normalized) {
-    throw new Error("That message is no longer available to reply to.");
-  }
-  return normalized;
-}
 
 export type UserBlock = {
   blockedUserId: string;
@@ -1527,8 +1486,7 @@ export async function getOrCreateDirectConversation(
 export async function sendDirectMessage(
   conversationId: string,
   senderId: string,
-  text: string,
-  replyTo?: MessageReplyReference
+  text: string
 ) {
   const trimmedText = text.trim();
 
@@ -1536,7 +1494,6 @@ export async function sendDirectMessage(
     throw new Error("Write a message before sending.");
   }
   assertAllowedUserGeneratedText(trimmedText);
-  const preparedReply = prepareMessageReply(replyTo);
 
   const batch = writeBatch(db);
   const messageRef = doc(collection(db, COLLECTIONS.conversations, conversationId, "messages"));
@@ -1545,7 +1502,6 @@ export async function sendDirectMessage(
     senderId,
     text: trimmedText,
     createdAt: serverTimestamp(),
-    ...(preparedReply ? { replyTo: preparedReply } : {}),
   });
 
   stageBoundRateLimit(
@@ -1580,7 +1536,6 @@ export function subscribeToConversationMessages(
         editedAt: data.editedAt,
         likedByIds: normalizeMessageLikedByIds(data.likedByIds),
         originalText: typeof data.originalText === "string" ? data.originalText : undefined,
-        replyTo: normalizeMessageReply(data.replyTo),
         unsentAt: data.unsentAt,
       };
     });
@@ -1743,7 +1698,6 @@ export async function unsendChatMessage(
       editedAt: deleteField(),
       likedByIds: deleteField(),
       originalText: deleteField(),
-      replyTo: deleteField(),
       text: "",
       unsentAt: serverTimestamp(),
     });
@@ -1818,7 +1772,6 @@ function mapSessionMessageDoc(
     editedAt: data.editedAt,
     likedByIds: normalizeMessageLikedByIds(data.likedByIds),
     originalText: typeof data.originalText === "string" ? data.originalText : undefined,
-    replyTo: normalizeMessageReply(data.replyTo),
     unsentAt: data.unsentAt,
   };
 }
@@ -1833,8 +1786,7 @@ export async function sendSessionMessage(
   sessionId: string,
   senderId: string,
   text: string,
-  messageId: string,
-  replyTo?: MessageReplyReference
+  messageId: string
 ) {
   const trimmedText = text.trim();
 
@@ -1842,14 +1794,12 @@ export async function sendSessionMessage(
     throw new Error("Write a message before sending.");
   }
   assertAllowedUserGeneratedText(trimmedText);
-  const preparedReply = prepareMessageReply(replyTo);
 
   const batch = writeBatch(db);
   batch.set(doc(db, COLLECTIONS.sessions, sessionId, "messages", messageId), {
     senderId,
     text: trimmedText.slice(0, 2000),
     createdAt: serverTimestamp(),
-    ...(preparedReply ? { replyTo: preparedReply } : {}),
   });
   stageBoundRateLimit(
     batch,
@@ -2104,8 +2054,9 @@ export async function keepSessionChat(userId: string, sessionId: string) {
 }
 
 /**
- * Personal chat removals. Shared conversations, sessions, and messages stay
- * untouched. The marker is owner-scoped and remains until an explicit restore.
+ * Personal session-chat removals. The shared session and its messages are
+ * deliberately left untouched. Removal is sticky until the owner explicitly
+ * deletes the marker.
  */
 export function subscribeToHiddenChats(
   userId: string,
@@ -2113,14 +2064,17 @@ export function subscribeToHiddenChats(
   onError?: (error: Error) => void
 ) {
   return onSnapshot(
-    collection(db, COLLECTIONS.users, userId, "hiddenChats"),
+    query(
+      collection(db, COLLECTIONS.users, userId, "hiddenChats"),
+      where("chatType", "==", "group")
+    ),
     (snapshot) => {
       const hiddenChats = new Map<string, HiddenChat>();
 
       snapshot.docs.forEach((hiddenChatDoc) => {
         const data = hiddenChatDoc.data({ serverTimestamps: "estimate" });
         if (
-          (data.chatType === "dm" || data.chatType === "group") &&
+          data.chatType === "group" &&
           typeof data.threadId === "string"
         ) {
           hiddenChats.set(`${data.chatType}:${data.threadId}`, {
@@ -2137,26 +2091,20 @@ export function subscribeToHiddenChats(
   );
 }
 
-export async function removeChatFromUserHistory(
+export async function removeSessionChatFromUserHistory(
   userId: string,
-  chatType: HiddenChat["chatType"],
-  threadId: string
+  sessionId: string
 ) {
   const batch = writeBatch(db);
-  batch.set(doc(db, COLLECTIONS.users, userId, "hiddenChats", `${chatType}__${threadId}`), {
-    chatType,
-    threadId,
+  batch.set(doc(db, COLLECTIONS.users, userId, "hiddenChats", `group__${sessionId}`), {
+    chatType: "group",
+    threadId: sessionId,
     removedAt: serverTimestamp(),
   } satisfies HiddenChat);
-  batch.set(doc(db, COLLECTIONS.users, userId, "reads", threadId), {
+  batch.set(doc(db, COLLECTIONS.users, userId, "reads", sessionId), {
     lastReadAt: serverTimestamp(),
   });
   await batch.commit();
-}
-
-/** Backwards-compatible session-chat convenience wrapper. */
-export async function removeSessionChatFromUserHistory(userId: string, sessionId: string) {
-  await removeChatFromUserHistory(userId, "group", sessionId);
 }
 
 export async function blockUser(blockerUserId: string, blockedUserId: string) {

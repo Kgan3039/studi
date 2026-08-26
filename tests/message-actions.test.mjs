@@ -189,13 +189,14 @@ describe('message action production wiring', () => {
     assert.match(messageActionsHook, /onReportMessage\(message\)/);
   });
 
-  it('keeps session-chat message holds delete-only', () => {
-    assert.match(messageActionsUi, /const isSessionChat = controller\.threadType === 'session'/);
-    assert.match(messageActionsUi, /!isSessionChat && controller\.canCopyActive/);
-    assert.match(messageActionsUi, /!isSessionChat && controller\.canEditActive/);
-    assert.match(messageActionsUi, /!isSessionChat && controller\.canUnsendActive/);
-    assert.match(messageActionsUi, /!isSessionChat && controller\.canReportActive/);
-    assert.doesNotMatch(sessionChat, /onReportMessage:/);
+  it('keeps the full shared action model and private reporting in session chat', () => {
+    for (const label of ['Copy', 'Edit', 'Unsend', 'Report', 'Delete', 'Select']) {
+      assert.match(messageActionsUi, new RegExp(`label="${label}"`));
+    }
+    assert.doesNotMatch(messageActionsUi, /isSessionChat/);
+    assert.match(sessionChat, /onReportMessage:/);
+    assert.match(sessionChat, /contentType: 'session_message'/);
+    assert.match(sessionChat, /contentId: message\.messageId/);
   });
 
   it('lets a session chat menu open its group and member profiles', () => {
@@ -205,19 +206,16 @@ describe('message action production wiring', () => {
     assert.match(messagesScreen, /router\.push\(`\/user\/\$\{userId\}`\)/);
   });
 
-  it('supports right-swipe replies with a durable, bounded preview on both chat screens', () => {
-    assert.match(messageActionsUi, /PanResponder\.create/);
-    assert.match(messageActionsUi, /Swipe right to reply/);
-    assert.match(messageActionsUi, /export function MessageReplyPreview/);
-    assert.match(messageActionsUi, /export function MessageReplyQuote/);
-    for (const source of [directChat, sessionChat]) {
-      assert.match(source, /onReply=/);
-      assert.match(source, /<MessageReplyPreview/);
-      assert.match(source, /<MessageReplyQuote/);
+  it('keeps reply snapshots out of the release action and persistence model', () => {
+    for (const source of [messageActionsUi, directChat, sessionChat, firestore]) {
+      assert.doesNotMatch(source, /replyTo|MessageReply|onReply|PanResponder/);
     }
-    assert.match(firestore, /replyTo\?: MessageReplyReference/);
-    assert.match(firestore, /replyTo: normalizeMessageReply\(data\.replyTo\)/);
-    assert.match(firestore, /replyTo: deleteField\(\)/);
+  });
+
+  it('exposes the shared action sheet through an explicit accessibility action', () => {
+    assert.match(messageActionsUi, /name: 'activate', label: 'Open message actions'/);
+    assert.match(messageActionsUi, /onAccessibilityAction=/);
+    assert.match(messageActionsUi, /onOpenActions\(\)/);
   });
 
   it('uses atomic, message-bound shared reactions and a stronger active-message backdrop', () => {

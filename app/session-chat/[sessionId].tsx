@@ -21,8 +21,6 @@ import { IconButton } from '@/components/ui/IconButton';
 import {
   MessageActionOverlays,
   MessageEditedIndicator,
-  MessageReplyPreview,
-  MessageReplyQuote,
   MessageReactionBadge,
   MessageSelectionBar,
   MessageSelectionTarget,
@@ -65,7 +63,6 @@ type ChatOpenSource = 'session_detail' | 'auto_join' | 'deeplink';
 
 type FailedSend = {
   messageId: string;
-  replyTo?: SessionMessage['replyTo'];
   text: string;
   isRetrying: boolean;
 };
@@ -145,7 +142,6 @@ export default function SessionChatScreen() {
   const [profilesById, setProfilesById] = useState<Map<string, UserProfile>>(new Map());
   const [failedSends, setFailedSends] = useState<FailedSend[]>([]);
   const [draft, setDraft] = useState('');
-  const [replyingTo, setReplyingTo] = useState<SessionMessage | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
   const [threadError, setThreadError] = useState<string | null>(null);
@@ -431,6 +427,20 @@ export default function SessionChatScreen() {
     allowUnsend: !isReadOnly,
     currentUserId: currentUser?.uid,
     messages: actionMessages,
+    onReportMessage: (message) => {
+      router.push({
+        pathname: '/report-user',
+        params: {
+          reportedUserId: message.senderId,
+          reportedUserName:
+            profilesById.get(message.senderId)?.displayName.trim() || 'Student',
+          context: 'session_chat',
+          contentType: 'session_message',
+          contentId: message.messageId,
+          threadId: sessionId,
+        },
+      });
+    },
     onSuccess: showToast,
     threadId: sessionId,
     threadType: 'session',
@@ -459,20 +469,11 @@ export default function SessionChatScreen() {
     }
 
     const messageId = createSessionMessageId(sessionId);
-    const replyTo =
-      replyingTo && !replyingTo.unsentAt
-        ? {
-            messageId: replyingTo.messageId,
-            senderId: replyingTo.senderId,
-            text: replyingTo.text.slice(0, 280),
-          }
-        : undefined;
     setDraft('');
 
     try {
       setIsSending(true);
-      await sendSessionMessage(sessionId, currentUser.uid, text, messageId, replyTo);
-      setReplyingTo(null);
+      await sendSessionMessage(sessionId, currentUser.uid, text, messageId);
     } catch (error) {
       if (error instanceof ObjectionableContentError) {
         setDraft(text);
@@ -480,8 +481,7 @@ export default function SessionChatScreen() {
         return;
       }
       // Keep the message; the bubble flips to a failed state with a retry.
-      setFailedSends((current) => [{ messageId, replyTo, text, isRetrying: false }, ...current]);
-      setReplyingTo(null);
+      setFailedSends((current) => [{ messageId, text, isRetrying: false }, ...current]);
       refreshSessionOnDenied(error);
     } finally {
       setIsSending(false);
@@ -501,13 +501,7 @@ export default function SessionChatScreen() {
 
     try {
       // Same pre-generated ID: a retry can never double-send.
-      await sendSessionMessage(
-        sessionId,
-        currentUser.uid,
-        failed.text,
-        failed.messageId,
-        failed.replyTo
-      );
+      await sendSessionMessage(sessionId, currentUser.uid, failed.text, failed.messageId);
       setFailedSends((current) => current.filter((item) => item.messageId !== failed.messageId));
     } catch (error) {
       setFailedSends((current) =>
@@ -842,11 +836,6 @@ export default function SessionChatScreen() {
                     : undefined
                 }
                 onOpenActions={() => messageActions.openMessageActions(message)}
-                onReply={
-                  isUnsent || messageActions.isSelecting || isReadOnly
-                    ? undefined
-                    : () => setReplyingTo(message)
-                }
                 onToggleSelection={() =>
                   messageActions.toggleMessageSelection(message.messageId)
                 }
@@ -856,13 +845,6 @@ export default function SessionChatScreen() {
                 ]}
                 selected={isSelected}
                 selecting={messageActions.isSelecting}>
-                  <MessageReplyQuote
-                    inverted={isCurrentUser || isActive}
-                    replyTo={message.replyTo}
-                    senderName={
-                      message.replyTo ? senderName(message.replyTo.senderId) : 'Student'
-                    }
-                  />
                   <Text
                     style={[
                       styles.bubbleText,
@@ -917,17 +899,6 @@ export default function SessionChatScreen() {
               paddingBottom: Math.max(insets.bottom, Space.md),
             },
           ]}>
-          {replyingTo ? (
-            <MessageReplyPreview
-              onClear={() => setReplyingTo(null)}
-              replyTo={{
-                messageId: replyingTo.messageId,
-                senderId: replyingTo.senderId,
-                text: replyingTo.text.slice(0, 280),
-              }}
-              senderName={senderName(replyingTo.senderId)}
-            />
-          ) : null}
           <View
             style={[
               styles.composer,

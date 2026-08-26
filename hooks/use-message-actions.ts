@@ -516,7 +516,6 @@ export function useMessageActions({
     showMessageLikes,
     toggleMessageLike,
     toggleMessageSelection,
-    threadType,
     unsendMessage,
   };
 }

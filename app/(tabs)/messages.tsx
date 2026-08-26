@@ -19,6 +19,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { IconButton } from '@/components/ui/IconButton';
 import {
   PullToRefreshIndicator,
   usePullToRefreshDistance,
@@ -59,7 +60,7 @@ import {
   getBlockedUserIds,
   getGroupChatListItem,
   getSessionById,
-  removeChatFromUserHistory,
+  removeSessionChatFromUserHistory,
   SESSION_CHAT_GRACE_PERIOD_MS,
   subscribeToHiddenChats,
   subscribeToKeptSessionChats,
@@ -93,10 +94,6 @@ function formatTimestamp(value: unknown) {
 
 function sessionChatHistoryKey(sessionId: string) {
   return `group:${sessionId}`;
-}
-
-function directChatHistoryKey(conversationId: string) {
-  return `dm:${conversationId}`;
 }
 
 type DirectChatOptions = {
@@ -468,9 +465,12 @@ export default function MessagesScreen() {
           return false;
         }
 
-        const key =
-          chat.type === 'group' ? sessionChatHistoryKey(chat.id) : directChatHistoryKey(chat.id);
-        // Personal chat deletion is persistent. New messages do not silently
+        if (chat.type === 'dm') {
+          return true;
+        }
+
+        const key = sessionChatHistoryKey(chat.id);
+        // Session-chat removal is persistent. New messages do not silently
         // override an explicit owner-scoped hidden marker.
         return isMessageRowVisible({
           type: chat.type,
@@ -505,15 +505,12 @@ export default function MessagesScreen() {
     });
   }, [allChats, searchQuery]);
 
-  async function handleRemoveChat(target: ChatOptionsTarget) {
+  async function handleRemoveChat(target: Extract<ChatOptionsTarget, { type: 'group' }>) {
     if (!currentUser) {
       return;
     }
 
-    const key =
-      target.type === 'group'
-        ? sessionChatHistoryKey(target.id)
-        : directChatHistoryKey(target.conversationId);
+    const key = sessionChatHistoryKey(target.id);
     if (pendingRemovalKeysRef.current.has(key)) {
       return;
     }
@@ -521,11 +518,10 @@ export default function MessagesScreen() {
     setPendingRemovalKeys((current) => new Set(current).add(key));
 
     try {
-      const threadId = target.type === 'group' ? target.id : target.conversationId;
-      await removeChatFromUserHistory(currentUser.uid, target.type, threadId);
+      await removeSessionChatFromUserHistory(currentUser.uid, target.id);
       setHiddenChats((current) => {
         const next = new Map(current);
-        next.set(key, { chatType: target.type, threadId, removedAt: Timestamp.now() });
+        next.set(key, { chatType: 'group', threadId: target.id, removedAt: Timestamp.now() });
         return next;
       });
       setPendingRemovalKeys((current) => {
@@ -553,7 +549,7 @@ export default function MessagesScreen() {
     }
   }
 
-  function confirmRemoveChat(target: ChatOptionsTarget) {
+  function confirmRemoveChat(target: Extract<ChatOptionsTarget, { type: 'group' }>) {
     confirmChatRemoval({
       platform: Platform.OS,
       showNativeAlert: Alert.alert,
@@ -879,6 +875,9 @@ export default function MessagesScreen() {
                     return (
                       <Pressable
                         key={`dm:${chat.id}`}
+                        accessibilityActions={[
+                          { name: 'showOptions', label: 'Show conversation options' },
+                        ]}
                         accessibilityLabel={
                           isBlocked
                             ? `Conversation with ${otherName}, blocked`
@@ -887,6 +886,19 @@ export default function MessagesScreen() {
                         accessibilityRole="button"
                         accessibilityHint="Hold for conversation options"
                         delayLongPress={400}
+                        onAccessibilityAction={() => {
+                          if (otherUserId) {
+                            openChatOptions({
+                              type: 'dm',
+                              conversationId: chat.id,
+                              friendStatus: 'none',
+                              hasReported: false,
+                              isRelationshipReady: false,
+                              name: otherName,
+                              userId: otherUserId,
+                            });
+                          }
+                        }}
                         onLongPress={
                           otherUserId
                             ? () =>
@@ -918,29 +930,51 @@ export default function MessagesScreen() {
                   const removalKey = sessionChatHistoryKey(chat.id);
                   const isRemoving = pendingRemovalKeys.has(removalKey);
 
+                  const groupTarget = { type: 'group' as const, id: chat.id, name: otherName };
+
                   return (
-                    <Pressable
+                    <View
                       key={`group:${chat.id}`}
-                      accessibilityHint="Hold for group chat options"
-                      accessibilityLabel={`Session chat for ${otherName}`}
-                      accessibilityRole="button"
-                      delayLongPress={400}
-                      disabled={isRemoving}
-                      onLongPress={() =>
-                        openChatOptions({ type: 'group', id: chat.id, name: otherName })
-                      }
-                      onPress={() => openSessionChat(chat.id)}
-                      style={({ pressed }) => [
-                        styles.threadRow,
+                      style={[
+                        styles.groupRowShell,
                         index > 0 && {
                           borderTopColor: palette.border,
                           borderTopWidth: StyleSheet.hairlineWidth,
                         },
-                        { opacity: isRemoving ? 0.45 : pressed ? 0.7 : 1 },
                       ]}>
-                      {rowContents}
-                    </Pressable>
-                 );
+                      <Pressable
+                        accessibilityActions={[
+                          { name: 'showOptions', label: 'Show group chat options' },
+                          { name: 'remove', label: `Remove ${otherName} from my Messages` },
+                        ]}
+                        accessibilityHint="Hold or use Actions for group chat options"
+                        accessibilityLabel={`Session chat for ${otherName}`}
+                        accessibilityRole="button"
+                        delayLongPress={400}
+                        disabled={isRemoving}
+                        onAccessibilityAction={(event) => {
+                          if (event.nativeEvent.actionName === 'remove') {
+                            confirmRemoveChat(groupTarget);
+                          } else {
+                            openChatOptions(groupTarget);
+                          }
+                        }}
+                        onLongPress={() => openChatOptions(groupTarget)}
+                        onPress={() => openSessionChat(chat.id)}
+                        style={({ pressed }) => [
+                          styles.threadRow,
+                          { opacity: isRemoving ? 0.45 : pressed ? 0.7 : 1 },
+                        ]}>
+                        {rowContents}
+                      </Pressable>
+                      <IconButton
+                        accessibilityLabel={`Remove ${otherName} from my Messages`}
+                        disabled={isRemoving}
+                        icon="trash"
+                        onPress={() => confirmRemoveChat(groupTarget)}
+                      />
+                    </View>
+                  );
                 })}
               </View>
             ) : (
@@ -1034,19 +1068,21 @@ export default function MessagesScreen() {
                 style={styles.chatOptionRow}
               />
             ) : null}
-            <ActionRow
-              destructive
-              divided={false}
-              icon="trash.fill"
-              label="Delete"
-              onPress={() => {
-                const target = chatOptionsTarget;
-                setChatOptionsTarget(null);
-                setTimeout(() => confirmRemoveChat(target), 0);
-              }}
-              showChevron={false}
-              style={styles.chatOptionRow}
-            />
+            {chatOptionsTarget.type === 'group' ? (
+              <ActionRow
+                destructive
+                divided={false}
+                icon="trash.fill"
+                label="Delete"
+                onPress={() => {
+                  const target = chatOptionsTarget;
+                  setChatOptionsTarget(null);
+                  setTimeout(() => confirmRemoveChat(target), 0);
+                }}
+                showChevron={false}
+                style={styles.chatOptionRow}
+              />
+            ) : null}
           </View>
         ) : null}
       </Sheet>
@@ -1162,6 +1198,10 @@ const styles = StyleSheet.create({
     paddingVertical: Space.md,
     flex: 1,
     minWidth: 0,
+  },
+  groupRowShell: {
+    alignItems: 'center',
+    flexDirection: 'row',
   },
   threadBody: {
     flex: 1,
