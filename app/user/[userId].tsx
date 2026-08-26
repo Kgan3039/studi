@@ -222,9 +222,9 @@ export default function PublicProfileScreen() {
   const friendActionLabel: Record<FriendStatus, string> = {
     self: '',
     none: 'Add study buddy',
-    outgoing: 'Requested, tap to cancel',
+    outgoing: 'Cancel request',
     incoming: '',
-    friends: 'Study buddies, tap to remove',
+    friends: 'Remove buddy',
   };
 
   if (loadState === 'loading') {

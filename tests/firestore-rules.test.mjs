@@ -545,7 +545,7 @@ describe('personal hidden chat history', () => {
     }));
   });
 
-  it('rejects DM hidden markers without changing direct-message access', async () => {
+  it('rejects direct-chat hidden markers even for a conversation participant', async () => {
     const db = ctx(ALICE);
     await assertFails(setDoc(
       doc(db, 'users', ALICE, 'hiddenChats', `dm__${convoId(ALICE, BOB)}`),
@@ -553,6 +553,18 @@ describe('personal hidden chat history', () => {
     ));
 
     await assertSucceeds(getDoc(doc(db, 'conversations', convoId(ALICE, BOB))));
+  });
+
+  it('rejects direct-chat markers for another user or an unrelated conversation', async () => {
+    const directId = convoId(ALICE, BOB);
+    await assertFails(setDoc(
+      doc(ctx(ALICE), 'users', BOB, 'hiddenChats', `dm__${directId}`),
+      { chatType: 'dm', threadId: directId, removedAt: serverTimestamp() }
+    ));
+    await assertFails(setDoc(
+      doc(ctx(MALLORY), 'users', MALLORY, 'hiddenChats', `dm__${directId}`),
+      { chatType: 'dm', threadId: directId, removedAt: serverTimestamp() }
+    ));
   });
 
   it('cannot hide a session chat for another user or as a nonparticipant', async () => {
@@ -1596,6 +1608,29 @@ describe('conversations + messages', () => {
     await assertFails(clientSendFlow(ctx(MALLORY), MALLORY, cid, 'm2', 'intruder'));
   });
 
+  it('rejects reply snapshots from direct-message clients', async () => {
+    const cid = convoId(ALICE, BOB);
+    const messageId = 'reply-message';
+    await seed(`conversations/${cid}`, {
+      ...validConversation(ALICE, BOB),
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+
+    const db = ctx(ALICE);
+    const batch = batchWithBoundRateLimit(
+      db, ALICE, 'sendMessage', `conversations/${cid}/messages/${messageId}`
+    );
+    batch.set(doc(db, 'conversations', cid, 'messages', messageId), {
+      senderId: ALICE,
+      text: 'Works for me.',
+      replyTo: { messageId: 'source-message', senderId: BOB, text: 'Meet at Memorial?' },
+      createdAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
+    const saved = await assertSucceeds(getDoc(doc(db, 'conversations', cid, 'messages', messageId)));
+    assert.equal(saved.exists(), false);
+  });
+
   it('client send flow accepts a max-length message without client metadata writes', async () => {
     const cid = convoId(ALICE, BOB);
     const longText = 'x'.repeat(2000);
@@ -2087,6 +2122,16 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'm4', {
       senderId: BOB, text: 'forged clock',
       createdAt: Timestamp.fromMillis(Date.now() + 86_400_000),
+    }));
+  });
+
+  it('rejects reply snapshots from session-chat clients', async () => {
+    await seedChatSession();
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'reply-rejected', {
+      senderId: BOB,
+      text: 'I will be there.',
+      replyTo: { messageId: 'source', senderId: ALICE, text: 'Meet at the library?' },
+      createdAt: serverTimestamp(),
     }));
   });
 

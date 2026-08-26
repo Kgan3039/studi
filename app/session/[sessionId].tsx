@@ -1,5 +1,5 @@
 import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -22,6 +22,7 @@ import {
   usePullToRefreshDistance,
 } from '@/components/ui/PullToRefreshIndicator';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
+import { Sheet } from '@/components/ui/Sheet';
 import { SuccessToast, useSuccessToast } from '@/components/ui/Toast';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -75,9 +76,11 @@ export default function SessionDetailScreen() {
   const [isJoining, setIsJoining] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const [isOpeningHostChat, setIsOpeningHostChat] = useState(false);
+  const [isAttendeeSheetOpen, setIsAttendeeSheetOpen] = useState(false);
   const [chatLastReadAt, setChatLastReadAt] = useState<Timestamp | null>(null);
   const { toast, show: showToast } = useSuccessToast();
   const { onPullScroll, pullDistance } = usePullToRefreshDistance();
+  const attendeeProfileTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthState((user) => {
@@ -85,6 +88,14 @@ export default function SessionDetailScreen() {
     });
 
     return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (attendeeProfileTimeoutRef.current) {
+        clearTimeout(attendeeProfileTimeoutRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -476,6 +487,21 @@ export default function SessionDetailScreen() {
     attendeeNames.length > 3
       ? `${attendeeNames.slice(0, 3).join(', ')} +${attendeeNames.length - 3}`
       : attendeeNames.join(', ');
+  const attendeeSheetSubtitle =
+    typeof capacity === 'number'
+      ? `${goingCount} of ${capacity} seats filled`
+      : `${goingCount} ${goingCount === 1 ? 'person' : 'people'} going`;
+
+  function openAttendeeProfile(userId: string) {
+    setIsAttendeeSheetOpen(false);
+    if (attendeeProfileTimeoutRef.current) {
+      clearTimeout(attendeeProfileTimeoutRef.current);
+    }
+    attendeeProfileTimeoutRef.current = setTimeout(() => {
+      attendeeProfileTimeoutRef.current = null;
+      router.push(`/user/${userId}`);
+    }, 350);
+  }
 
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
@@ -606,41 +632,51 @@ export default function SessionDetailScreen() {
             </View>
 
             <View style={styles.section}>
-              <View style={styles.attendanceHeader}>
-                <View style={styles.sectionTitleRow}>
-                  <IconSymbol color={palette.tint} name="person.2.fill" size={19} />
-                  <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>
-                    {goingHeading}
-                  </Text>
-                </View>
-                <BadgeChip
-                  label={joinStatusLabel}
-                  tone={isParticipant ? 'success' : isFull || isCancelled ? 'neutral' : 'info'}
-                />
-              </View>
-              {visibleGuests.length > 0 ? (
-                <View style={styles.attendeeSummary}>
-                  <View style={styles.attendeeAvatars}>
-                    {visibleGuests.slice(0, 4).map((attendee) => (
-                      <Avatar
-                        key={attendee.uid}
-                        name={formatDisplayName(attendee.displayName)}
-                        size="sm"
-                        verified
-                      />
-                    ))}
+              <Pressable
+                accessibilityHint="Opens attendee profiles"
+                accessibilityLabel={`View attendees, ${goingHeading}`}
+                accessibilityRole="button"
+                onPress={() => setIsAttendeeSheetOpen(true)}
+                style={({ pressed }) => [styles.attendancePressable, pressed && styles.pressed]}>
+                <View style={styles.attendanceHeader}>
+                  <View style={styles.sectionTitleRow}>
+                    <IconSymbol color={palette.tint} name="person.2.fill" size={19} />
+                    <Text style={[TypeScale.sectionTitle, { color: palette.text }]}>
+                      {goingHeading}
+                    </Text>
                   </View>
-                  <Text
-                    style={[TypeScale.body, styles.attendeeNames, { color: palette.text }]}
-                    numberOfLines={2}>
-                    {attendeeSummary}
-                  </Text>
+                  <View style={styles.attendanceHeaderActions}>
+                    <BadgeChip
+                      label={joinStatusLabel}
+                      tone={isParticipant ? 'success' : isFull || isCancelled ? 'neutral' : 'info'}
+                    />
+                    <IconSymbol color={palette.icon} name="chevron.right" size={18} />
+                  </View>
                 </View>
-              ) : (
-                <Text style={[TypeScale.body, { color: palette.icon }]}>
-                  The host is currently the only attendee.
-                </Text>
-              )}
+                {visibleGuests.length > 0 ? (
+                  <View style={styles.attendeeSummary}>
+                    <View style={styles.attendeeAvatars}>
+                      {visibleGuests.slice(0, 4).map((attendee) => (
+                        <Avatar
+                          key={attendee.uid}
+                          name={formatDisplayName(attendee.displayName)}
+                          size="sm"
+                          verified
+                        />
+                      ))}
+                    </View>
+                    <Text
+                      style={[TypeScale.body, styles.attendeeNames, { color: palette.text }]}
+                      numberOfLines={2}>
+                      {attendeeSummary}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={[TypeScale.body, { color: palette.icon }]}>
+                    The host is currently the only attendee.
+                  </Text>
+                )}
+              </Pressable>
               <View style={styles.verifiedRow}>
                 <IconSymbol color={Brand.success} name="lock.shield.fill" size={16} />
                 <Text style={[TypeScale.caption, { color: palette.icon }]}>
@@ -712,6 +748,42 @@ export default function SessionDetailScreen() {
         )}
       </ScrollView>
       <PullToRefreshIndicator pullDistance={pullDistance} refreshing={isRefreshing} />
+
+      <Sheet
+        visible={isAttendeeSheetOpen}
+        onClose={() => setIsAttendeeSheetOpen(false)}
+        title="Going"
+        subtitle={attendeeSheetSubtitle}>
+        <View style={styles.attendeeList}>
+          {visibleAttendees.map((attendee) => {
+            const attendeeName = formatDisplayName(attendee.displayName);
+            const attendeeIsHost = attendee.uid === session?.hostId;
+
+            return (
+              <Pressable
+                accessibilityLabel={`View ${attendeeName}'s profile`}
+                accessibilityRole="button"
+                key={attendee.uid}
+                onPress={() => openAttendeeProfile(attendee.uid)}
+                style={({ pressed }) => [
+                  styles.attendeeProfileRow,
+                  { borderBottomColor: palette.border, opacity: pressed ? 0.7 : 1 },
+                ]}>
+                <Avatar name={attendeeName} size="md" verified />
+                <View style={styles.attendeeProfileCopy}>
+                  <Text style={[TypeScale.bodyStrong, { color: palette.text }]} numberOfLines={1}>
+                    {attendeeName}
+                  </Text>
+                  <Text style={[TypeScale.caption, { color: palette.icon }]}>
+                    {attendeeIsHost ? 'Host · Verified UW student' : 'Verified UW student'}
+                  </Text>
+                </View>
+                <IconSymbol color={palette.icon} name="chevron.right" size={18} />
+              </Pressable>
+            );
+          })}
+        </View>
+      </Sheet>
 
       {/* 5. PRIMARY CTA AREA. */}
       {session ? (
@@ -886,6 +958,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: Space.sm,
   },
+  attendancePressable: {
+    gap: Space.md,
+  },
+  attendanceHeaderActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
   section: {
     gap: Space.md,
     paddingHorizontal: Space.xs,
@@ -906,6 +986,22 @@ const styles = StyleSheet.create({
   },
   attendeeNames: {
     flex: 1,
+  },
+  attendeeList: {
+    gap: 0,
+  },
+  attendeeProfileRow: {
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: Space.md,
+    minHeight: 68,
+    paddingVertical: Space.md,
+  },
+  attendeeProfileCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
   },
   locationCopy: {
     gap: 2,

@@ -55,7 +55,7 @@ describe("Messages beta history helpers", () => {
     );
   });
 
-  it("hides optimistic group removals without affecting direct messages", () => {
+  it("hides session-chat removals while direct messages remain unaffected", () => {
     assert.equal(
       isMessageRowVisible({ type: "group", isHidden: false, isPendingRemoval: true }),
       false
@@ -200,8 +200,8 @@ describe("Messages beta production wiring", () => {
 
   it("keeps failed removals visible and uses safe user-facing copy", () => {
     const removalBody = messagesSource.slice(
-      messagesSource.indexOf("async function handleRemoveSessionChat"),
-      messagesSource.indexOf("function confirmRemoveSessionChat")
+      messagesSource.indexOf("async function handleRemoveChat"),
+      messagesSource.indexOf("function confirmRemoveChat")
     );
     assert.match(removalBody, /catch \{/);
     assert.match(removalBody, /next\.delete\(key\)/);
@@ -213,37 +213,36 @@ describe("Messages beta production wiring", () => {
     );
   });
 
-  it("offers accessible swipe and non-swipe removal actions through one confirmation path", () => {
-    assert.equal(
-      (messagesSource.match(/accessibilityLabel={`Remove \$\{otherName\} from my Messages`}/g) ?? [])
-        .length,
-      2
-    );
+  it("keeps session removal visible, accessible, and routed through one confirmation path", () => {
     assert.match(confirmationSource, /Remove from my Messages\?/);
     assert.match(confirmationSource, /This hides the chat only for you\./);
     assert.match(confirmationSource, /style: "cancel"/);
     assert.match(confirmationSource, /style: "destructive"/);
-    assert.match(messagesSource, /renderRightActions/);
+    assert.match(messagesSource, /function openChatOptions/);
+    assert.match(messagesSource, /<Sheet/);
+    assert.match(messagesSource, /label="Delete"/);
+    assert.match(messagesSource, /removeSessionChatFromUserHistory/);
+    assert.match(messagesSource, /accessibilityLabel=\{`Remove \$\{otherName\} from my Messages`\}/);
     assert.match(messagesSource, /<IconButton/);
-    assert.equal(
-      (messagesSource.match(/onPress=\{\(\) => confirmRemoveSessionChat\(chat\.id\)\}/g) ?? [])
-        .length,
-      2
-    );
+    assert.match(messagesSource, /name: 'remove', label: `Remove \$\{otherName\} from my Messages`/);
     assert.match(messagesSource, /platform: Platform\.OS/);
     assert.match(messagesSource, /window\.confirm\(message\)/);
   });
 
-  it("keeps the direct-message branch free of hidden-marker and removal behavior", () => {
+  it("gives direct conversations relationship and safety actions on hold", () => {
     const rowRendering = messagesSource.slice(messagesSource.indexOf("visibleChats.map"));
     const directMessageBranch = rowRendering.slice(
       rowRendering.indexOf('if (chat.type === "dm")'),
       rowRendering.indexOf("const removalKey = sessionChatHistoryKey")
     );
-    assert.match(directMessageBranch, /conversation\/\[conversationId\]/);
-    assert.doesNotMatch(directMessageBranch, /hiddenChats|confirmRemove|IconButton|Swipeable/);
-    assert.doesNotMatch(firestoreSource, /chatType: "dm"/);
-    assert.match(firestoreSource, /where\("chatType", "==", "group"\)/);
+    assert.match(directMessageBranch, /openChatOptions/);
+    assert.match(messagesSource, /function openDirectChat[\s\S]*conversation\/\[conversationId\]/);
+    assert.match(messagesSource, /return 'Add buddy'/);
+    assert.match(messagesSource, /label="Block"/);
+    assert.match(messagesSource, /label=\{chatOptionsTarget\.hasReported \? 'Report again' : 'Report'\}/);
+    assert.match(firestoreSource, /chatType: \"group\"/);
+    assert.doesNotMatch(firestoreSource, /chatType: \"dm\" \| \"group\"/);
+    assert.doesNotMatch(directMessageBranch, /confirmRemoveChat|removeSessionChatFromUserHistory/);
   });
 
   it("returns a blocked conversation through the existing Messages tab", () => {

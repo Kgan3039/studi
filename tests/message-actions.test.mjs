@@ -153,6 +153,7 @@ describe('hidden-message hydration scope', () => {
 
 describe('message action production wiring', () => {
   const directChat = readFileSync('app/conversation/[conversationId].tsx', 'utf8');
+  const messagesScreen = readFileSync('app/(tabs)/messages.tsx', 'utf8');
   const messageActionsHook = readFileSync('hooks/use-message-actions.ts', 'utf8');
   const messageActionsUi = readFileSync('components/ui/MessageActions.tsx', 'utf8');
   const sessionChat = readFileSync('app/session-chat/[sessionId].tsx', 'utf8');
@@ -182,10 +183,39 @@ describe('message action production wiring', () => {
   });
 
   it('keeps reports private to the action sheet and unavailable for your own messages', () => {
-    assert.match(messageActionsUi, /label="Report Message"/);
+    assert.match(messageActionsUi, /label="Report"/);
     assert.match(messageActionsUi, /controller\.canReportActive/);
     assert.match(messageActionsHook, /activeMessage\.senderId !== currentUserId/);
     assert.match(messageActionsHook, /onReportMessage\(message\)/);
+  });
+
+  it('keeps the full shared action model and private reporting in session chat', () => {
+    for (const label of ['Copy', 'Edit', 'Unsend', 'Report', 'Delete', 'Select']) {
+      assert.match(messageActionsUi, new RegExp(`label="${label}"`));
+    }
+    assert.doesNotMatch(messageActionsUi, /isSessionChat/);
+    assert.match(sessionChat, /onReportMessage:/);
+    assert.match(sessionChat, /contentType: 'session_message'/);
+    assert.match(sessionChat, /contentId: message\.messageId/);
+  });
+
+  it('lets a session chat menu open its group and member profiles', () => {
+    assert.match(messagesScreen, /label="View group"/);
+    assert.match(messagesScreen, /getSessionById\(groupMembersSessionId\)/);
+    assert.match(messagesScreen, /accessibilityLabel=\{`View \$\{memberName\}'s profile`\}/);
+    assert.match(messagesScreen, /router\.push\(`\/user\/\$\{userId\}`\)/);
+  });
+
+  it('keeps reply snapshots out of the release action and persistence model', () => {
+    for (const source of [messageActionsUi, directChat, sessionChat, firestore]) {
+      assert.doesNotMatch(source, /replyTo|MessageReply|onReply|PanResponder/);
+    }
+  });
+
+  it('exposes the shared action sheet through an explicit accessibility action', () => {
+    assert.match(messageActionsUi, /name: 'activate', label: 'Open message actions'/);
+    assert.match(messageActionsUi, /onAccessibilityAction=/);
+    assert.match(messageActionsUi, /onOpenActions\(\)/);
   });
 
   it('uses atomic, message-bound shared reactions and a stronger active-message backdrop', () => {

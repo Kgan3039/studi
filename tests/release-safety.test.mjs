@@ -14,9 +14,11 @@ describe('release safety wiring', () => {
     assert.match(reportScreen, /disabled=\{blockRetryNeeded\}/);
   });
 
-  it('routes individual DM and session-chat messages into the private report flow', () => {
+  it('routes direct and session messages into their authoritative private report flows', () => {
     assert.match(dmScreen, /contentType: 'direct_message'/);
     assert.match(dmScreen, /contentId: message\.messageId/);
+    assert.match(sessionChatScreen, /threadType: 'session'/);
+    assert.match(sessionChatScreen, /onReportMessage:/);
     assert.match(sessionChatScreen, /contentType: 'session_message'/);
     assert.match(sessionChatScreen, /contentId: message\.messageId/);
   });

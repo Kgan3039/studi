@@ -12,6 +12,7 @@ import { Timestamp } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 
 import { Sheet } from '@/components/ui/Sheet';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
@@ -211,7 +212,11 @@ export function NotificationCenterButton() {
           },
           pressed ? { backgroundColor: palette.surfaceMuted, transform: [{ scale: 0.94 }] } : null,
         ]}>
-        <MaterialIcons color={palette.text} name="notifications-none" size={22} />
+        <IconSymbol
+          color={unreadCount > 0 ? palette.tint : palette.text}
+          name={unreadCount > 0 ? 'bell.badge.fill' : 'bell'}
+          size={21}
+        />
         {unreadCount > 0 ? (
           <View
             style={[
@@ -263,11 +268,17 @@ export function NotificationCenterButton() {
                           opacity: pressed ? 0.7 : 1,
                         },
                       ]}>
-                      <MaterialIcons
-                        color={unread ? palette.tint : palette.icon}
-                        name={ICON_BY_TYPE[item.type] ?? 'notifications-none'}
-                        size={21}
-                      />
+                      <View
+                        style={[
+                          styles.previewIcon,
+                          { backgroundColor: unread ? palette.hero : palette.surfaceMuted },
+                        ]}>
+                        <MaterialIcons
+                          color={unread ? palette.tint : palette.icon}
+                          name={ICON_BY_TYPE[item.type] ?? 'notifications-none'}
+                          size={19}
+                        />
+                      </View>
                       <View style={styles.previewCopy}>
                         <View style={styles.previewTitleRow}>
                           <Text
@@ -328,21 +339,21 @@ const styles = StyleSheet.create({
     borderRadius: Radius.pill,
     borderWidth: 1.5,
     justifyContent: 'center',
-    minHeight: 16,
-    minWidth: 16,
+    minHeight: 20,
+    minWidth: 20,
     paddingHorizontal: 3,
     position: 'absolute',
     // The button is a 44pt target around a 22pt bell, so anchoring to the
     // button's corner leaves the count floating in empty space. These offsets
     // sit it on the bell itself.
-    right: 5,
-    top: 4,
+    right: 1,
+    top: -2,
   },
   countText: {
     color: '#FFFFFF',
     fontFamily: TypeScale.eyebrow.fontFamily,
-    fontSize: 9,
-    lineHeight: 11,
+    fontSize: 10,
+    lineHeight: 12,
   },
   previewBodyWrap: {
     paddingHorizontal: Space.lg,
@@ -364,6 +375,13 @@ const styles = StyleSheet.create({
     minHeight: 64,
     paddingHorizontal: Space.xs,
     paddingVertical: Space.md,
+  },
+  previewIcon: {
+    alignItems: 'center',
+    borderRadius: Radius.md,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
   },
   previewCopy: {
     flex: 1,
