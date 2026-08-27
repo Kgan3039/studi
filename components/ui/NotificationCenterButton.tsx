@@ -214,7 +214,7 @@ export function NotificationCenterButton() {
         ]}>
         <IconSymbol
           color={unreadCount > 0 ? palette.tint : palette.text}
-          name={unreadCount > 0 ? 'bell.badge.fill' : 'bell'}
+          name="bell"
           size={21}
         />
         {unreadCount > 0 ? (

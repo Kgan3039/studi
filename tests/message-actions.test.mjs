@@ -189,10 +189,13 @@ describe('message action production wiring', () => {
     assert.match(messageActionsHook, /onReportMessage\(message\)/);
   });
 
-  it('keeps the full shared action model and private reporting in session chat', () => {
-    for (const label of ['Copy', 'Edit', 'Unsend', 'Report', 'Delete', 'Select']) {
+  it('keeps the shared action model and private reporting in session chat', () => {
+    for (const label of ['Copy', 'Reply', 'Report', 'Delete']) {
       assert.match(messageActionsUi, new RegExp(`label="${label}"`));
     }
+    assert.match(messageActionsUi, /'Like'/);
+    assert.match(messageActionsUi, /'Unlike'/);
+    assert.doesNotMatch(messageActionsUi, /label="Select"/);
     assert.doesNotMatch(messageActionsUi, /isSessionChat/);
     assert.match(sessionChat, /onReportMessage:/);
     assert.match(sessionChat, /contentType: 'session_message'/);
@@ -206,16 +209,118 @@ describe('message action production wiring', () => {
     assert.match(messagesScreen, /router\.push\(`\/user\/\$\{userId\}`\)/);
   });
 
-  it('keeps reply snapshots out of the release action and persistence model', () => {
+  it('wires reply snapshots and mobile reply gestures through both chat types', () => {
     for (const source of [messageActionsUi, directChat, sessionChat, firestore]) {
-      assert.doesNotMatch(source, /replyTo|MessageReply|onReply|PanResponder/);
+      assert.match(source, /replyTo|MessageReply|onSwipeToReply|PanResponder/);
     }
+    assert.match(messageActionsUi, /label="Reply"/);
+    assert.match(messageActionsUi, /activeMessageLikedByCurrentUser/);
+    assert.match(messageActionsUi, /label=\{controller\.activeMessageLikedByCurrentUser \? 'Unlike' : 'Like'\}/);
+    assert.match(messageActionsUi, /delayLongPress=\{350\}/);
+    assert.match(messageActionsUi, /replySwipeThreshold = 70/);
+    assert.match(messageActionsUi, /gestureState\.dx > swipeToReplyThresholdRef\.current/);
+    assert.match(
+      messageActionsUi,
+      /style=\{\[styles\.gestureTarget, bubbleStyle, !!reaction && styles\.gestureTargetWithReaction\]\}/
+    );
+      assert.match(messageActionsUi, /style=\{styles\.messagePressTarget\}/);
+      assert.match(messageActionsUi, /gestureResetKey/);
+    assert.match(
+      messageActionsUi,
+      /if \(longPressTriggeredRef\.current\) \{\s*longPressTriggeredRef\.current = false;\s*return;/
+    );
+    assert.doesNotMatch(messageActionsUi, /showLikeAnimation|likeAnimation|Animated\.|likeScale|likeOpacity/);
+    assert.match(directChat, /canDoubleTapLikeMessage/);
+    assert.match(sessionChat, /canDoubleTapLikeMessage/);
+    assert.match(directChat, /gestureResetKey=\{isLikedByCurrentUser\}/);
+    assert.match(sessionChat, /gestureResetKey=\{isLikedByCurrentUser\}/);
+    assert.match(directChat, /replySwipeThreshold=\{isCurrentUser \? 32 : 70\}/);
+    assert.match(sessionChat, /replySwipeThreshold=\{isCurrentUser \? 32 : 70\}/);
+    assert.match(directChat, /MessageReplyCount/);
+    assert.match(sessionChat, /MessageReplyCount/);
+    assert.match(directChat, /MessageReplyComposer/);
+    assert.match(sessionChat, /MessageReplyComposer/);
+    assert.match(directChat, /MessageReplyThreadSheet/);
+    assert.match(sessionChat, /MessageReplyThreadSheet/);
+  });
+
+  it('keeps the clean core actions visible after a reaction and keeps badges outside message text', () => {
+    assert.match(
+      messageActionsUi,
+      /label=\{controller\.activeMessageLikedByCurrentUser \? 'Unlike' : 'Like'\}/
+    );
+    for (const label of ['Reply', 'Copy', 'Report', 'Delete']) {
+      assert.match(messageActionsUi, new RegExp(`label="${label}"`));
+    }
+    assert.doesNotMatch(messageActionsUi, /label="Edit"/);
+    assert.doesNotMatch(messageActionsUi, /label="Unsend"/);
+    assert.match(messageActionsUi, /side: 'left' \| 'right'/);
+    assert.match(messageActionsUi, /gestureTargetWithReaction:[\s\S]*marginTop: Space\.md/);
+    assert.match(messageActionsUi, /replyReference:[\s\S]*paddingBottom: Space\.md \+ Space\.xs/);
+    assert.match(messageActionsUi, /threadMessage:[\s\S]*minWidth: 88/);
+    assert.match(directChat, /side=\{isCurrentUser \? 'right' : 'left'\}/);
+    assert.match(sessionChat, /side=\{isCurrentUser \? 'right' : 'left'\}/);
+    assert.doesNotMatch(directChat, /message\.likedByIds\.length > 0 && styles\.bubbleWithReaction/);
+    assert.doesNotMatch(sessionChat, /message\.likedByIds\.length > 0 && styles\.bubbleWithReaction/);
+  });
+
+  it('renders reply references as a muted source bubble only when its source is not adjacent', () => {
+    assert.match(messageActionsUi, /sourceIsCurrentUser: boolean/);
+    assert.match(messageActionsUi, /isDirectReply = false/);
+    assert.match(messageActionsUi, /!isDirectReply \? \(/);
+    assert.match(messageActionsUi, /styles\.replyReferenceStem/);
+    assert.match(messageActionsUi, /styles\.replyReferenceStemOther/);
+    assert.match(messageActionsUi, /styles\.replyReferenceStemOwn/);
+    assert.match(messageActionsUi, /replyGhostText/);
+    assert.doesNotMatch(messageActionsUi, /replyConnector/);
+    assert.match(directChat, /isDirectReply=\{isReplyDirectlyBelowSource\}/);
+    assert.match(sessionChat, /isDirectReply=\{isReplyDirectlyBelowSource\}/);
+    assert.match(directChat, /message\.replyTo\?\.messageId === previousMessage\?\.messageId/);
+    assert.match(sessionChat, /message\.replyTo\?\.messageId === chronPrev\?\.messageId/);
+    assert.match(directChat, /const hasDirectReplyBelow/);
+    assert.match(sessionChat, /const hasDirectReplyBelow/);
+    assert.match(directChat, /replyCount > 0 && !hasDirectReplyBelow/);
+    assert.match(sessionChat, /replyCount > 0 && !hasDirectReplyBelow/);
+    assert.match(directChat, /messageGroup:\s*\{\s*alignSelf: 'stretch',[\s\S]*width: '100%'/);
+    assert.match(sessionChat, /messageGroup:\s*\{\s*alignSelf: 'stretch',[\s\S]*width: '100%'/);
+    assert.match(messageActionsUi, /replyReference:[\s\S]*width: '100%'/);
+    assert.match(messageActionsUi, /const replyGuideColor/);
+    assert.match(messageActionsUi, /width: Space\.xxl \+ Space\.sm/);
+    assert.match(messageActionsUi, /!isDirectReply && !sourceIsCurrentUser && styles\.replyReferenceStemBelow/);
+    assert.match(messageActionsUi, /isDirectReply && styles\.replyReferenceStemInline/);
+    assert.match(messageActionsUi, /!isDirectReply && sourceIsCurrentUser && styles\.replyReferenceStemDistantOwn/);
+    assert.match(messageActionsUi, /replyReferenceInlineOther:[\s\S]*marginTop: -\(Space\.xxl \+ Space\.xs\)/);
+    assert.match(messageActionsUi, /replyReferenceStemInline:[\s\S]*top: 0/);
+    assert.match(messageActionsUi, /replyReferenceStemDistantOwn:[\s\S]*top: Space\.sm/);
+    assert.match(messageActionsUi, /count > 1 \? <IconSymbol color=\{palette\.tint\} name="chevron\.right" size=\{12\} \/> : null/);
+    assert.match(messageActionsUi, /replyCountText:\s*\{\s*fontFamily: FontFamily\.bodySemiBold,\s*fontSize: 13/);
+    assert.doesNotMatch(
+      messageActionsUi,
+      /<IconSymbol color=\{palette\.tint\} name="arrow\.uturn\.backward" size=\{15\} \/>/
+    );
   });
 
   it('exposes the shared action sheet through an explicit accessibility action', () => {
     assert.match(messageActionsUi, /name: 'activate', label: 'Open message actions'/);
     assert.match(messageActionsUi, /onAccessibilityAction=/);
     assert.match(messageActionsUi, /onOpenActions\(\)/);
+  });
+
+  it('keeps message options reachable while a reaction write is pending', () => {
+    assert.doesNotMatch(
+      messageActionsHook,
+      /function openMessageActions\(message: MessageActionRecord\) \{\s*if \(message\.pending\)/
+    );
+    assert.match(messageActionsHook, /const canDeleteActive = !!activeMessage && !isMessageUnsent\(activeMessage\)/);
+    assert.doesNotMatch(
+      messageActionsHook,
+      /function canReplyToMessage\(message: MessageActionRecord\)[\s\S]*!message\.pending/
+    );
+    assert.doesNotMatch(
+      messageActionsHook,
+      /function canReactToMessage\(message: MessageActionRecord\)[\s\S]*!message\.pending/
+    );
+    assert.match(messageActionsUi, /controller\.canDeleteActive/);
   });
 
   it('uses atomic, message-bound shared reactions and a stronger active-message backdrop', () => {

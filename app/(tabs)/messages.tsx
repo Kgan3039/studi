@@ -19,7 +19,6 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
-import { IconButton } from '@/components/ui/IconButton';
 import {
   PullToRefreshIndicator,
   usePullToRefreshDistance,
@@ -59,6 +58,7 @@ import {
   blockUser,
   getBlockedUserIds,
   getGroupChatListItem,
+  getLatestSessionMessagePreview,
   getSessionById,
   removeSessionChatFromUserHistory,
   SESSION_CHAT_GRACE_PERIOD_MS,
@@ -128,6 +128,7 @@ export default function MessagesScreen() {
   const [keptOnlyGroupChats, setKeptOnlyGroupChats] = useState<GroupChatListItem[]>([]);
   const [hiddenChats, setHiddenChats] = useState<Map<string, HiddenChat>>(new Map());
   const [keptSessionChats, setKeptSessionChats] = useState<Map<string, KeptSessionChat>>(new Map());
+  const [groupChatPreviews, setGroupChatPreviews] = useState<Map<string, string>>(new Map());
   const [pendingRemovalKeys, setPendingRemovalKeys] = useState<Set<string>>(new Set());
   const pendingRemovalKeysRef = useRef(new Set<string>());
   const longPressChatRef = useRef<string | null>(null);
@@ -361,6 +362,37 @@ export default function MessagesScreen() {
   );
 
   useEffect(() => {
+    if (!currentUser || allGroupChats.length === 0) {
+      setGroupChatPreviews(new Map());
+      return;
+    }
+
+    let active = true;
+    const sessionIds = [...new Set(allGroupChats.map((groupChat) => groupChat.sessionId))];
+
+    void Promise.all(
+      sessionIds.map(async (sessionId) => {
+        const preview = await getLatestSessionMessagePreview(sessionId).catch(() => null);
+        return [sessionId, preview] as const;
+      })
+    ).then((entries) => {
+      if (!active) {
+        return;
+      }
+
+      setGroupChatPreviews(
+        new Map(
+          entries.filter((entry): entry is readonly [string, string] => entry[1] !== null)
+        )
+      );
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [allGroupChats, currentUser]);
+
+  useEffect(() => {
     if (!currentUser) {
       setHiddenChats(new Map());
       setPendingRemovalKeys(new Set());
@@ -449,7 +481,7 @@ export default function MessagesScreen() {
         type: "group" as const,
         id: groupChat.sessionId,
         name: groupChat.title,
-        preview: "Session chat",
+        preview: groupChatPreviews.get(groupChat.sessionId) ?? "",
         timestamp: groupChat.lastMessageAt,
         groupChat,
       })),
@@ -484,6 +516,7 @@ export default function MessagesScreen() {
   }, [
     conversations,
     allGroupChats,
+    groupChatPreviews,
     hiddenChats,
     keptSessionChats,
     nowMs,
@@ -844,29 +877,20 @@ export default function MessagesScreen() {
                           </Text>
                         </View>
 
-                        {isSessionChat ? (
-                          <View style={styles.sessionChatLabel}>
-                            <IconSymbol color={palette.tint} name="message.fill" size={15} />
-                            <Text style={[TypeScale.caption, { color: palette.tint }]}>
-                              Session chat
-                            </Text>
-                          </View>
-                        ) : (
-                          <View style={styles.threadPreview}>
-                            {isBlocked ? (
-                              <IconSymbol color={palette.tint} name="nosign" size={15} />
-                            ) : null}
+                        <View style={styles.threadPreview}>
+                          {isBlocked ? (
+                            <IconSymbol color={palette.tint} name="nosign" size={15} />
+                          ) : null}
 
-                            <Text
-                              style={[
-                                TypeScale.body,
-                                { color: isBlocked ? palette.tint : palette.secondaryText },
-                              ]}
-                              numberOfLines={1}>
-                              {chat.preview}
-                            </Text>
-                          </View>
-                        )}
+                          <Text
+                            style={[
+                              TypeScale.body,
+                              { color: isBlocked ? palette.tint : palette.secondaryText },
+                            ]}
+                            numberOfLines={1}>
+                            {chat.preview}
+                          </Text>
+                        </View>
                       </View>
                     </>
                   );
@@ -933,47 +957,36 @@ export default function MessagesScreen() {
                   const groupTarget = { type: 'group' as const, id: chat.id, name: otherName };
 
                   return (
-                    <View
+                    <Pressable
                       key={`group:${chat.id}`}
-                      style={[
-                        styles.groupRowShell,
+                      accessibilityActions={[
+                        { name: 'showOptions', label: 'Show group chat options' },
+                        { name: 'remove', label: `Remove ${otherName} from my Messages` },
+                      ]}
+                      accessibilityHint="Hold or use Actions for group chat options"
+                      accessibilityLabel={`Session chat for ${otherName}`}
+                      accessibilityRole="button"
+                      delayLongPress={400}
+                      disabled={isRemoving}
+                      onAccessibilityAction={(event) => {
+                        if (event.nativeEvent.actionName === 'remove') {
+                          confirmRemoveChat(groupTarget);
+                        } else {
+                          openChatOptions(groupTarget);
+                        }
+                      }}
+                      onLongPress={() => openChatOptions(groupTarget)}
+                      onPress={() => openSessionChat(chat.id)}
+                      style={({ pressed }) => [
+                        styles.threadRow,
                         index > 0 && {
                           borderTopColor: palette.border,
                           borderTopWidth: StyleSheet.hairlineWidth,
                         },
+                        { opacity: isRemoving ? 0.45 : pressed ? 0.7 : 1 },
                       ]}>
-                      <Pressable
-                        accessibilityActions={[
-                          { name: 'showOptions', label: 'Show group chat options' },
-                          { name: 'remove', label: `Remove ${otherName} from my Messages` },
-                        ]}
-                        accessibilityHint="Hold or use Actions for group chat options"
-                        accessibilityLabel={`Session chat for ${otherName}`}
-                        accessibilityRole="button"
-                        delayLongPress={400}
-                        disabled={isRemoving}
-                        onAccessibilityAction={(event) => {
-                          if (event.nativeEvent.actionName === 'remove') {
-                            confirmRemoveChat(groupTarget);
-                          } else {
-                            openChatOptions(groupTarget);
-                          }
-                        }}
-                        onLongPress={() => openChatOptions(groupTarget)}
-                        onPress={() => openSessionChat(chat.id)}
-                        style={({ pressed }) => [
-                          styles.threadRow,
-                          { opacity: isRemoving ? 0.45 : pressed ? 0.7 : 1 },
-                        ]}>
-                        {rowContents}
-                      </Pressable>
-                      <IconButton
-                        accessibilityLabel={`Remove ${otherName} from my Messages`}
-                        disabled={isRemoving}
-                        icon="trash"
-                        onPress={() => confirmRemoveChat(groupTarget)}
-                      />
-                    </View>
+                      {rowContents}
+                    </Pressable>
                   );
                 })}
               </View>
@@ -1199,10 +1212,6 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-  groupRowShell: {
-    alignItems: 'center',
-    flexDirection: 'row',
-  },
   threadBody: {
     flex: 1,
     gap: Space.xs,
@@ -1227,11 +1236,6 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     width: 40,
-  },
-  sessionChatLabel: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: Space.xs + 2,
   },
   threadName: {
     flexShrink: 1,

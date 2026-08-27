@@ -168,6 +168,9 @@ describe("Messages beta production wiring", () => {
     assert.match(groupQuery, /limit\(GROUP_CHAT_LIST_LIMIT\)/);
     assert.doesNotMatch(groupQuery, /lastMessagePreview|chatLifecycle|retention/);
     assert.match(firestoreSource, /if \(!lastMessageAt\) \{\s*return null;/);
+    assert.match(firestoreSource, /getLatestSessionMessagePreview[\s\S]*orderBy\("createdAt", "desc"\)[\s\S]*limit\(1\)/);
+    assert.match(messagesSource, /preview: groupChatPreviews\.get\(groupChat\.sessionId\) \?\? ""/);
+    assert.doesNotMatch(messagesSource, /preview: "Session chat"/);
   });
 
   it("declares the composite index used by the bounded session-chat query", () => {
@@ -222,8 +225,7 @@ describe("Messages beta production wiring", () => {
     assert.match(messagesSource, /<Sheet/);
     assert.match(messagesSource, /label="Delete"/);
     assert.match(messagesSource, /removeSessionChatFromUserHistory/);
-    assert.match(messagesSource, /accessibilityLabel=\{`Remove \$\{otherName\} from my Messages`\}/);
-    assert.match(messagesSource, /<IconButton/);
+    assert.doesNotMatch(messagesSource, /<IconButton/);
     assert.match(messagesSource, /name: 'remove', label: `Remove \$\{otherName\} from my Messages`/);
     assert.match(messagesSource, /platform: Platform\.OS/);
     assert.match(messagesSource, /window\.confirm\(message\)/);

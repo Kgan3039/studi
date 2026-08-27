@@ -1,5 +1,6 @@
-import { useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import {
+  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -20,14 +21,23 @@ import { Sheet } from '@/components/ui/Sheet';
 import { Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { MessageActionController } from '@/hooks/use-message-actions';
-import { isMessageDoubleTap, type MessageActionRecord } from '@/lib/message-actions';
+import type { MessageReply } from '@/lib/firestore';
+import {
+  isMessageDoubleTap,
+  isMessageUnsent,
+  type MessageActionRecord,
+} from '@/lib/message-actions';
 
 type MessageSelectionTargetProps = {
   accessibilityLabel: string;
   bubbleStyle: StyleProp<ViewStyle>;
   children: ReactNode;
+  gestureResetKey?: string | number | boolean;
+  reaction?: ReactNode;
   onDoublePress?: () => void;
   onOpenActions: () => void;
+  onSwipeToReply?: () => void;
+  replySwipeThreshold?: number;
   onToggleSelection: () => void;
   rowStyle: StyleProp<ViewStyle>;
   selected: boolean;
@@ -39,18 +49,61 @@ export function MessageSelectionTarget({
   accessibilityLabel,
   bubbleStyle,
   children,
+  gestureResetKey,
   onDoublePress,
   onOpenActions,
+  onSwipeToReply,
   onToggleSelection,
+  reaction,
+  replySwipeThreshold = 70,
   rowStyle,
   selected,
   selecting,
 }: MessageSelectionTargetProps) {
   const lastTapAtRef = useRef(0);
   const longPressTriggeredRef = useRef(false);
+  const swipeToReplyRef = useRef(onSwipeToReply);
+  const swipeToReplyThresholdRef = useRef(replySwipeThreshold);
+  swipeToReplyRef.current = onSwipeToReply;
+  swipeToReplyThresholdRef.current = replySwipeThreshold;
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          !!swipeToReplyRef.current
+          && gestureState.dx > 12
+          && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.2,
+        onPanResponderRelease: (_, gestureState) => {
+          if (
+            swipeToReplyRef.current
+            && gestureState.dx > swipeToReplyThresholdRef.current
+          ) {
+            longPressTriggeredRef.current = true;
+            lastTapAtRef.current = 0;
+            swipeToReplyRef.current();
+          }
+        },
+      }),
+    []
+  );
+
+  useEffect(() => {
+    // A like/unlike leaves the row mounted. Clear gesture state only when that
+    // message state changes so the next long press reaches the options sheet.
+    longPressTriggeredRef.current = false;
+    lastTapAtRef.current = 0;
+  }, [gestureResetKey]);
 
   function handlePress() {
-    if (longPressTriggeredRef.current || !onDoublePress) {
+    // Long press and swipe-to-reply can still emit a terminal press event.
+    // Consume that one event, then immediately restore the target so a later
+    // long press always opens message options.
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      return;
+    }
+
+    if (!onDoublePress) {
       return;
     }
 
@@ -90,12 +143,17 @@ export function MessageSelectionTarget({
 
   return (
     <View style={rowStyle}>
-      <Pressable
+      <View
+        {...panResponder.panHandlers}
+        style={[styles.gestureTarget, bubbleStyle, !!reaction && styles.gestureTargetWithReaction]}>
+        <Pressable
         accessibilityActions={[
           { name: 'activate', label: 'Open message actions' },
           ...(onDoublePress ? [{ name: 'magicTap' as const, label: 'Like message' }] : []),
         ]}
-        accessibilityHint="Use the Actions rotor item or long press for message actions. Double tap quickly to like."
+        accessibilityHint={`Use the Actions rotor item or long press for message actions. Double tap quickly to like.${
+          onSwipeToReply ? ' Swipe right to reply.' : ''
+        }`}
         accessibilityLabel={accessibilityLabel}
         accessibilityRole="button"
         delayLongPress={350}
@@ -109,9 +167,11 @@ export function MessageSelectionTarget({
         onPressIn={() => {
           longPressTriggeredRef.current = false;
         }}
-        style={bubbleStyle}>
-        {children}
-      </Pressable>
+        style={styles.messagePressTarget}>
+          {children}
+        </Pressable>
+        {reaction}
+      </View>
     </View>
   );
 }
@@ -141,29 +201,35 @@ export function MessageActionOverlays({
             styles.actionList,
             { borderColor: palette.border, backgroundColor: palette.surfaceMuted },
           ]}>
+          {controller.activeMessage && controller.canReactToMessage(controller.activeMessage) ? (
+            <ActionRow
+              icon="hand.thumbsup.fill"
+              label={controller.activeMessageLikedByCurrentUser ? 'Unlike' : 'Like'}
+              onPress={() => {
+                const message = controller.activeMessage;
+                controller.closeMessageActions();
+                if (message) {
+                  void controller.toggleMessageLike(message);
+                }
+              }}
+              showChevron={false}
+              style={styles.actionRow}
+            />
+          ) : null}
+          {controller.canReplyActive ? (
+            <ActionRow
+              icon="arrow.uturn.backward"
+              label="Reply"
+              onPress={controller.beginReplyingActiveMessage}
+              showChevron={false}
+              style={styles.actionRow}
+            />
+          ) : null}
           {controller.canCopyActive ? (
             <ActionRow
               icon="doc.on.doc"
               label="Copy"
               onPress={controller.copyActiveMessage}
-              showChevron={false}
-              style={styles.actionRow}
-            />
-          ) : null}
-          {controller.canEditActive ? (
-            <ActionRow
-              icon="square.and.pencil"
-              label="Edit"
-              onPress={controller.beginEditingActiveMessage}
-              showChevron={false}
-              style={styles.actionRow}
-            />
-          ) : null}
-          {controller.canUnsendActive ? (
-            <ActionRow
-              icon="arrow.uturn.backward"
-              label="Unsend"
-              onPress={controller.requestUnsendActiveMessage}
               showChevron={false}
               style={styles.actionRow}
             />
@@ -178,22 +244,16 @@ export function MessageActionOverlays({
               style={styles.actionRow}
             />
           ) : null}
-          <ActionRow
-            destructive
-            icon="trash.fill"
-            label="Delete"
-            onPress={controller.requestDeleteActiveMessage}
-            showChevron={false}
-            style={styles.actionRow}
-          />
-          <ActionRow
-            divided={false}
-            icon="checkmark.circle"
-            label="Select"
-            onPress={controller.beginSelectingActiveMessage}
-            showChevron={false}
-            style={styles.actionRow}
-          />
+          {controller.canDeleteActive ? (
+            <ActionRow
+              destructive
+              icon="trash.fill"
+              label="Delete"
+              onPress={controller.requestDeleteActiveMessage}
+              showChevron={false}
+              style={styles.actionRow}
+            />
+          ) : null}
         </View>
       </Sheet>
 
@@ -323,6 +383,185 @@ export function MessageActionOverlays({
   );
 }
 
+export function MessageReplyPreview({
+  isDirectReply = false,
+  replyTo,
+  sourceIsCurrentUser,
+}: {
+  isDirectReply?: boolean;
+  replyTo?: MessageReply;
+  sourceIsCurrentUser: boolean;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+  const replyGuideColor =
+    colorScheme === 'dark' ? 'rgba(255, 255, 255, 0.20)' : 'rgba(79, 72, 63, 0.30)';
+  if (!replyTo) {
+    return null;
+  }
+
+  return (
+    <View
+      style={[
+        styles.replyReference,
+        isDirectReply &&
+          (sourceIsCurrentUser ? styles.replyReferenceInlineOwn : styles.replyReferenceInlineOther),
+      ]}>
+      {!isDirectReply ? (
+        <View
+          style={[
+            styles.replyPreview,
+            sourceIsCurrentUser ? styles.replyPreviewRight : styles.replyPreviewLeft,
+            { backgroundColor: palette.surfaceMuted, borderColor: palette.outline },
+          ]}>
+          <Text style={[styles.replyGhostText, { color: palette.icon }]} numberOfLines={1}>
+            {replyTo.text}
+          </Text>
+        </View>
+      ) : null}
+      <View
+        pointerEvents="none"
+        style={[
+          styles.replyReferenceStem,
+          !isDirectReply && !sourceIsCurrentUser && styles.replyReferenceStemBelow,
+          // Quotes from someone else lead left-to-right. Own-message replies
+          // use the full C-shaped guide on the left of the thread.
+          sourceIsCurrentUser
+            ? styles.replyReferenceStemOwn
+            : styles.replyReferenceStemOther,
+          isDirectReply && styles.replyReferenceStemInline,
+          !isDirectReply && sourceIsCurrentUser && styles.replyReferenceStemDistantOwn,
+          { borderColor: replyGuideColor },
+        ]}
+      />
+    </View>
+  );
+}
+
+export function MessageReplyComposer({
+  onCancel,
+  replyTo,
+  senderName,
+}: {
+  onCancel: () => void;
+  replyTo: MessageReply | null;
+  senderName: string;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+  if (!replyTo) {
+    return null;
+  }
+
+  return (
+    <View style={[styles.replyComposer, { borderColor: palette.border }]}>
+      <View style={[styles.replyAccent, { backgroundColor: palette.tint }]} />
+      <View style={styles.replyComposerCopy}>
+        <Text style={[styles.replySender, { color: palette.tint }]} numberOfLines={1}>
+          Replying to {senderName}
+        </Text>
+        <Text style={[styles.replyQuote, { color: palette.icon }]} numberOfLines={1}>
+          {replyTo.text}
+        </Text>
+      </View>
+      <Pressable
+        accessibilityLabel="Cancel reply"
+        accessibilityRole="button"
+        hitSlop={8}
+        onPress={onCancel}
+        style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+        <IconSymbol color={palette.icon} name="xmark" size={18} />
+      </Pressable>
+    </View>
+  );
+}
+
+export function MessageReplyCount({
+  count,
+  onPress,
+}: {
+  count: number;
+  onPress: () => void;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+  if (count < 1) {
+    return null;
+  }
+
+  return (
+    <Pressable
+      accessibilityLabel={`View ${count} ${count === 1 ? 'reply' : 'replies'}`}
+      accessibilityRole="button"
+      hitSlop={6}
+      onPress={onPress}
+      style={({ pressed }) => [styles.replyCount, { opacity: pressed ? 0.58 : 1 }]}>
+      <Text style={[styles.replyCountText, { color: palette.tint }]}>
+        {count} {count === 1 ? 'Reply' : 'Replies'}
+      </Text>
+      {count > 1 ? <IconSymbol color={palette.tint} name="chevron.right" size={12} /> : null}
+    </Pressable>
+  );
+}
+
+export function MessageReplyThreadSheet({
+  currentUserId,
+  message,
+  onClose,
+  replies,
+  senderNameForId,
+  visible,
+}: {
+  currentUserId?: string;
+  message: MessageActionRecord | null;
+  onClose: () => void;
+  replies: MessageActionRecord[];
+  senderNameForId: (userId: string) => string;
+  visible: boolean;
+}) {
+  const colorScheme = useColorScheme() ?? 'light';
+  const palette = Colors[colorScheme];
+  if (!message) {
+    return null;
+  }
+
+  const renderMessage = (threadMessage: MessageActionRecord, isOriginal = false) => {
+    const isCurrentUser = threadMessage.senderId === currentUserId;
+    const isUnsent = isMessageUnsent(threadMessage);
+    return (
+      <View
+        key={threadMessage.messageId}
+        style={[
+          styles.threadMessage,
+          {
+            alignSelf: isCurrentUser ? 'flex-end' : 'flex-start',
+            backgroundColor: isCurrentUser ? palette.tint : palette.surfaceMuted,
+          },
+        ]}>
+        <Text style={[styles.threadSender, { color: isCurrentUser ? '#FFFFFF' : palette.tint }]}>
+          {isOriginal ? 'Original message' : senderNameForId(threadMessage.senderId)}
+        </Text>
+        <Text style={[styles.threadText, { color: isCurrentUser ? '#FFFFFF' : palette.text }]}>
+          {isUnsent ? 'Message unsent' : threadMessage.text}
+        </Text>
+      </View>
+    );
+  };
+
+  return (
+    <Sheet
+      onClose={onClose}
+      subtitle={`Replies to ${senderNameForId(message.senderId)}`}
+      title={`${replies.length} ${replies.length === 1 ? 'Reply' : 'Replies'}`}
+      visible={visible}>
+      <View style={styles.threadMessages}>
+        {renderMessage(message, true)}
+        {replies.map((reply) => renderMessage(reply))}
+      </View>
+    </Sheet>
+  );
+}
+
 export function MessageEditedIndicator({
   message,
   onPress,
@@ -349,12 +588,16 @@ export function MessageEditedIndicator({
 export function MessageReactionBadge({
   currentUserId,
   likedByIds,
+  onLongPress,
   onPress,
+  side,
   selecting,
 }: {
   currentUserId?: string;
   likedByIds: string[];
+  onLongPress?: () => void;
   onPress: () => void;
+  side: 'left' | 'right';
   selecting: boolean;
 }) {
   const colorScheme = useColorScheme() ?? 'light';
@@ -381,10 +624,12 @@ export function MessageReactionBadge({
       accessibilityRole="button"
       disabled={selecting}
       hitSlop={8}
+      onLongPress={onLongPress}
       onPress={handlePress}
       pointerEvents={selecting ? 'none' : 'auto'}
       style={({ pressed }) => [
         styles.reactionBadge,
+        side === 'right' ? styles.reactionBadgeRight : styles.reactionBadgeLeft,
         {
           backgroundColor: likedByCurrentUser ? palette.tint : palette.surface,
           borderColor: likedByCurrentUser ? palette.tint : palette.outline,
@@ -477,6 +722,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     paddingHorizontal: Space.md,
   },
+  gestureTarget: {
+    position: 'relative',
+  },
+  gestureTargetWithReaction: {
+    marginTop: Space.md,
+  },
+  messagePressTarget: {
+    alignSelf: 'stretch',
+  },
   editActions: {
     flexDirection: 'row',
     gap: Space.sm,
@@ -504,6 +758,138 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.body,
     fontSize: 16,
     lineHeight: 23,
+  },
+  replyPreview: {
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    maxWidth: '100%',
+    paddingHorizontal: Space.sm,
+    paddingVertical: Space.xs,
+  },
+  replyReference: {
+    alignSelf: 'stretch',
+    paddingBottom: Space.md + Space.xs,
+    position: 'relative',
+    width: '100%',
+  },
+  replyReferenceInlineOther: {
+    height: Space.xxl + Space.lg + Space.xs,
+    marginBottom: -(Space.lg + Space.xs),
+    marginTop: -(Space.xxl + Space.xs),
+    paddingBottom: 0,
+  },
+  replyReferenceInlineOwn: {
+    height: Space.xxl + Space.lg + Space.xs,
+    marginBottom: -(Space.lg + Space.xs),
+    marginTop: -(Space.xxl + Space.xs),
+    paddingBottom: 0,
+  },
+  replyPreviewLeft: {
+    alignSelf: 'flex-start',
+  },
+  replyPreviewRight: {
+    alignSelf: 'flex-end',
+  },
+  replyReferenceStem: {
+    left: Space.md,
+    position: 'absolute',
+    width: Space.xxl + Space.sm,
+  },
+  replyReferenceStemBelow: {
+    bottom: 0,
+  },
+  replyReferenceStemInline: {
+    // The guide overlays the natural gap between two adjacent bubbles instead
+    // of reserving vertical room. Its arms sit near each bubble's midpoint.
+    height: Space.xxl + Space.lg + Space.xs,
+    top: 0,
+  },
+  replyReferenceStemDistantOwn: {
+    // A quoted self-reply has a source bubble, so the guide is drawn from the
+    // quoted bubble's midpoint to the new bubble's midpoint without touching either.
+    height: Space.xxl + Space.lg + Space.xs,
+    top: Space.sm,
+  },
+  replyReferenceStemOther: {
+    borderBottomWidth: 2,
+    borderBottomLeftRadius: Space.lg,
+    borderLeftWidth: 2,
+    height: Space.md,
+  },
+  replyReferenceStemOwn: {
+    borderBottomLeftRadius: Space.lg,
+    borderBottomWidth: 2,
+    borderLeftWidth: 2,
+    borderTopLeftRadius: Space.lg,
+    borderTopWidth: 2,
+    height: Space.lg,
+  },
+  replyComposer: {
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: Space.sm,
+    marginBottom: Space.xs,
+    paddingBottom: Space.xs,
+    paddingLeft: Space.sm,
+    paddingTop: Space.xs,
+  },
+  replyAccent: {
+    borderRadius: Radius.pill,
+    width: 3,
+  },
+  replyComposerCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  replySender: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 11,
+    lineHeight: 14,
+  },
+  replyQuote: {
+    fontFamily: FontFamily.body,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  replyGhostText: {
+    fontFamily: FontFamily.bodyMedium,
+    fontSize: 13,
+    lineHeight: 17,
+  },
+  replyCount: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 2,
+    minHeight: 22,
+    paddingVertical: 2,
+    position: 'relative',
+  },
+  replyCountText: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 13,
+    lineHeight: 17,
+  },
+  threadMessages: {
+    gap: Space.md,
+  },
+  threadMessage: {
+    borderRadius: Radius.lg,
+    maxWidth: '88%',
+    minWidth: 88,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+  },
+  threadSender: {
+    fontFamily: FontFamily.bodySemiBold,
+    fontSize: 11,
+    lineHeight: 14,
+    marginBottom: Space.xs,
+  },
+  threadText: {
+    fontFamily: FontFamily.body,
+    fontSize: 16,
+    lineHeight: 21,
   },
   likesList: {
     borderRadius: Radius.lg,
@@ -573,13 +959,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 2,
     justifyContent: 'center',
-    left: -8,
     minHeight: 24,
     minWidth: 28,
     paddingHorizontal: 6,
     position: 'absolute',
-    top: -12,
+    top: -Space.md,
     zIndex: 2,
+  },
+  reactionBadgeLeft: {
+    right: -Space.sm,
+  },
+  reactionBadgeRight: {
+    left: -Space.sm,
   },
   reactionCount: {
     fontFamily: FontFamily.bodySemiBold,

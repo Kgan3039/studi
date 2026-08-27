@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -23,6 +23,10 @@ import { LoadingState } from '@/components/ui/LoadingState';
 import {
   MessageActionOverlays,
   MessageEditedIndicator,
+  MessageReplyCount,
+  MessageReplyComposer,
+  MessageReplyPreview,
+  MessageReplyThreadSheet,
   MessageReactionBadge,
   MessageSelectionBar,
   MessageSelectionTarget,
@@ -153,6 +157,7 @@ export default function ConversationScreen() {
   const messageActions = useMessageActions({
     allowEditing: !isMessagingDisabled,
     allowReactions: !isMessagingDisabled,
+    allowReplies: !isMessagingDisabled,
     currentUserId: currentUser?.uid,
     messages,
     onReportMessage: (message) => {
@@ -173,9 +178,23 @@ export default function ConversationScreen() {
     threadId: conversationId,
     threadType: 'direct',
   });
-  const visibleMessages = messageActions.hiddenMessagesReady
-    ? messages.filter((message) => !messageActions.hiddenMessageIds.has(message.messageId))
-    : [];
+  const visibleMessages = useMemo(
+    () =>
+      messageActions.hiddenMessagesReady
+        ? messages.filter((message) => !messageActions.hiddenMessageIds.has(message.messageId))
+        : [],
+    [messageActions.hiddenMessageIds, messageActions.hiddenMessagesReady, messages]
+  );
+  const replyCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    visibleMessages.forEach((message) => {
+      const sourceId = message.replyTo?.messageId;
+      if (sourceId && !message.unsentAt) {
+        counts.set(sourceId, (counts.get(sourceId) ?? 0) + 1);
+      }
+    });
+    return counts;
+  }, [visibleMessages]);
 
   useEffect(() => {
     let cancelled = false;
@@ -311,8 +330,14 @@ export default function ConversationScreen() {
 
     try {
       setIsSending(true);
-      await sendDirectMessage(conversationId, currentUser.uid, draft);
+      await sendDirectMessage(
+        conversationId,
+        currentUser.uid,
+        draft,
+        messageActions.replyingTo ?? undefined
+      );
       setDraft('');
+      messageActions.cancelReply();
     } catch (error) {
       const message =
         error instanceof ObjectionableContentError
@@ -580,12 +605,24 @@ export default function ConversationScreen() {
               !nextMessage || (currentUser?.uid === nextMessage.senderId) !== isCurrentUser;
             const messageDate = toDate(message.createdAt);
             const previousDate = index > 0 ? toDate(visibleMessages[index - 1].createdAt) : null;
+            const previousMessage = index > 0 ? visibleMessages[index - 1] : null;
             const showDaySeparator =
               !!messageDate &&
               (!previousDate || previousDate.toDateString() !== messageDate.toDateString());
             const isSelected = messageActions.selectedMessageIds.has(message.messageId);
             const isActive = messageActions.activeMessage?.messageId === message.messageId;
             const isUnsent = !!message.unsentAt;
+            const isLikedByCurrentUser = !!currentUser?.uid
+              && message.likedByIds.includes(currentUser.uid);
+            const replyCount = isUnsent ? 0 : replyCounts.get(message.messageId) ?? 0;
+            const isReplyDirectlyBelowSource =
+              !showDaySeparator && message.replyTo?.messageId === previousMessage?.messageId;
+            const nextMessageDate = nextMessage ? toDate(nextMessage.createdAt) : null;
+            const hasDirectReplyBelow =
+              nextMessage?.replyTo?.messageId === message.messageId
+              && (!messageDate
+                || !nextMessageDate
+                || messageDate.toDateString() === nextMessageDate.toDateString());
 
             return (
               <View
@@ -596,11 +633,17 @@ export default function ConversationScreen() {
                     {formatDaySeparator(messageDate)}
                   </Text>
                 ) : null}
+                {!isUnsent ? (
+                  <MessageReplyPreview
+                    isDirectReply={isReplyDirectlyBelowSource}
+                    replyTo={message.replyTo}
+                    sourceIsCurrentUser={message.replyTo?.senderId === currentUser?.uid}
+                  />
+                ) : null}
                 <MessageSelectionTarget
                   accessibilityLabel={isUnsent ? 'Message unsent' : message.text}
                   bubbleStyle={[
                     styles.bubble,
-                    message.likedByIds.length > 0 && styles.bubbleWithReaction,
                     isUnsent
                       ? [
                           styles.unsentBubble,
@@ -625,12 +668,31 @@ export default function ConversationScreen() {
                       { backgroundColor: palette.tint, borderColor: '#FFFFFF' },
                     ],
                   ]}
+                  gestureResetKey={isLikedByCurrentUser}
+                  reaction={
+                    !messageActions.isSelecting && message.likedByIds.length > 0 ? (
+                      <MessageReactionBadge
+                        currentUserId={currentUser?.uid}
+                        likedByIds={message.likedByIds}
+                        onLongPress={() => messageActions.openMessageActions(message)}
+                        onPress={() => messageActions.showMessageLikes(message)}
+                        side={isCurrentUser ? 'right' : 'left'}
+                        selecting={messageActions.isSelecting}
+                      />
+                    ) : null
+                  }
                   onDoublePress={
-                    messageActions.canReactToMessage(message)
+                    messageActions.canDoubleTapLikeMessage(message)
                       ? () => void messageActions.toggleMessageLike(message)
                       : undefined
                   }
                   onOpenActions={() => messageActions.openMessageActions(message)}
+                  onSwipeToReply={
+                    messageActions.canReplyToMessage(message)
+                      ? () => messageActions.beginReplyingMessage(message)
+                      : undefined
+                  }
+                  replySwipeThreshold={isCurrentUser ? 32 : 70}
                   onToggleSelection={() =>
                     messageActions.toggleMessageSelection(message.messageId)
                   }
@@ -656,13 +718,13 @@ export default function ConversationScreen() {
                       ]}>
                       {isUnsent ? 'Message unsent' : message.text}
                     </Text>
-                    <MessageReactionBadge
-                      currentUserId={currentUser?.uid}
-                      likedByIds={message.likedByIds}
-                      onPress={() => messageActions.showMessageLikes(message)}
-                      selecting={messageActions.isSelecting}
-                    />
                   </MessageSelectionTarget>
+                {!messageActions.isSelecting && replyCount > 0 && !hasDirectReplyBelow ? (
+                  <MessageReplyCount
+                    count={replyCount}
+                    onPress={() => messageActions.openReplyThread(message)}
+                  />
+                ) : null}
                 {showTime || (!!message.editedAt && !isUnsent) ? (
                   <View style={styles.messageMeta}>
                     {!messageActions.isSelecting ? (
@@ -703,6 +765,15 @@ export default function ConversationScreen() {
               paddingBottom: Math.max(insets.bottom, Space.md),
             },
           ]}>
+          <MessageReplyComposer
+            onCancel={messageActions.cancelReply}
+            replyTo={messageActions.replyingTo}
+            senderName={
+              messageActions.replyingTo?.senderId === currentUser?.uid
+                ? 'You'
+                : partnerName || 'Student'
+            }
+          />
           <View
             style={[
               styles.composer,
@@ -745,6 +816,16 @@ export default function ConversationScreen() {
           </View>
         </View>
       )}
+      <MessageReplyThreadSheet
+        currentUserId={currentUser?.uid}
+        message={messageActions.replyThreadMessage}
+        onClose={messageActions.closeReplyThread}
+        replies={messageActions.replyThreadMessages}
+        senderNameForId={(userId) =>
+          userId === currentUser?.uid ? 'You' : partnerName || 'Student'
+        }
+        visible={!!messageActions.replyThreadMessage}
+      />
       <ConfirmDialog
         visible={confirmBlock}
         title={`Block ${partnerName || 'this student'}?`}
@@ -838,7 +919,9 @@ const styles = StyleSheet.create({
     paddingBottom: Space.xl,
   },
   messageGroup: {
+    alignSelf: 'stretch',
     gap: Space.xs,
+    width: '100%',
   },
   messageRow: {
     alignItems: 'center',
@@ -872,12 +955,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.md + 2,
     paddingVertical: Space.sm + 2,
   },
-  bubbleWithReaction: {
-    marginTop: Space.sm,
-  },
   activeBubble: {
     borderWidth: 2,
-    transform: [{ scale: 1.025 }],
     zIndex: 3,
   },
   mineBubble: {
@@ -906,7 +985,6 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.bodyMedium,
     fontSize: 10,
     lineHeight: 13,
-    paddingHorizontal: Space.xs,
   },
   emptyThread: {
     alignItems: 'center',

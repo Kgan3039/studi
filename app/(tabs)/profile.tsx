@@ -19,6 +19,7 @@ import {
   CatalogRequestSheet,
 } from '@/components/ui/CatalogRequestSheet';
 import { CourseChip } from '@/components/ui/CourseChip';
+import { ProfileEditSheet, type ProfileEditValues } from '@/components/profile/ProfileEditSheet';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import {
   PullToRefreshIndicator,
@@ -32,7 +33,6 @@ import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getUserFacingErrorMessage } from '@/lib/user-facing-errors';
-import { getProfileSaveErrorMessage, stripProfileIdentityEmoji } from '@/lib/profile-edit';
 import { identifyUser, track } from '@/lib/analytics';
 import { subscribeToAuthState } from '@/lib/auth';
 import {
@@ -46,14 +46,7 @@ import {
     getLocations,
     getUpcomingSessions,
     getUserProfile,
-    invalidateProfileCache,
-    PROFILE_BIO_MAX_LENGTH,
-    PROFILE_MAJOR_MAX_LENGTH,
-    PROFILE_PRONOUNS_MAX_LENGTH,
     updateUserClasses,
-    updateUserDisplayName,
-    updateUserProfileDetails,
-    USER_YEARS,
     type LocationRatingAggregate,
     type StudyLocation,
     type StudySession,
@@ -72,24 +65,6 @@ type SavedLocation = {
   name: string;
   campusArea: string;
   rating: number | null;
-};
-
-// Last-saved values, kept to compute the profile_updated fieldsChanged count
-// (a number, never the values — docs/metrics.md).
-type SavedProfileFields = {
-  displayName: string;
-  year: UserYear | null;
-  major: string;
-  pronouns: string;
-  bio: string;
-};
-
-const EMPTY_SAVED_FIELDS: SavedProfileFields = {
-  displayName: '',
-  year: null,
-  major: '',
-  pronouns: '',
-  bio: '',
 };
 
 function splitDisplayName(displayName: string | undefined) {
@@ -124,9 +99,6 @@ export default function ProfileScreen() {
   const [year, setYear] = useState<UserYear | null>(null);
   const [pronouns, setPronouns] = useState('');
   const [bio, setBio] = useState('');
-  const [isBioFocused, setIsBioFocused] = useState(false);
-  const [bioLayout, setBioLayout] = useState<{ y: number; height: number } | null>(null);
-  const [savedFields, setSavedFields] = useState<SavedProfileFields>(EMPTY_SAVED_FIELDS);
   const [courseQuery, setCourseQuery] = useState('');
   const [classes, setClasses] = useState<string[]>([]);
   const [sessions, setSessions] = useState<StudySession[]>([]);
@@ -136,7 +108,6 @@ export default function ProfileScreen() {
   >(() => new Map());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [requestSheetOpen, setRequestSheetOpen] = useState(false);
-  const [nameStatus, setNameStatus] = useState('Save your name so Studi looks more personal.');
   const [classesStatus, setClassesStatus] = useState('Update the classes you take.');
   const courseResults = useMemo(() => {
     if (courseQuery.trim().length < 2) {
@@ -189,19 +160,7 @@ export default function ProfileScreen() {
         setYear(profile?.year ?? null);
         setPronouns(profile?.pronouns ?? '');
         setBio(profile?.bio ?? '');
-        setSavedFields({
-          displayName: profile?.displayName ?? '',
-          year: profile?.year ?? null,
-          major: profile?.major ?? '',
-          pronouns: profile?.pronouns ?? '',
-          bio: profile?.bio ?? '',
-        });
         setClasses(savedClasses);
-        setNameStatus(
-          profile?.displayName
-            ? `Saved as ${profile.displayName}.`
-            : 'Add your first and last name to personalize Studi.'
-        );
         setClassesStatus(
           savedClasses.length > 0
             ? `You'll see sessions for ${savedClasses.length} class${
@@ -211,7 +170,6 @@ export default function ProfileScreen() {
         );
       } catch (error) {
         const message = getUserFacingErrorMessage(error, 'profileLoad');
-        setNameStatus(message);
         setClassesStatus(message);
       }
 
@@ -273,75 +231,6 @@ export default function ProfileScreen() {
     setCourseQuery('');
   }
 
-  function closeProfileEditor() {
-    setIsBioFocused(false);
-    setBioLayout(null);
-    setIsEditingName(false);
-  }
-
-  async function handleSaveProfile() {
-    if (!currentUser) {
-      return;
-    }
-
-    const cleanFirstName = stripProfileIdentityEmoji(firstName).trim();
-    const cleanLastName = stripProfileIdentityEmoji(lastName).trim();
-    const displayName = `${cleanFirstName} ${cleanLastName}`.trim();
-
-    if (!cleanFirstName || !cleanLastName) {
-      setNameStatus('Enter both your first and last name.');
-      Alert.alert('Profile Error', 'Please enter both your first and last name.');
-      return;
-    }
-
-    const details = {
-      year,
-      major: stripProfileIdentityEmoji(major).trim(),
-      pronouns: stripProfileIdentityEmoji(pronouns).trim(),
-      bio: bio.trim(),
-    };
-    const nameChanged = displayName !== savedFields.displayName;
-    const detailsChanged =
-      details.year !== savedFields.year ||
-      details.major !== savedFields.major ||
-      details.pronouns !== savedFields.pronouns ||
-      details.bio !== savedFields.bio;
-    const fieldsChanged =
-      Number(nameChanged) +
-      Number(details.year !== savedFields.year) +
-      Number(details.major !== savedFields.major) +
-      Number(details.pronouns !== savedFields.pronouns) +
-      Number(details.bio !== savedFields.bio);
-
-    try {
-      setIsSaving(true);
-      if (nameChanged) {
-        await updateUserDisplayName(currentUser.uid, displayName);
-      }
-      if (detailsChanged) {
-        await updateUserProfileDetails(currentUser.uid, details);
-      }
-      if (fieldsChanged > 0) {
-        invalidateProfileCache(currentUser.uid);
-        track('profile_updated', { fieldsChanged });
-      }
-      setSavedFields({ displayName, ...details });
-      setFirstName(cleanFirstName);
-      setLastName(cleanLastName);
-      setMajor(details.major);
-      setPronouns(details.pronouns);
-      setBio(details.bio);
-      setNameStatus(`Saved as ${displayName}.`);
-      closeProfileEditor();
-    } catch (error) {
-      const message = getProfileSaveErrorMessage(error);
-      setNameStatus(message);
-      Alert.alert('Profile Error', message);
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
   async function handleSaveClasses() {
     if (!currentUser) {
       return;
@@ -377,6 +266,13 @@ export default function ProfileScreen() {
     backgroundColor: palette.surfaceMuted,
     borderColor: palette.border,
     color: palette.text,
+  };
+  const profileEditValues: ProfileEditValues = {
+    displayName,
+    year,
+    major,
+    pronouns,
+    bio,
   };
 
   const classesUpper = useMemo(
@@ -552,131 +448,28 @@ export default function ProfileScreen() {
           <View style={styles.settingsRowBody}>
             <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Settings</Text>
             <Text style={[TypeScale.caption, { color: palette.icon }]}>
-              Notifications, privacy, and account
+              Profile, appearance, privacy, and account
             </Text>
           </View>
           <IconSymbol name="chevron.right" size={18} color={palette.icon} />
         </Pressable>
       </View>
 
-      <Sheet
+      <ProfileEditSheet
+        currentUser={currentUser}
+        initialValues={profileEditValues}
+        onClose={() => setIsEditingName(false)}
+        onSaved={(values) => {
+          const savedName = splitDisplayName(values.displayName);
+          setFirstName(savedName.firstName);
+          setLastName(savedName.lastName);
+          setMajor(values.major);
+          setYear(values.year);
+          setPronouns(values.pronouns);
+          setBio(values.bio);
+        }}
         visible={isEditingName}
-        onClose={closeProfileEditor}
-        keyboardScrollTarget={isBioFocused ? bioLayout : null}
-        title="Edit Profile"
-        subtitle={nameStatus}
-        footer={
-          <Button
-            label="Save profile"
-            fullWidth
-            loading={isSaving}
-            onPress={handleSaveProfile}
-          />
-        }>
-          <View style={styles.inlineRow}>
-            <TextInput
-              autoCapitalize="words"
-              editable={!isSaving}
-              onChangeText={(value) => setFirstName(stripProfileIdentityEmoji(value))}
-              onFocus={() => setIsBioFocused(false)}
-              placeholder="First name"
-              placeholderTextColor={placeholderColor}
-              style={[styles.input, styles.flexInput, inputColors]}
-              value={firstName}
-            />
-
-            <TextInput
-              autoCapitalize="words"
-              editable={!isSaving}
-              onChangeText={(value) => setLastName(stripProfileIdentityEmoji(value))}
-              onFocus={() => setIsBioFocused(false)}
-              placeholder="Last name"
-              placeholderTextColor={placeholderColor}
-              style={[styles.input, styles.flexInput, inputColors]}
-              value={lastName}
-            />
-          </View>
-
-          <TextInput
-            autoCapitalize="words"
-            editable={!isSaving}
-            maxLength={PROFILE_MAJOR_MAX_LENGTH}
-            onChangeText={(value) => setMajor(stripProfileIdentityEmoji(value))}
-            onFocus={() => setIsBioFocused(false)}
-            placeholder="Major (e.g. Computer Science)"
-            placeholderTextColor={placeholderColor}
-            style={[styles.input, inputColors]}
-            value={major}
-          />
-
-          {/* Year — tap to select, tap again to clear (the field is optional). */}
-          <View style={styles.yearRow}>
-            {USER_YEARS.map((yearOption) => {
-              const selected = year === yearOption;
-              return (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  disabled={isSaving}
-                  key={yearOption}
-                  onPress={() => setYear(selected ? null : yearOption)}
-                  style={({ pressed }) => [
-                    styles.yearChip,
-                    {
-                      backgroundColor: selected ? palette.tint : palette.surfaceMuted,
-                      borderColor: selected ? palette.tint : palette.border,
-                      opacity: isSaving || pressed ? 0.7 : 1,
-                    },
-                  ]}>
-                  <Text
-                    style={[
-                      TypeScale.label,
-                      { color: selected ? '#FFFFFF' : palette.text },
-                    ]}>
-                    {yearOption}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <TextInput
-            autoCapitalize="none"
-            editable={!isSaving}
-            maxLength={PROFILE_PRONOUNS_MAX_LENGTH}
-            onChangeText={(value) => setPronouns(stripProfileIdentityEmoji(value))}
-            onFocus={() => setIsBioFocused(false)}
-            placeholder="Pronouns (e.g. she/her)"
-            placeholderTextColor={placeholderColor}
-            style={[styles.input, inputColors]}
-            value={pronouns}
-          />
-
-          <View
-            onLayout={(event) => {
-              const { height, y } = event.nativeEvent.layout;
-              setBioLayout((current) =>
-                current && current.height === height && current.y === y ? current : { height, y }
-              );
-            }}>
-            <TextInput
-              autoCapitalize="sentences"
-              editable={!isSaving}
-              maxLength={PROFILE_BIO_MAX_LENGTH}
-              multiline
-              onBlur={() => setIsBioFocused(false)}
-              onChangeText={setBio}
-              onFocus={() => setIsBioFocused(true)}
-              placeholder="What are you studying toward?"
-              placeholderTextColor={placeholderColor}
-              style={[styles.input, styles.bioInput, inputColors]}
-              value={bio}
-            />
-            <Text style={[TypeScale.caption, styles.bioCounter, { color: palette.icon }]}>
-              {bio.length}/{PROFILE_BIO_MAX_LENGTH}
-            </Text>
-          </View>
-      </Sheet>
+      />
 
       {/* Current classes (board ProfileScreen ~1789). */}
       <View style={styles.section}>
