@@ -19,7 +19,6 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
-import { IconButton } from '@/components/ui/IconButton';
 import {
   PullToRefreshIndicator,
   usePullToRefreshDistance,
@@ -992,12 +991,6 @@ export default function MessagesScreen() {
                         ]}>
                         {rowContents}
                       </Pressable>
-                      <IconButton
-                        accessibilityLabel={`Remove ${otherName} from my Messages`}
-                        disabled={isRemoving}
-                        icon="trash"
-                        onPress={() => confirmRemoveChat(groupTarget)}
-                      />
                     </View>
                   );
                 })}

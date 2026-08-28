@@ -216,7 +216,7 @@ describe("Messages beta production wiring", () => {
     );
   });
 
-  it("keeps session removal visible, accessible, and routed through one confirmation path", () => {
+  it("keeps session removal in the options menu and accessibility actions", () => {
     assert.match(confirmationSource, /Remove from my Messages\?/);
     assert.match(confirmationSource, /This hides the chat only for you\./);
     assert.match(confirmationSource, /style: "cancel"/);
@@ -225,10 +225,16 @@ describe("Messages beta production wiring", () => {
     assert.match(messagesSource, /<Sheet/);
     assert.match(messagesSource, /label="Delete"/);
     assert.match(messagesSource, /removeSessionChatFromUserHistory/);
-    assert.match(messagesSource, /<IconButton/);
-    assert.match(messagesSource, /accessibilityLabel=\{`Remove \$\{otherName\} from my Messages`\}/);
-    assert.match(messagesSource, /onPress=\{\(\) => confirmRemoveChat\(groupTarget\)\}/);
+    assert.doesNotMatch(messagesSource, /<IconButton/);
+    assert.match(
+      messagesSource,
+      /label="Delete"[\s\S]*setTimeout\(\(\) => confirmRemoveChat\(target\), 0\)/
+    );
     assert.match(messagesSource, /name: 'remove', label: `Remove \$\{otherName\} from my Messages`/);
+    assert.match(
+      messagesSource,
+      /actionName === 'remove'[\s\S]*confirmRemoveChat\(groupTarget\)/
+    );
     assert.match(messagesSource, /platform: Platform\.OS/);
     assert.match(messagesSource, /window\.confirm\(message\)/);
   });
