@@ -19,6 +19,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { LoadingState } from '@/components/ui/LoadingState';
+import { IconButton } from '@/components/ui/IconButton';
 import {
   PullToRefreshIndicator,
   usePullToRefreshDistance,
@@ -957,36 +958,47 @@ export default function MessagesScreen() {
                   const groupTarget = { type: 'group' as const, id: chat.id, name: otherName };
 
                   return (
-                    <Pressable
+                    <View
                       key={`group:${chat.id}`}
-                      accessibilityActions={[
-                        { name: 'showOptions', label: 'Show group chat options' },
-                        { name: 'remove', label: `Remove ${otherName} from my Messages` },
-                      ]}
-                      accessibilityHint="Hold or use Actions for group chat options"
-                      accessibilityLabel={`Session chat for ${otherName}`}
-                      accessibilityRole="button"
-                      delayLongPress={400}
-                      disabled={isRemoving}
-                      onAccessibilityAction={(event) => {
-                        if (event.nativeEvent.actionName === 'remove') {
-                          confirmRemoveChat(groupTarget);
-                        } else {
-                          openChatOptions(groupTarget);
-                        }
-                      }}
-                      onLongPress={() => openChatOptions(groupTarget)}
-                      onPress={() => openSessionChat(chat.id)}
-                      style={({ pressed }) => [
-                        styles.threadRow,
+                      style={[
+                        styles.groupRowShell,
                         index > 0 && {
                           borderTopColor: palette.border,
                           borderTopWidth: StyleSheet.hairlineWidth,
-                        },
-                        { opacity: isRemoving ? 0.45 : pressed ? 0.7 : 1 },
+                          },
                       ]}>
-                      {rowContents}
-                    </Pressable>
+                      <Pressable
+                        accessibilityActions={[
+                          { name: 'showOptions', label: 'Show group chat options' },
+                          { name: 'remove', label: `Remove ${otherName} from my Messages` },
+                        ]}
+                        accessibilityHint="Hold or use Actions for group chat options"
+                        accessibilityLabel={`Session chat for ${otherName}`}
+                        accessibilityRole="button"
+                        delayLongPress={400}
+                        disabled={isRemoving}
+                        onAccessibilityAction={(event) => {
+                          if (event.nativeEvent.actionName === 'remove') {
+                            confirmRemoveChat(groupTarget);
+                          } else {
+                            openChatOptions(groupTarget);
+                          }
+                        }}
+                        onLongPress={() => openChatOptions(groupTarget)}
+                        onPress={() => openSessionChat(chat.id)}
+                        style={({ pressed }) => [
+                          styles.threadRow,
+                          { opacity: isRemoving ? 0.45 : pressed ? 0.7 : 1 },
+                        ]}>
+                        {rowContents}
+                      </Pressable>
+                      <IconButton
+                        accessibilityLabel={`Remove ${otherName} from my Messages`}
+                        disabled={isRemoving}
+                        icon="trash"
+                        onPress={() => confirmRemoveChat(groupTarget)}
+                      />
+                    </View>
                   );
                 })}
               </View>
@@ -1211,6 +1223,10 @@ const styles = StyleSheet.create({
     paddingVertical: Space.md,
     flex: 1,
     minWidth: 0,
+  },
+  groupRowShell: {
+    alignItems: 'center',
+    flexDirection: 'row',
   },
   threadBody: {
     flex: 1,

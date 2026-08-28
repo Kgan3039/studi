@@ -9,11 +9,6 @@ export type MessageActionRecord = {
   messageId: string;
   originalText?: string;
   pending?: boolean;
-  replyTo?: {
-    messageId: string;
-    senderId: string;
-    text: string;
-  };
   senderId: string;
   text: string;
   unsentAt?: unknown;

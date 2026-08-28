@@ -236,13 +236,6 @@ export type DirectConversation = {
   updatedAt?: unknown;
 };
 
-/** Immutable quoted context attached to a reply message. */
-export type MessageReply = {
-  messageId: string;
-  senderId: string;
-  text: string;
-};
-
 export type ConversationMessage = {
   conversationId: string;
   createdAt?: unknown;
@@ -251,7 +244,6 @@ export type ConversationMessage = {
   messageId: string;
   originalText?: string;
   pending: boolean;
-  replyTo?: MessageReply;
   senderId: string;
   text: string;
   unsentAt?: unknown;
@@ -268,7 +260,6 @@ export type SessionMessage = {
   originalText?: string;
   /** True while the local optimistic write hasn't been acknowledged yet. */
   pending: boolean;
-  replyTo?: MessageReply;
   senderId: string;
   sessionId: string;
   text: string;
@@ -1492,75 +1483,10 @@ export async function getOrCreateDirectConversation(
   return conversationId;
 }
 
-function parseMessageReply(value: unknown): MessageReply | undefined {
-  if (!value || typeof value !== "object") {
-    return undefined;
-  }
-
-  const reply = value as Record<string, unknown>;
-  if (
-    typeof reply.messageId !== "string"
-    || typeof reply.senderId !== "string"
-    || typeof reply.text !== "string"
-    || reply.messageId.length < 1
-    || reply.messageId.length > 128
-    || reply.senderId.length < 1
-    || reply.senderId.length > 128
-    || reply.text.length < 1
-    || reply.text.length > 2000
-  ) {
-    return undefined;
-  }
-
-  return {
-    messageId: reply.messageId,
-    senderId: reply.senderId,
-    text: reply.text,
-  };
-}
-
-const MESSAGE_REPLY_SNAPSHOT_LENGTH = 280;
-const MESSAGE_REPLY_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
-
-/**
- * Reply snapshots stay compatible with the already-deployed rules while the
- * rules rollout catches up. Keeping the client payload canonical also avoids
- * a stale source value (for example trailing whitespace from an older doc)
- * causing an otherwise valid reply write to be rejected.
- */
-function prepareMessageReply(reply: MessageReply | undefined) {
-  const parsed = reply === undefined ? undefined : parseMessageReply(reply);
-  if (reply !== undefined && !parsed) {
-    throw new Error("That reply is no longer available.");
-  }
-
-  if (!parsed) {
-    return undefined;
-  }
-
-  const prepared = {
-    messageId: parsed.messageId.trim(),
-    senderId: parsed.senderId.trim(),
-    text: parsed.text.trim().slice(0, MESSAGE_REPLY_SNAPSHOT_LENGTH),
-  };
-
-  if (
-    !MESSAGE_REPLY_ID_PATTERN.test(prepared.messageId)
-    || !prepared.senderId
-    || !prepared.text
-  ) {
-    throw new Error("That reply is no longer available.");
-  }
-
-  assertAllowedUserGeneratedText(prepared.text);
-  return prepared;
-}
-
 export async function sendDirectMessage(
   conversationId: string,
   senderId: string,
-  text: string,
-  replyTo?: MessageReply
+  text: string
 ) {
   const trimmedText = text.trim();
 
@@ -1568,8 +1494,6 @@ export async function sendDirectMessage(
     throw new Error("Write a message before sending.");
   }
   assertAllowedUserGeneratedText(trimmedText);
-  const replyPayload = prepareMessageReply(replyTo);
-
   const batch = writeBatch(db);
   const messageRef = doc(collection(db, COLLECTIONS.conversations, conversationId, "messages"));
 
@@ -1577,7 +1501,6 @@ export async function sendDirectMessage(
     senderId,
     text: trimmedText,
     createdAt: serverTimestamp(),
-    ...(replyPayload ? { replyTo: replyPayload } : {}),
   });
 
   stageBoundRateLimit(
@@ -1612,7 +1535,6 @@ export function subscribeToConversationMessages(
         editedAt: data.editedAt,
         likedByIds: normalizeMessageLikedByIds(data.likedByIds),
         originalText: typeof data.originalText === "string" ? data.originalText : undefined,
-        replyTo: parseMessageReply(data.replyTo),
         unsentAt: data.unsentAt,
       };
     });
@@ -1849,7 +1771,6 @@ function mapSessionMessageDoc(
     editedAt: data.editedAt,
     likedByIds: normalizeMessageLikedByIds(data.likedByIds),
     originalText: typeof data.originalText === "string" ? data.originalText : undefined,
-    replyTo: parseMessageReply(data.replyTo),
     unsentAt: data.unsentAt,
   };
 }
@@ -1864,8 +1785,7 @@ export async function sendSessionMessage(
   sessionId: string,
   senderId: string,
   text: string,
-  messageId: string,
-  replyTo?: MessageReply
+  messageId: string
 ) {
   const trimmedText = text.trim();
 
@@ -1873,14 +1793,11 @@ export async function sendSessionMessage(
     throw new Error("Write a message before sending.");
   }
   assertAllowedUserGeneratedText(trimmedText);
-  const replyPayload = prepareMessageReply(replyTo);
-
   const batch = writeBatch(db);
   batch.set(doc(db, COLLECTIONS.sessions, sessionId, "messages", messageId), {
     senderId,
     text: trimmedText.slice(0, 2000),
     createdAt: serverTimestamp(),
-    ...(replyPayload ? { replyTo: replyPayload } : {}),
   });
   stageBoundRateLimit(
     batch,

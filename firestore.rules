@@ -392,7 +392,7 @@ service cloud.firestore {
         && request.time <= resource.data.createdAt + duration.value(15, 'm')
         && affectedKeys().hasOnly(['text', 'editedAt', 'originalText'])
         && incoming().keys().hasOnly([
-             'senderId', 'text', 'createdAt', 'editedAt', 'originalText', 'likedByIds', 'replyTo'
+             'senderId', 'text', 'createdAt', 'editedAt', 'originalText', 'likedByIds'
            ])
         && incoming().senderId == resource.data.senderId
         && incoming().createdAt == resource.data.createdAt
@@ -416,11 +416,6 @@ service cloud.firestore {
             && incoming().originalText == resource.data.originalText)
           || (!('originalText' in resource.data)
             && incoming().originalText == resource.data.text)
-        )
-        && (
-          (!('replyTo' in resource.data) && !('replyTo' in incoming()))
-          || (('replyTo' in resource.data) && ('replyTo' in incoming())
-            && incoming().replyTo == resource.data.replyTo)
         );
     }
 
@@ -431,16 +426,11 @@ service cloud.firestore {
         && affectedKeys().hasOnly([
              'text', 'editedAt', 'originalText', 'likedByIds', 'unsentAt'
            ])
-        && incoming().keys().hasOnly(['senderId', 'text', 'createdAt', 'unsentAt', 'replyTo'])
+        && incoming().keys().hasOnly(['senderId', 'text', 'createdAt', 'unsentAt'])
         && incoming().senderId == resource.data.senderId
         && incoming().createdAt == resource.data.createdAt
         && incoming().text == ''
-        && incoming().unsentAt == request.time
-        && (
-          (!('replyTo' in resource.data) && !('replyTo' in incoming()))
-          || (('replyTo' in resource.data) && ('replyTo' in incoming())
-            && incoming().replyTo == resource.data.replyTo)
-        );
+        && incoming().unsentAt == request.time;
     }
 
     // Reactions live on the message so the existing bounded chat listeners
@@ -451,16 +441,11 @@ service cloud.firestore {
       return !('unsentAt' in resource.data)
         && affectedKeys().hasOnly(['likedByIds'])
         && incoming().keys().hasOnly([
-             'senderId', 'text', 'createdAt', 'editedAt', 'originalText', 'likedByIds', 'replyTo'
+             'senderId', 'text', 'createdAt', 'editedAt', 'originalText', 'likedByIds'
            ])
         && incoming().likedByIds is list
         && incoming().likedByIds.size() <= maxLikes
         && incoming().likedByIds.size() == incoming().likedByIds.toSet().size()
-        && (
-          (!('replyTo' in resource.data) && !('replyTo' in incoming()))
-          || (('replyTo' in resource.data) && ('replyTo' in incoming())
-            && incoming().replyTo == resource.data.replyTo)
-        )
         && (
           (!('likedByIds' in resource.data)
             && incoming().likedByIds.size() == 1
@@ -964,34 +949,6 @@ service cloud.firestore {
           return get(/databases/$(database)/documents/sessions/$(sessionId)).data;
         }
 
-        function isValidMessageReply() {
-          return !('replyTo' in incoming())
-            || (
-              incoming().replyTo is map
-              && incoming().replyTo.keys().hasOnly(['messageId', 'senderId', 'text'])
-              && incoming().replyTo.messageId is string
-              && incoming().replyTo.messageId.matches('^[A-Za-z0-9_-]{1,128}$')
-              && incoming().replyTo.messageId.size() >= 1
-              && incoming().replyTo.messageId.size() <= 128
-              && incoming().replyTo.senderId is string
-              && incoming().replyTo.senderId.size() >= 1
-              && incoming().replyTo.senderId.size() <= 128
-              && incoming().replyTo.senderId in parentSession().participantIds
-              && incoming().replyTo.text is string
-              && incoming().replyTo.text.size() >= 1
-              && incoming().replyTo.text.size() <= 2000
-              && exists(
-                   /databases/$(database)/documents/sessions/$(sessionId)/messages/$(incoming().replyTo.messageId)
-                 )
-              && get(
-                   /databases/$(database)/documents/sessions/$(sessionId)/messages/$(incoming().replyTo.messageId)
-                 ).data.senderId == incoming().replyTo.senderId
-              && !('unsentAt' in get(
-                   /databases/$(database)/documents/sessions/$(sessionId)/messages/$(incoming().replyTo.messageId)
-                 ).data)
-            );
-        }
-
         allow read: if isVerifiedUwUser()
           && request.auth.uid in parentSession().participantIds
           && (
@@ -1006,13 +963,12 @@ service cloud.firestore {
           && request.auth.uid in parentSession().participantIds
           && request.time < parentSession().endTime + duration.value(2, 'h')
           && parentSession().participantIds.size() <= 20
-          && incoming().keys().hasOnly(['senderId', 'text', 'createdAt', 'replyTo'])
+          && incoming().keys().hasOnly(['senderId', 'text', 'createdAt'])
           && incoming().text is string
           && incoming().text.size() >= 1
           && incoming().text.size() <= 2000
           && isAllowedUserGeneratedText(incoming().text)
           && incoming().createdAt == request.time
-          && isValidMessageReply()
           && hasFreshBoundRateLimit(
                request.auth.uid,
                'sendMessage',
@@ -1107,46 +1063,17 @@ service cloud.firestore {
           return get(/databases/$(database)/documents/conversations/$(conversationId)).data;
         }
 
-        function isValidMessageReply() {
-          return !('replyTo' in incoming())
-            || (
-              incoming().replyTo is map
-              && incoming().replyTo.keys().hasOnly(['messageId', 'senderId', 'text'])
-              && incoming().replyTo.messageId is string
-              && incoming().replyTo.messageId.matches('^[A-Za-z0-9_-]{1,128}$')
-              && incoming().replyTo.messageId.size() >= 1
-              && incoming().replyTo.messageId.size() <= 128
-              && incoming().replyTo.senderId is string
-              && incoming().replyTo.senderId.size() >= 1
-              && incoming().replyTo.senderId.size() <= 128
-              && incoming().replyTo.senderId in parentConversation().participantIds
-              && incoming().replyTo.text is string
-              && incoming().replyTo.text.size() >= 1
-              && incoming().replyTo.text.size() <= 2000
-              && exists(
-                   /databases/$(database)/documents/conversations/$(conversationId)/messages/$(incoming().replyTo.messageId)
-                 )
-              && get(
-                   /databases/$(database)/documents/conversations/$(conversationId)/messages/$(incoming().replyTo.messageId)
-                 ).data.senderId == incoming().replyTo.senderId
-              && !('unsentAt' in get(
-                   /databases/$(database)/documents/conversations/$(conversationId)/messages/$(incoming().replyTo.messageId)
-                 ).data)
-            );
-        }
-
         allow read: if isVerifiedUwUser()
           && request.auth.uid in parentConversation().participantIds;
         allow create: if isVerifiedUwUser()
           && request.auth.uid == incoming().senderId
           && request.auth.uid in parentConversation().participantIds
-          && incoming().keys().hasOnly(['senderId', 'text', 'createdAt', 'replyTo'])
+          && incoming().keys().hasOnly(['senderId', 'text', 'createdAt'])
           && incoming().text is string
           && incoming().text.size() >= 1
           && incoming().text.size() <= 2000
           && isAllowedUserGeneratedText(incoming().text)
           && incoming().createdAt == request.time
-          && isValidMessageReply()
           && hasFreshBoundRateLimit(
                request.auth.uid,
                'sendMessage',

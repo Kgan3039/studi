@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useColorScheme as useSystemColorScheme } from 'react-native';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
@@ -24,6 +24,9 @@ export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
   const systemColorScheme = useSystemColorScheme() === 'dark' ? 'dark' : 'light';
   const [preference, setPreferenceState] = useState<ThemePreference>('system');
   const [isLoaded, setIsLoaded] = useState(false);
+  const persistedPreferenceRef = useRef<ThemePreference>('system');
+  const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const latestWriteIdRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -35,6 +38,7 @@ export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
         }
 
         if (isThemePreference(storedPreference)) {
+          persistedPreferenceRef.current = storedPreference;
           setPreferenceState(storedPreference);
         }
         setIsLoaded(true);
@@ -56,13 +60,24 @@ export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
       isLoaded,
       preference,
       setPreference: async (nextPreference) => {
-        const previousPreference = preference;
+        const writeId = latestWriteIdRef.current + 1;
+        latestWriteIdRef.current = writeId;
         setPreferenceState(nextPreference);
 
+        const write = writeQueueRef.current
+          .catch(() => undefined)
+          .then(async () => {
+            await AsyncStorage.setItem(THEME_PREFERENCE_STORAGE_KEY, nextPreference);
+            persistedPreferenceRef.current = nextPreference;
+          });
+        writeQueueRef.current = write.catch(() => undefined);
+
         try {
-          await AsyncStorage.setItem(THEME_PREFERENCE_STORAGE_KEY, nextPreference);
+          await write;
         } catch (error) {
-          setPreferenceState(previousPreference);
+          if (latestWriteIdRef.current === writeId) {
+            setPreferenceState(persistedPreferenceRef.current);
+          }
           throw error;
         }
       },

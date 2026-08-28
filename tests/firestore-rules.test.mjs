@@ -206,14 +206,13 @@ function updateMessageWithRateLimit(
 
 // Mirrors sendDirectMessage in lib/firestore.ts: message + bound sendMessage
 // limiter. Conversation metadata is Admin-trigger-authored from this message.
-function clientSendFlow(db, uid, conversationId, messageId, text, replyTo) {
+function clientSendFlow(db, uid, conversationId, messageId, text) {
   const batch = batchWithBoundRateLimit(
     db, uid, 'sendMessage', `conversations/${conversationId}/messages/${messageId}`
   );
   batch.set(doc(db, 'conversations', conversationId, 'messages', messageId), {
     senderId: uid,
     text,
-    ...(replyTo ? { replyTo } : {}),
     createdAt: serverTimestamp(),
   });
   return batch.commit();
@@ -1611,45 +1610,15 @@ describe('conversations + messages', () => {
     await assertFails(clientSendFlow(ctx(MALLORY), MALLORY, cid, 'm2', 'intruder'));
   });
 
-  it('accepts a reply snapshot when its source exists, even after an edit', async () => {
+  it('rejects reply fields even when the referenced direct message exists', async () => {
     const cid = convoId(ALICE, BOB);
+    const messageId = 'reply-message';
     await seed(`conversations/${cid}`, {
       ...validConversation(ALICE, BOB),
       createdAt: Timestamp.now(), updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
     });
     await seed(`conversations/${cid}/messages/source`, {
       senderId: BOB, text: 'Meet at Memorial?', createdAt: Timestamp.now(),
-    });
-
-    await assertSucceeds(clientSendFlow(
-      ctx(ALICE), ALICE, cid, 'reply-valid', 'Works for me.',
-      { messageId: 'source', senderId: BOB, text: 'Meet at Memorial?' }
-    ));
-    const saved = await assertSucceeds(
-      getDoc(doc(ctx(ALICE), 'conversations', cid, 'messages', 'reply-valid'))
-    );
-    assert.deepEqual(saved.data().replyTo, {
-      messageId: 'source', senderId: BOB, text: 'Meet at Memorial?',
-    });
-
-    await seed(`conversations/${cid}/messages/source`, {
-      senderId: BOB, text: 'Changed after send.', createdAt: Timestamp.now(),
-    });
-    await seed(`rateLimits/${ALICE}/actions/sendMessage`, {
-      updatedAt: Timestamp.fromMillis(Date.now() - 10_000),
-    });
-    await assertSucceeds(clientSendFlow(
-      ctx(ALICE), ALICE, cid, 'reply-stale', 'Nope.',
-      { messageId: 'source', senderId: BOB, text: 'Meet at Memorial?' }
-    ));
-  });
-
-  it('rejects reply snapshots whose direct-message source does not exist', async () => {
-    const cid = convoId(ALICE, BOB);
-    const messageId = 'reply-message';
-    await seed(`conversations/${cid}`, {
-      ...validConversation(ALICE, BOB),
-      createdAt: Timestamp.now(), updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
     });
 
     const db = ctx(ALICE);
@@ -1659,7 +1628,7 @@ describe('conversations + messages', () => {
     batch.set(doc(db, 'conversations', cid, 'messages', messageId), {
       senderId: ALICE,
       text: 'Works for me.',
-      replyTo: { messageId: 'source-message', senderId: BOB, text: 'Meet at Memorial?' },
+      replyTo: { messageId: 'source', senderId: BOB, text: 'Meet at Memorial?' },
       createdAt: serverTimestamp(),
     });
     await assertFails(batch.commit());
@@ -2171,12 +2140,12 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     }));
   });
 
-  it('accepts a reply snapshot that matches a session message', async () => {
+  it('rejects reply fields even when the referenced session message exists', async () => {
     await seedChatSession();
     await seed('sessions/s1/messages/source', {
       senderId: ALICE, text: 'Bring a charger.', createdAt: Timestamp.now(),
     });
-    await assertSucceeds(createSessionChatMessage(ctx(BOB), BOB, 's1', 'reply-valid', {
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'reply-valid', {
       senderId: BOB,
       text: 'Got it.',
       replyTo: { messageId: 'source', senderId: ALICE, text: 'Bring a charger.' },

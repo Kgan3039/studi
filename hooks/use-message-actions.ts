@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
 import { ObjectionableContentError } from '@/lib/content-moderation';
@@ -10,7 +10,6 @@ import {
   subscribeToHiddenMessageIds,
   unsendChatMessage,
   type ChatThreadType,
-  type MessageReply,
 } from '@/lib/firestore';
 import {
   buildSelectedMessageCopy,
@@ -19,7 +18,6 @@ import {
   hasMessageTextChanged,
   hiddenMessageHydrationState,
   isMessageUnsent,
-  timestampToMillis,
   toggleSelectedMessageId,
   type MessageActionRecord,
 } from '@/lib/message-actions';
@@ -27,7 +25,6 @@ import {
 type UseMessageActionsOptions = {
   allowEditing?: boolean;
   allowReactions?: boolean;
-  allowReplies?: boolean;
   allowUnsend?: boolean;
   currentUserId?: string;
   messages: MessageActionRecord[];
@@ -62,7 +59,6 @@ function actionErrorMessage(error: unknown, action: 'delete' | 'edit' | 'unsend'
 export function useMessageActions({
   allowEditing = true,
   allowReactions = true,
-  allowReplies = true,
   allowUnsend = true,
   currentUserId,
   messages,
@@ -84,8 +80,6 @@ export function useMessageActions({
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [originalMessageId, setOriginalMessageId] = useState<string | null>(null);
   const [reactionMessageId, setReactionMessageId] = useState<string | null>(null);
-  const [replyingTo, setReplyingTo] = useState<MessageReply | null>(null);
-  const [replyThreadMessageId, setReplyThreadMessageId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const [confirmUnsendMessageId, setConfirmUnsendMessageId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{
@@ -106,8 +100,6 @@ export function useMessageActions({
     setEditingMessageId(null);
     setOriginalMessageId(null);
     setReactionMessageId(null);
-    setReplyingTo(null);
-    setReplyThreadMessageId(null);
     setEditDraft('');
     setConfirmUnsendMessageId(null);
     setPendingDelete(null);
@@ -180,28 +172,6 @@ export function useMessageActions({
     if (reactionMessageId && hiddenMessageIds.has(reactionMessageId)) {
       setReactionMessageId(null);
     }
-    if (
-      replyThreadMessageId
-      && (
-        hiddenMessageIds.has(replyThreadMessageId)
-        || !messages.some((message) => message.messageId === replyThreadMessageId)
-      )
-    ) {
-      setReplyThreadMessageId(null);
-    }
-    if (
-      replyingTo
-      && hiddenMessageIds.has(replyingTo.messageId)
-    ) {
-      setReplyingTo(null);
-    } else if (replyingTo) {
-      const sourceMessage = messages.find((message) => message.messageId === replyingTo.messageId);
-      if (!sourceMessage || isMessageUnsent(sourceMessage)) {
-        setReplyingTo(null);
-      } else if (sourceMessage.text !== replyingTo.text) {
-        setReplyingTo({ ...replyingTo, text: sourceMessage.text });
-      }
-    }
     setSelectedMessageIds((current) => {
       const next = new Set([...current].filter((messageId) => !hiddenMessageIds.has(messageId)));
       return next.size === current.size ? current : next;
@@ -213,8 +183,6 @@ export function useMessageActions({
     messages,
     originalMessageId,
     reactionMessageId,
-    replyThreadMessageId,
-    replyingTo,
   ]);
 
   const findMessage = (messageId: string | null) =>
@@ -224,24 +192,6 @@ export function useMessageActions({
   const originalMessage = findMessage(originalMessageId);
   const reactionMessage = findMessage(reactionMessageId);
   const unsendMessage = findMessage(confirmUnsendMessageId);
-  const replyThreadMessage = findMessage(replyThreadMessageId);
-  const replyThreadMessages = useMemo(
-    () =>
-      replyThreadMessageId
-        ? messages
-            .filter(
-              (message) =>
-                !hiddenMessageIds.has(message.messageId)
-                && message.replyTo?.messageId === replyThreadMessageId
-                && !isMessageUnsent(message)
-            )
-            .sort(
-              (left, right) =>
-                timestampToMillis(left.createdAt) - timestampToMillis(right.createdAt)
-            )
-        : [],
-    [hiddenMessageIds, messages, replyThreadMessageId]
-  );
 
   useEffect(() => {
     if (
@@ -266,7 +216,6 @@ export function useMessageActions({
     && activeMessage.senderId !== currentUserId
     && !isMessageUnsent(activeMessage)
     && !!onReportMessage;
-  const canReplyActive = !!activeMessage && canReplyToMessage(activeMessage);
   const activeMessageLikedByCurrentUser =
     !!activeMessage
     && !!currentUserId
@@ -277,49 +226,6 @@ export function useMessageActions({
   function openMessageActions(message: MessageActionRecord) {
     setActionNowMs(Date.now());
     setActiveMessageId(message.messageId);
-  }
-
-  function canReplyToMessage(message: MessageActionRecord) {
-    return (
-      allowReplies
-      && !!currentUserId
-      && !!threadId
-      && !isMessageUnsent(message)
-      && !!message.text.trim()
-    );
-  }
-
-  function beginReplyingMessage(message: MessageActionRecord) {
-    if (!canReplyToMessage(message)) {
-      return;
-    }
-    setReplyingTo({
-      messageId: message.messageId,
-      senderId: message.senderId,
-      text: message.text,
-    });
-    closeMessageActions();
-  }
-
-  function beginReplyingActiveMessage() {
-    if (activeMessage) {
-      beginReplyingMessage(activeMessage);
-    }
-  }
-
-  function cancelReply() {
-    setReplyingTo(null);
-  }
-
-  function openReplyThread(message: MessageActionRecord) {
-    if (!message || message.pending || isMessageUnsent(message)) {
-      return;
-    }
-    setReplyThreadMessageId(message.messageId);
-  }
-
-  function closeReplyThread() {
-    setReplyThreadMessageId(null);
   }
 
   function closeMessageActions() {
@@ -580,20 +486,15 @@ export function useMessageActions({
     activeMessage,
     activeMessageLikedByCurrentUser,
     beginEditingActiveMessage,
-    beginReplyingMessage,
-    beginReplyingActiveMessage,
     beginSelectingActiveMessage,
     canDoubleTapLikeMessage,
     canReactToMessage,
-    canReplyToMessage,
     canConfirmEdit,
     canCopyActive,
     canDeleteActive,
     canEditActive,
     canReportActive,
-    canReplyActive,
     canUnsendActive,
-    cancelReply,
     closeEditor,
     closeMessageLikes,
     closeMessageActions,
@@ -615,9 +516,6 @@ export function useMessageActions({
     originalMessage,
     pendingDelete,
     reactionMessage,
-    replyThreadMessage,
-    replyThreadMessages,
-    replyingTo,
     reportActiveMessage,
     requestDeleteActiveMessage,
     requestDeleteSelectedMessages,
@@ -631,8 +529,6 @@ export function useMessageActions({
     setPendingDelete,
     showOriginalMessage,
     showMessageLikes,
-    openReplyThread,
-    closeReplyThread,
     toggleMessageLike,
     toggleMessageSelection,
     unsendMessage,

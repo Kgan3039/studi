@@ -225,7 +225,9 @@ describe("Messages beta production wiring", () => {
     assert.match(messagesSource, /<Sheet/);
     assert.match(messagesSource, /label="Delete"/);
     assert.match(messagesSource, /removeSessionChatFromUserHistory/);
-    assert.doesNotMatch(messagesSource, /<IconButton/);
+    assert.match(messagesSource, /<IconButton/);
+    assert.match(messagesSource, /accessibilityLabel=\{`Remove \$\{otherName\} from my Messages`\}/);
+    assert.match(messagesSource, /onPress=\{\(\) => confirmRemoveChat\(groupTarget\)\}/);
     assert.match(messagesSource, /name: 'remove', label: `Remove \$\{otherName\} from my Messages`/);
     assert.match(messagesSource, /platform: Platform\.OS/);
     assert.match(messagesSource, /window\.confirm\(message\)/);

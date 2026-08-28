@@ -21,10 +21,6 @@ import { IconButton } from '@/components/ui/IconButton';
 import {
   MessageActionOverlays,
   MessageEditedIndicator,
-  MessageReplyCount,
-  MessageReplyComposer,
-  MessageReplyPreview,
-  MessageReplyThreadSheet,
   MessageReactionBadge,
   MessageSelectionBar,
   MessageSelectionTarget,
@@ -52,7 +48,6 @@ import {
   subscribeToKeptSessionChats,
   subscribeToSessionMessages,
   type KeptSessionChat,
-  type MessageReply,
   type SessionMessage,
   type StudySessionListItem,
   type UserProfile,
@@ -68,7 +63,6 @@ type ChatOpenSource = 'session_detail' | 'auto_join' | 'deeplink';
 
 type FailedSend = {
   messageId: string;
-  replyTo?: MessageReply;
   text: string;
   isRetrying: boolean;
 };
@@ -430,7 +424,6 @@ export default function SessionChatScreen() {
   const messageActions = useMessageActions({
     allowEditing: !isReadOnly,
     allowReactions: !isReadOnly,
-    allowReplies: !isReadOnly,
     allowUnsend: !isReadOnly,
     currentUserId: currentUser?.uid,
     messages: actionMessages,
@@ -459,17 +452,6 @@ export default function SessionChatScreen() {
         : [],
     [actionMessages, messageActions.hiddenMessageIds, messageActions.hiddenMessagesReady]
   );
-  const replyCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    visibleMessages.forEach((message) => {
-      const sourceId = message.replyTo?.messageId;
-      if (sourceId && !message.unsentAt) {
-        counts.set(sourceId, (counts.get(sourceId) ?? 0) + 1);
-      }
-    });
-    return counts;
-  }, [visibleMessages]);
-
   // A denied write usually means the session state changed under us (e.g.
   // the host cancelled while this screen was open) — reload the session so
   // the read-only state renders instead of an endless retry loop.
@@ -490,13 +472,11 @@ export default function SessionChatScreen() {
     }
 
     const messageId = createSessionMessageId(sessionId);
-    const replyTo = messageActions.replyingTo ?? undefined;
     setDraft('');
 
     try {
       setIsSending(true);
-      await sendSessionMessage(sessionId, currentUser.uid, text, messageId, replyTo);
-      messageActions.cancelReply();
+      await sendSessionMessage(sessionId, currentUser.uid, text, messageId);
     } catch (error) {
       if (error instanceof ObjectionableContentError) {
         setDraft(text);
@@ -504,7 +484,7 @@ export default function SessionChatScreen() {
         return;
       }
       // Keep the message; the bubble flips to a failed state with a retry.
-      setFailedSends((current) => [{ messageId, replyTo, text, isRetrying: false }, ...current]);
+      setFailedSends((current) => [{ messageId, text, isRetrying: false }, ...current]);
       refreshSessionOnDenied(error);
     } finally {
       setIsSending(false);
@@ -524,13 +504,7 @@ export default function SessionChatScreen() {
 
     try {
       // Same pre-generated ID: a retry can never double-send.
-      await sendSessionMessage(
-        sessionId,
-        currentUser.uid,
-        failed.text,
-        failed.messageId,
-        failed.replyTo
-      );
+      await sendSessionMessage(sessionId, currentUser.uid, failed.text, failed.messageId);
       setFailedSends((current) => current.filter((item) => item.messageId !== failed.messageId));
     } catch (error) {
       setFailedSends((current) =>
@@ -755,10 +729,6 @@ export default function SessionChatScreen() {
             <View style={styles.failedGroup}>
               {failedSends.map((failed) => (
                 <View key={failed.messageId} style={[styles.messageGroup, styles.mine]}>
-                  <MessageReplyPreview
-                    replyTo={failed.replyTo}
-                    sourceIsCurrentUser={failed.replyTo?.senderId === currentUser?.uid}
-                  />
                   <View style={[styles.bubble, styles.mineBubble, styles.failedBubble, { backgroundColor: palette.tint }]}>
                     <Text style={[styles.bubbleText, { color: '#FFFFFF' }]}>{failed.text}</Text>
                   </View>
@@ -823,15 +793,6 @@ export default function SessionChatScreen() {
           const isUnsent = !!message.unsentAt;
           const isLikedByCurrentUser = !!currentUser?.uid
             && message.likedByIds.includes(currentUser.uid);
-          const replyCount = isUnsent ? 0 : replyCounts.get(message.messageId) ?? 0;
-          const isReplyDirectlyBelowSource =
-            !showDaySeparator && message.replyTo?.messageId === chronPrev?.messageId;
-          const chronNextDate = chronNext ? toDate(chronNext.createdAt) : null;
-          const hasDirectReplyBelow =
-            chronNext?.replyTo?.messageId === message.messageId
-            && (!messageDate
-              || !chronNextDate
-              || messageDate.toDateString() === chronNextDate.toDateString());
 
           return (
             <View style={[styles.messageGroup, isCurrentUser ? styles.mine : styles.theirs]}>
@@ -844,13 +805,6 @@ export default function SessionChatScreen() {
                 <Text style={[styles.senderName, { color: palette.icon }]} numberOfLines={1}>
                   {senderName(message.senderId)}
                 </Text>
-              ) : null}
-              {!isUnsent ? (
-                <MessageReplyPreview
-                  isDirectReply={isReplyDirectlyBelowSource}
-                  replyTo={message.replyTo}
-                  sourceIsCurrentUser={message.replyTo?.senderId === currentUser?.uid}
-                />
               ) : null}
               <MessageSelectionTarget
                 accessibilityLabel={isUnsent ? 'Message unsent' : message.text}
@@ -899,12 +853,6 @@ export default function SessionChatScreen() {
                     : undefined
                 }
                 onOpenActions={() => messageActions.openMessageActions(message)}
-                onSwipeToReply={
-                  messageActions.canReplyToMessage(message)
-                    ? () => messageActions.beginReplyingMessage(message)
-                    : undefined
-                }
-                replySwipeThreshold={isCurrentUser ? 32 : 70}
                 onToggleSelection={() =>
                   messageActions.toggleMessageSelection(message.messageId)
                 }
@@ -931,12 +879,6 @@ export default function SessionChatScreen() {
                     {isUnsent ? 'Message unsent' : message.text}
                   </Text>
                 </MessageSelectionTarget>
-              {!messageActions.isSelecting && replyCount > 0 && !hasDirectReplyBelow ? (
-                <MessageReplyCount
-                  count={replyCount}
-                  onPress={() => messageActions.openReplyThread(message)}
-                />
-              ) : null}
               {showTime || (!!message.editedAt && !isUnsent) ? (
                 <View style={styles.messageMeta}>
                   {!messageActions.isSelecting ? (
@@ -968,15 +910,6 @@ export default function SessionChatScreen() {
               paddingBottom: Math.max(insets.bottom, Space.md),
             },
           ]}>
-          <MessageReplyComposer
-            onCancel={messageActions.cancelReply}
-            replyTo={messageActions.replyingTo}
-            senderName={
-              messageActions.replyingTo?.senderId === currentUser?.uid
-                ? 'You'
-                : senderName(messageActions.replyingTo?.senderId ?? '')
-            }
-          />
           <View
             style={[
               styles.composer,
@@ -1022,16 +955,6 @@ export default function SessionChatScreen() {
         </View>
       )}
       </KeyboardAvoidingView>
-      <MessageReplyThreadSheet
-        currentUserId={currentUser?.uid}
-        message={messageActions.replyThreadMessage}
-        onClose={messageActions.closeReplyThread}
-        replies={messageActions.replyThreadMessages}
-        senderNameForId={(userId) =>
-          userId === currentUser?.uid ? 'You' : senderName(userId)
-        }
-        visible={!!messageActions.replyThreadMessage}
-      />
       <MessageActionOverlays
         controller={messageActions}
         userNameForId={(userId) =>
