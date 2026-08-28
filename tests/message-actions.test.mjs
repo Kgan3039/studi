@@ -189,10 +189,13 @@ describe('message action production wiring', () => {
     assert.match(messageActionsHook, /onReportMessage\(message\)/);
   });
 
-  it('keeps the full shared action model and private reporting in session chat', () => {
+  it('keeps the shared action model and private reporting in session chat', () => {
     for (const label of ['Copy', 'Edit', 'Unsend', 'Report', 'Delete', 'Select']) {
       assert.match(messageActionsUi, new RegExp(`label="${label}"`));
     }
+    assert.match(messageActionsUi, /'Like'/);
+    assert.match(messageActionsUi, /'Unlike'/);
+    assert.doesNotMatch(messageActionsUi, /label="Reply"/);
     assert.doesNotMatch(messageActionsUi, /isSessionChat/);
     assert.match(sessionChat, /onReportMessage:/);
     assert.match(sessionChat, /contentType: 'session_message'/);
@@ -206,16 +209,72 @@ describe('message action production wiring', () => {
     assert.match(messagesScreen, /router\.push\(`\/user\/\$\{userId\}`\)/);
   });
 
-  it('keeps reply snapshots out of the release action and persistence model', () => {
-    for (const source of [messageActionsUi, directChat, sessionChat, firestore]) {
-      assert.doesNotMatch(source, /replyTo|MessageReply|onReply|PanResponder/);
+  it('keeps replies out of the release action, rendering, and persistence paths', () => {
+    for (const source of [messageActionsUi, messageActionsHook, directChat, sessionChat, firestore]) {
+      assert.doesNotMatch(source, /replyTo|MessageReply|onSwipeToReply|PanResponder/);
     }
+    assert.doesNotMatch(messageActionsUi, /label="Reply"/);
+  });
+
+  it('keeps reaction gestures stable without suppressing the shared actions', () => {
+    assert.match(messageActionsUi, /activeMessageLikedByCurrentUser/);
+    assert.match(messageActionsUi, /label=\{controller\.activeMessageLikedByCurrentUser \? 'Unlike' : 'Like'\}/);
+    assert.match(messageActionsUi, /delayLongPress=\{350\}/);
+    assert.match(
+      messageActionsUi,
+      /style=\{\[styles\.gestureTarget, bubbleStyle, !!reaction && styles\.gestureTargetWithReaction\]\}/
+    );
+    assert.match(messageActionsUi, /style=\{styles\.messagePressTarget\}/);
+    assert.match(messageActionsUi, /gestureResetKey/);
+    assert.match(
+      messageActionsUi,
+      /if \(longPressTriggeredRef\.current\) \{\s*longPressTriggeredRef\.current = false;\s*return;/
+    );
+    assert.doesNotMatch(messageActionsUi, /showLikeAnimation|likeAnimation|Animated\.|likeScale|likeOpacity/);
+    assert.match(directChat, /canDoubleTapLikeMessage/);
+    assert.match(sessionChat, /canDoubleTapLikeMessage/);
+    assert.match(directChat, /gestureResetKey=\{isLikedByCurrentUser\}/);
+    assert.match(sessionChat, /gestureResetKey=\{isLikedByCurrentUser\}/);
+  });
+
+  it('keeps the clean core actions visible after a reaction and keeps badges outside message text', () => {
+    assert.match(
+      messageActionsUi,
+      /label=\{controller\.activeMessageLikedByCurrentUser \? 'Unlike' : 'Like'\}/
+    );
+    for (const label of ['Copy', 'Edit', 'Unsend', 'Report', 'Delete', 'Select']) {
+      assert.match(messageActionsUi, new RegExp(`label="${label}"`));
+    }
+    assert.doesNotMatch(messageActionsUi, /label="Reply"/);
+    assert.match(messageActionsUi, /side: 'left' \| 'right'/);
+    assert.match(messageActionsUi, /gestureTargetWithReaction:[\s\S]*marginTop: Space\.md/);
+    assert.match(directChat, /side=\{isCurrentUser \? 'right' : 'left'\}/);
+    assert.match(sessionChat, /side=\{isCurrentUser \? 'right' : 'left'\}/);
+    assert.doesNotMatch(directChat, /message\.likedByIds\.length > 0 && styles\.bubbleWithReaction/);
+    assert.doesNotMatch(sessionChat, /message\.likedByIds\.length > 0 && styles\.bubbleWithReaction/);
   });
 
   it('exposes the shared action sheet through an explicit accessibility action', () => {
     assert.match(messageActionsUi, /name: 'activate', label: 'Open message actions'/);
     assert.match(messageActionsUi, /onAccessibilityAction=/);
     assert.match(messageActionsUi, /onOpenActions\(\)/);
+  });
+
+  it('keeps message options reachable while a reaction write is pending', () => {
+    assert.doesNotMatch(
+      messageActionsHook,
+      /function openMessageActions\(message: MessageActionRecord\) \{\s*if \(message\.pending\)/
+    );
+    assert.match(messageActionsHook, /const canDeleteActive = !!activeMessage && !isMessageUnsent\(activeMessage\)/);
+    assert.doesNotMatch(
+      messageActionsHook,
+      /function canReplyToMessage\(message: MessageActionRecord\)[\s\S]*!message\.pending/
+    );
+    assert.doesNotMatch(
+      messageActionsHook,
+      /function canReactToMessage\(message: MessageActionRecord\)[\s\S]*!message\.pending/
+    );
+    assert.match(messageActionsUi, /controller\.canDeleteActive/);
   });
 
   it('uses atomic, message-bound shared reactions and a stronger active-message backdrop', () => {

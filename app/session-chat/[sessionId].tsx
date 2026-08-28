@@ -445,10 +445,13 @@ export default function SessionChatScreen() {
     threadId: sessionId,
     threadType: 'session',
   });
-  const visibleMessages = messageActions.hiddenMessagesReady
-    ? actionMessages.filter((message) => !messageActions.hiddenMessageIds.has(message.messageId))
-    : [];
-
+  const visibleMessages = useMemo(
+    () =>
+      messageActions.hiddenMessagesReady
+        ? actionMessages.filter((message) => !messageActions.hiddenMessageIds.has(message.messageId))
+        : [],
+    [actionMessages, messageActions.hiddenMessageIds, messageActions.hiddenMessagesReady]
+  );
   // A denied write usually means the session state changed under us (e.g.
   // the host cancelled while this screen was open) — reload the session so
   // the read-only state renders instead of an endless retry loop.
@@ -788,6 +791,8 @@ export default function SessionChatScreen() {
           const isSelected = messageActions.selectedMessageIds.has(message.messageId);
           const isActive = messageActions.activeMessage?.messageId === message.messageId;
           const isUnsent = !!message.unsentAt;
+          const isLikedByCurrentUser = !!currentUser?.uid
+            && message.likedByIds.includes(currentUser.uid);
 
           return (
             <View style={[styles.messageGroup, isCurrentUser ? styles.mine : styles.theirs]}>
@@ -805,7 +810,6 @@ export default function SessionChatScreen() {
                 accessibilityLabel={isUnsent ? 'Message unsent' : message.text}
                 bubbleStyle={[
                   styles.bubble,
-                  message.likedByIds.length > 0 && styles.bubbleWithReaction,
                   isUnsent
                     ? [
                         styles.unsentBubble,
@@ -830,8 +834,21 @@ export default function SessionChatScreen() {
                     { backgroundColor: palette.tint, borderColor: '#FFFFFF' },
                   ],
                 ]}
+                gestureResetKey={isLikedByCurrentUser}
+                reaction={
+                  !messageActions.isSelecting && message.likedByIds.length > 0 ? (
+                    <MessageReactionBadge
+                      currentUserId={currentUser?.uid}
+                      likedByIds={message.likedByIds}
+                      onLongPress={() => messageActions.openMessageActions(message)}
+                      onPress={() => messageActions.showMessageLikes(message)}
+                      side={isCurrentUser ? 'right' : 'left'}
+                      selecting={messageActions.isSelecting}
+                    />
+                  ) : null
+                }
                 onDoublePress={
-                  messageActions.canReactToMessage(message)
+                  messageActions.canDoubleTapLikeMessage(message)
                     ? () => void messageActions.toggleMessageLike(message)
                     : undefined
                 }
@@ -861,12 +878,6 @@ export default function SessionChatScreen() {
                     ]}>
                     {isUnsent ? 'Message unsent' : message.text}
                   </Text>
-                  <MessageReactionBadge
-                    currentUserId={currentUser?.uid}
-                    likedByIds={message.likedByIds}
-                    onPress={() => messageActions.showMessageLikes(message)}
-                    selecting={messageActions.isSelecting}
-                  />
                 </MessageSelectionTarget>
               {showTime || (!!message.editedAt && !isUnsent) ? (
                 <View style={styles.messageMeta}>
@@ -1022,7 +1033,9 @@ const styles = StyleSheet.create({
     transform: [{ scaleY: -1 }],
   },
   messageGroup: {
+    alignSelf: 'stretch',
     gap: Space.xs,
+    width: '100%',
   },
   messageRow: {
     alignItems: 'center',
@@ -1065,12 +1078,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.md + 2,
     paddingVertical: Space.sm + 2,
   },
-  bubbleWithReaction: {
-    marginTop: Space.sm,
-  },
   activeBubble: {
     borderWidth: 2,
-    transform: [{ scale: 1.025 }],
     zIndex: 3,
   },
   mineBubble: {
@@ -1102,7 +1111,6 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.bodyMedium,
     fontSize: 10,
     lineHeight: 13,
-    paddingHorizontal: Space.xs,
   },
   emptyThread: {
     alignItems: 'center',

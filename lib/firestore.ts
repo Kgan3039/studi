@@ -1494,7 +1494,6 @@ export async function sendDirectMessage(
     throw new Error("Write a message before sending.");
   }
   assertAllowedUserGeneratedText(trimmedText);
-
   const batch = writeBatch(db);
   const messageRef = doc(collection(db, COLLECTIONS.conversations, conversationId, "messages"));
 
@@ -1794,7 +1793,6 @@ export async function sendSessionMessage(
     throw new Error("Write a message before sending.");
   }
   assertAllowedUserGeneratedText(trimmedText);
-
   const batch = writeBatch(db);
   batch.set(doc(db, COLLECTIONS.sessions, sessionId, "messages", messageId), {
     senderId,
@@ -1809,6 +1807,34 @@ export async function sendSessionMessage(
   );
   await batch.commit();
   track("group_message_sent", { length: trimmedText.length });
+}
+
+/** Reads the latest session message separately from the session document. The
+ * session document is visible to verified users, so message text must remain
+ * participant-scoped in the messages subcollection rather than being copied
+ * into list metadata. */
+export async function getLatestSessionMessagePreview(sessionId: string): Promise<string | null> {
+  const snapshot = await getDocs(
+    query(sessionMessagesCollection(sessionId), orderBy("createdAt", "desc"), limit(1))
+  );
+  const latestMessage = snapshot.docs[0];
+  if (!latestMessage) {
+    return null;
+  }
+
+  const data = latestMessage.data({ serverTimestamps: "estimate" });
+  const rawText = typeof data.text === "string" ? data.text : "";
+  const normalizedText = rawText.replace(/\s+/g, " ").trim();
+
+  if (data.unsentAt && !normalizedText) {
+    return "Message unsent";
+  }
+
+  if (!normalizedText) {
+    return null;
+  }
+
+  return normalizedText.slice(0, 120);
 }
 
 export type SessionMessagesPage = {

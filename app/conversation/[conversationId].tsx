@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -173,10 +173,13 @@ export default function ConversationScreen() {
     threadId: conversationId,
     threadType: 'direct',
   });
-  const visibleMessages = messageActions.hiddenMessagesReady
-    ? messages.filter((message) => !messageActions.hiddenMessageIds.has(message.messageId))
-    : [];
-
+  const visibleMessages = useMemo(
+    () =>
+      messageActions.hiddenMessagesReady
+        ? messages.filter((message) => !messageActions.hiddenMessageIds.has(message.messageId))
+        : [],
+    [messageActions.hiddenMessageIds, messageActions.hiddenMessagesReady, messages]
+  );
   useEffect(() => {
     let cancelled = false;
 
@@ -586,6 +589,8 @@ export default function ConversationScreen() {
             const isSelected = messageActions.selectedMessageIds.has(message.messageId);
             const isActive = messageActions.activeMessage?.messageId === message.messageId;
             const isUnsent = !!message.unsentAt;
+            const isLikedByCurrentUser = !!currentUser?.uid
+              && message.likedByIds.includes(currentUser.uid);
 
             return (
               <View
@@ -600,7 +605,6 @@ export default function ConversationScreen() {
                   accessibilityLabel={isUnsent ? 'Message unsent' : message.text}
                   bubbleStyle={[
                     styles.bubble,
-                    message.likedByIds.length > 0 && styles.bubbleWithReaction,
                     isUnsent
                       ? [
                           styles.unsentBubble,
@@ -625,8 +629,21 @@ export default function ConversationScreen() {
                       { backgroundColor: palette.tint, borderColor: '#FFFFFF' },
                     ],
                   ]}
+                  gestureResetKey={isLikedByCurrentUser}
+                  reaction={
+                    !messageActions.isSelecting && message.likedByIds.length > 0 ? (
+                      <MessageReactionBadge
+                        currentUserId={currentUser?.uid}
+                        likedByIds={message.likedByIds}
+                        onLongPress={() => messageActions.openMessageActions(message)}
+                        onPress={() => messageActions.showMessageLikes(message)}
+                        side={isCurrentUser ? 'right' : 'left'}
+                        selecting={messageActions.isSelecting}
+                      />
+                    ) : null
+                  }
                   onDoublePress={
-                    messageActions.canReactToMessage(message)
+                    messageActions.canDoubleTapLikeMessage(message)
                       ? () => void messageActions.toggleMessageLike(message)
                       : undefined
                   }
@@ -656,12 +673,6 @@ export default function ConversationScreen() {
                       ]}>
                       {isUnsent ? 'Message unsent' : message.text}
                     </Text>
-                    <MessageReactionBadge
-                      currentUserId={currentUser?.uid}
-                      likedByIds={message.likedByIds}
-                      onPress={() => messageActions.showMessageLikes(message)}
-                      selecting={messageActions.isSelecting}
-                    />
                   </MessageSelectionTarget>
                 {showTime || (!!message.editedAt && !isUnsent) ? (
                   <View style={styles.messageMeta}>
@@ -838,7 +849,9 @@ const styles = StyleSheet.create({
     paddingBottom: Space.xl,
   },
   messageGroup: {
+    alignSelf: 'stretch',
     gap: Space.xs,
+    width: '100%',
   },
   messageRow: {
     alignItems: 'center',
@@ -872,12 +885,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.md + 2,
     paddingVertical: Space.sm + 2,
   },
-  bubbleWithReaction: {
-    marginTop: Space.sm,
-  },
   activeBubble: {
     borderWidth: 2,
-    transform: [{ scale: 1.025 }],
     zIndex: 3,
   },
   mineBubble: {
@@ -906,7 +915,6 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.bodyMedium,
     fontSize: 10,
     lineHeight: 13,
-    paddingHorizontal: Space.xs,
   },
   emptyThread: {
     alignItems: 'center',

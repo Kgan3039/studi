@@ -211,7 +211,9 @@ function clientSendFlow(db, uid, conversationId, messageId, text) {
     db, uid, 'sendMessage', `conversations/${conversationId}/messages/${messageId}`
   );
   batch.set(doc(db, 'conversations', conversationId, 'messages', messageId), {
-    senderId: uid, text, createdAt: serverTimestamp(),
+    senderId: uid,
+    text,
+    createdAt: serverTimestamp(),
   });
   return batch.commit();
 }
@@ -1608,12 +1610,15 @@ describe('conversations + messages', () => {
     await assertFails(clientSendFlow(ctx(MALLORY), MALLORY, cid, 'm2', 'intruder'));
   });
 
-  it('rejects reply snapshots from direct-message clients', async () => {
+  it('rejects reply fields even when the referenced direct message exists', async () => {
     const cid = convoId(ALICE, BOB);
     const messageId = 'reply-message';
     await seed(`conversations/${cid}`, {
       ...validConversation(ALICE, BOB),
       createdAt: Timestamp.now(), updatedAt: Timestamp.now(), lastMessageAt: Timestamp.now(),
+    });
+    await seed(`conversations/${cid}/messages/source`, {
+      senderId: BOB, text: 'Meet at Memorial?', createdAt: Timestamp.now(),
     });
 
     const db = ctx(ALICE);
@@ -1623,7 +1628,7 @@ describe('conversations + messages', () => {
     batch.set(doc(db, 'conversations', cid, 'messages', messageId), {
       senderId: ALICE,
       text: 'Works for me.',
-      replyTo: { messageId: 'source-message', senderId: BOB, text: 'Meet at Memorial?' },
+      replyTo: { messageId: 'source', senderId: BOB, text: 'Meet at Memorial?' },
       createdAt: serverTimestamp(),
     });
     await assertFails(batch.commit());
@@ -2125,12 +2130,25 @@ describe('session group chat (sessions/{sessionId}/messages)', () => {
     }));
   });
 
-  it('rejects reply snapshots from session-chat clients', async () => {
+  it('rejects reply snapshots whose session-chat source does not exist', async () => {
     await seedChatSession();
     await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'reply-rejected', {
       senderId: BOB,
       text: 'I will be there.',
       replyTo: { messageId: 'source', senderId: ALICE, text: 'Meet at the library?' },
+      createdAt: serverTimestamp(),
+    }));
+  });
+
+  it('rejects reply fields even when the referenced session message exists', async () => {
+    await seedChatSession();
+    await seed('sessions/s1/messages/source', {
+      senderId: ALICE, text: 'Bring a charger.', createdAt: Timestamp.now(),
+    });
+    await assertFails(createSessionChatMessage(ctx(BOB), BOB, 's1', 'reply-valid', {
+      senderId: BOB,
+      text: 'Got it.',
+      replyTo: { messageId: 'source', senderId: ALICE, text: 'Bring a charger.' },
       createdAt: serverTimestamp(),
     }));
   });

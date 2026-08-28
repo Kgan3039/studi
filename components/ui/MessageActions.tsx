@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -20,12 +20,17 @@ import { Sheet } from '@/components/ui/Sheet';
 import { Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { MessageActionController } from '@/hooks/use-message-actions';
-import { isMessageDoubleTap, type MessageActionRecord } from '@/lib/message-actions';
+import {
+  isMessageDoubleTap,
+  type MessageActionRecord,
+} from '@/lib/message-actions';
 
 type MessageSelectionTargetProps = {
   accessibilityLabel: string;
   bubbleStyle: StyleProp<ViewStyle>;
   children: ReactNode;
+  gestureResetKey?: string | number | boolean;
+  reaction?: ReactNode;
   onDoublePress?: () => void;
   onOpenActions: () => void;
   onToggleSelection: () => void;
@@ -39,9 +44,11 @@ export function MessageSelectionTarget({
   accessibilityLabel,
   bubbleStyle,
   children,
+  gestureResetKey,
   onDoublePress,
   onOpenActions,
   onToggleSelection,
+  reaction,
   rowStyle,
   selected,
   selecting,
@@ -49,8 +56,23 @@ export function MessageSelectionTarget({
   const lastTapAtRef = useRef(0);
   const longPressTriggeredRef = useRef(false);
 
+  useEffect(() => {
+    // A like/unlike leaves the row mounted. Clear gesture state only when that
+    // message state changes so the next long press reaches the options sheet.
+    longPressTriggeredRef.current = false;
+    lastTapAtRef.current = 0;
+  }, [gestureResetKey]);
+
   function handlePress() {
-    if (longPressTriggeredRef.current || !onDoublePress) {
+    // Long press can still emit a terminal press event.
+    // Consume that one event, then immediately restore the target so a later
+    // long press always opens message options.
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      return;
+    }
+
+    if (!onDoublePress) {
       return;
     }
 
@@ -90,28 +112,31 @@ export function MessageSelectionTarget({
 
   return (
     <View style={rowStyle}>
-      <Pressable
-        accessibilityActions={[
-          { name: 'activate', label: 'Open message actions' },
-          ...(onDoublePress ? [{ name: 'magicTap' as const, label: 'Like message' }] : []),
-        ]}
-        accessibilityHint="Use the Actions rotor item or long press for message actions. Double tap quickly to like."
-        accessibilityLabel={accessibilityLabel}
-        accessibilityRole="button"
-        delayLongPress={350}
-        onAccessibilityAction={(event) =>
-          event.nativeEvent.actionName === 'magicTap' && onDoublePress
-            ? onDoublePress()
-            : onOpenActions()
-        }
-        onLongPress={handleLongPress}
-        onPress={handlePress}
-        onPressIn={() => {
-          longPressTriggeredRef.current = false;
-        }}
-        style={bubbleStyle}>
-        {children}
-      </Pressable>
+      <View style={[styles.gestureTarget, bubbleStyle, !!reaction && styles.gestureTargetWithReaction]}>
+        <Pressable
+          accessibilityActions={[
+            { name: 'activate', label: 'Open message actions' },
+            ...(onDoublePress ? [{ name: 'magicTap' as const, label: 'Like message' }] : []),
+          ]}
+          accessibilityHint="Use the Actions rotor item or long press for message actions. Double tap quickly to like."
+          accessibilityLabel={accessibilityLabel}
+          accessibilityRole="button"
+          delayLongPress={350}
+          onAccessibilityAction={(event) =>
+            event.nativeEvent.actionName === 'magicTap' && onDoublePress
+              ? onDoublePress()
+              : onOpenActions()
+          }
+          onLongPress={handleLongPress}
+          onPress={handlePress}
+          onPressIn={() => {
+            longPressTriggeredRef.current = false;
+          }}
+          style={styles.messagePressTarget}>
+          {children}
+        </Pressable>
+        {reaction}
+      </View>
     </View>
   );
 }
@@ -141,6 +166,21 @@ export function MessageActionOverlays({
             styles.actionList,
             { borderColor: palette.border, backgroundColor: palette.surfaceMuted },
           ]}>
+          {controller.activeMessage && controller.canReactToMessage(controller.activeMessage) ? (
+            <ActionRow
+              icon="hand.thumbsup.fill"
+              label={controller.activeMessageLikedByCurrentUser ? 'Unlike' : 'Like'}
+              onPress={() => {
+                const message = controller.activeMessage;
+                controller.closeMessageActions();
+                if (message) {
+                  void controller.toggleMessageLike(message);
+                }
+              }}
+              showChevron={false}
+              style={styles.actionRow}
+            />
+          ) : null}
           {controller.canCopyActive ? (
             <ActionRow
               icon="doc.on.doc"
@@ -178,14 +218,16 @@ export function MessageActionOverlays({
               style={styles.actionRow}
             />
           ) : null}
-          <ActionRow
-            destructive
-            icon="trash.fill"
-            label="Delete"
-            onPress={controller.requestDeleteActiveMessage}
-            showChevron={false}
-            style={styles.actionRow}
-          />
+          {controller.canDeleteActive ? (
+            <ActionRow
+              destructive
+              icon="trash.fill"
+              label="Delete"
+              onPress={controller.requestDeleteActiveMessage}
+              showChevron={false}
+              style={styles.actionRow}
+            />
+          ) : null}
           <ActionRow
             divided={false}
             icon="checkmark.circle"
@@ -349,12 +391,16 @@ export function MessageEditedIndicator({
 export function MessageReactionBadge({
   currentUserId,
   likedByIds,
+  onLongPress,
   onPress,
+  side,
   selecting,
 }: {
   currentUserId?: string;
   likedByIds: string[];
+  onLongPress?: () => void;
   onPress: () => void;
+  side: 'left' | 'right';
   selecting: boolean;
 }) {
   const colorScheme = useColorScheme() ?? 'light';
@@ -381,10 +427,12 @@ export function MessageReactionBadge({
       accessibilityRole="button"
       disabled={selecting}
       hitSlop={8}
+      onLongPress={onLongPress}
       onPress={handlePress}
       pointerEvents={selecting ? 'none' : 'auto'}
       style={({ pressed }) => [
         styles.reactionBadge,
+        side === 'right' ? styles.reactionBadgeRight : styles.reactionBadgeLeft,
         {
           backgroundColor: likedByCurrentUser ? palette.tint : palette.surface,
           borderColor: likedByCurrentUser ? palette.tint : palette.outline,
@@ -476,6 +524,15 @@ const styles = StyleSheet.create({
   actionRow: {
     backgroundColor: 'transparent',
     paddingHorizontal: Space.md,
+  },
+  gestureTarget: {
+    position: 'relative',
+  },
+  gestureTargetWithReaction: {
+    marginTop: Space.md,
+  },
+  messagePressTarget: {
+    alignSelf: 'stretch',
   },
   editActions: {
     flexDirection: 'row',
@@ -573,13 +630,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 2,
     justifyContent: 'center',
-    left: -8,
     minHeight: 24,
     minWidth: 28,
     paddingHorizontal: 6,
     position: 'absolute',
-    top: -12,
+    top: -Space.md,
     zIndex: 2,
+  },
+  reactionBadgeLeft: {
+    right: -Space.sm,
+  },
+  reactionBadgeRight: {
+    left: -Space.sm,
   },
   reactionCount: {
     fontFamily: FontFamily.bodySemiBold,

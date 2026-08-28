@@ -14,6 +14,7 @@ import { StudiLaunchIntro } from '@/components/studi-launch-intro';
 import { HeaderBackButton } from '@/components/ui/HeaderBackButton';
 import { Colors, FontFamily } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { ThemePreferenceProvider, useThemePreference } from '@/hooks/theme-preferences';
 import { initAnalytics, track } from '@/lib/analytics';
 import { analyticsRouteForPathname } from '@/lib/analytics-routes';
 import { subscribeToVerifiedAuthState, waitForAuthReady } from '@/lib/auth';
@@ -51,6 +52,7 @@ export const unstable_settings = {
 
 function RootLayout() {
   const colorScheme = useColorScheme();
+  const { isLoaded: themePreferenceLoaded } = useThemePreference();
   const palette = Colors[colorScheme ?? 'light'];
   const pathname = usePathname();
   const router = useRouter();
@@ -122,7 +124,7 @@ function RootLayout() {
 
   const fontsReady = fontsLoaded || fontError;
   const authAccess = getRootAuthAccess({ authRestored, authState });
-  const ready = fontsReady && authAccess.mountNavigator && launchIntroState !== 'checking';
+  const ready = fontsReady && themePreferenceLoaded && authAccess.mountNavigator && launchIntroState !== 'checking';
 
   const finishLaunchIntro = useCallback(() => {
     setLaunchIntroState('finished');
@@ -270,4 +272,12 @@ function RootLayout() {
   );
 }
 
-export default Sentry.wrap(RootLayout);
+function AppLayout() {
+  return (
+    <ThemePreferenceProvider>
+      <RootLayout />
+    </ThemePreferenceProvider>
+  );
+}
+
+export default Sentry.wrap(AppLayout);

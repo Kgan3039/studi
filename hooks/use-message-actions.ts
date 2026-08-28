@@ -176,7 +176,14 @@ export function useMessageActions({
       const next = new Set([...current].filter((messageId) => !hiddenMessageIds.has(messageId)));
       return next.size === current.size ? current : next;
     });
-  }, [activeMessageId, editingMessageId, hiddenMessageIds, originalMessageId, reactionMessageId]);
+  }, [
+    activeMessageId,
+    editingMessageId,
+    hiddenMessageIds,
+    messages,
+    originalMessageId,
+    reactionMessageId,
+  ]);
 
   const findMessage = (messageId: string | null) =>
     messageId ? messages.find((message) => message.messageId === messageId) ?? null : null;
@@ -198,6 +205,7 @@ export function useMessageActions({
   const selectedMessages = messages.filter((message) => selectedMessageIds.has(message.messageId));
   const selectedCopy = buildSelectedMessageCopy(selectedMessages, selectedMessageIds);
   const canCopyActive = !!activeMessage && !isMessageUnsent(activeMessage) && !!activeMessage.text;
+  const canDeleteActive = !!activeMessage && !isMessageUnsent(activeMessage);
   const canEditActive =
     allowEditing && canEditMessage(activeMessage, currentUserId, actionNowMs);
   const canUnsendActive =
@@ -208,13 +216,14 @@ export function useMessageActions({
     && activeMessage.senderId !== currentUserId
     && !isMessageUnsent(activeMessage)
     && !!onReportMessage;
+  const activeMessageLikedByCurrentUser =
+    !!activeMessage
+    && !!currentUserId
+    && !!activeMessage.likedByIds?.includes(currentUserId);
   const canConfirmEdit =
     !!editingMessage && hasMessageTextChanged(editingMessage.text, editDraft) && !isWorking;
 
   function openMessageActions(message: MessageActionRecord) {
-    if (message.pending) {
-      return;
-    }
     setActionNowMs(Date.now());
     setActiveMessageId(message.messageId);
   }
@@ -334,7 +343,7 @@ export function useMessageActions({
   }
 
   function requestDeleteActiveMessage() {
-    if (!activeMessage) {
+    if (!activeMessage || !canDeleteActive) {
       return;
     }
     setPendingDelete({ fromSelection: false, messageIds: [activeMessage.messageId] });
@@ -427,9 +436,12 @@ export function useMessageActions({
       allowReactions
       && !!currentUserId
       && !!threadId
-      && !message.pending
       && !isMessageUnsent(message)
     );
+  }
+
+  function canDoubleTapLikeMessage(message: MessageActionRecord) {
+    return canReactToMessage(message) && !message.likedByIds?.includes(currentUserId ?? '');
   }
 
   async function toggleMessageLike(message: MessageActionRecord) {
@@ -472,11 +484,14 @@ export function useMessageActions({
 
   return {
     activeMessage,
+    activeMessageLikedByCurrentUser,
     beginEditingActiveMessage,
     beginSelectingActiveMessage,
+    canDoubleTapLikeMessage,
     canReactToMessage,
     canConfirmEdit,
     canCopyActive,
+    canDeleteActive,
     canEditActive,
     canReportActive,
     canUnsendActive,

@@ -1,4 +1,4 @@
-import { type Href, useFocusEffect, useRouter } from 'expo-router';
+import { type Href, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
@@ -14,18 +14,21 @@ import {
 } from 'react-native';
 
 import { ExternalLink } from '@/components/external-link';
+import { ProfileEditSheet } from '@/components/profile/ProfileEditSheet';
 import { ActionRow } from '@/components/ui/ActionRow';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Button } from '@/components/ui/Button';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { ScreenTransition } from '@/components/ui/ScreenTransition';
 import { SectionHeader } from '@/components/ui/SectionHeader';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import {
     STUDI_CONTACT_EMAIL,
     STUDI_PRIVACY_POLICY_URL,
     STUDI_SUPPORT_URL,
 } from '@/constants/app-info';
 import { Brand, Colors, FontFamily, Radius, Space, TypeScale } from '@/constants/theme';
+import { useThemePreference, type ThemePreference } from '@/hooks/theme-preferences';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { track } from '@/lib/analytics';
 import { deleteCurrentUserAccount, logOut, subscribeToAuthState } from '@/lib/auth';
@@ -82,16 +85,23 @@ const NOTIFICATION_ROWS: {
   },
 ];
 
+const THEME_OPTIONS: { label: string; value: ThemePreference }[] = [
+  { label: 'Light', value: 'light' },
+  { label: 'Dark', value: 'dark' },
+  { label: 'System', value: 'system' },
+];
+
 export default function SettingsScreen() {
   const colorScheme = useColorScheme() ?? 'light';
+  const { preference: themePreference, setPreference: setThemePreference } = useThemePreference();
   const palette = Colors[colorScheme];
-  const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_NOTIFICATION_PREFS);
   const [prefsState, setPrefsState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isReauthenticatingDelete, setIsReauthenticatingDelete] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [showDeleteReauthModal, setShowDeleteReauthModal] = useState(false);
   const [deleteReauthPassword, setDeleteReauthPassword] = useState('');
   const [isDeletePasswordVisible, setIsDeletePasswordVisible] = useState(false);
@@ -105,8 +115,8 @@ export default function SettingsScreen() {
     return unsubscribe;
   }, []);
 
-  // Fires on every focus, not just mount — coming back from Edit profile
-  // counts as a fresh view.
+  // Fires on every focus, not just mount — returning to Settings counts as a
+  // fresh view after closing an overlay or another screen.
   useFocusEffect(
     useCallback(() => {
       track('settings_viewed');
@@ -155,6 +165,14 @@ export default function SettingsScreen() {
         'Notifications Error',
         "That preference didn't save. Check your connection and try again."
       );
+    }
+  }
+
+  async function handleThemePreferenceChange(preference: ThemePreference) {
+    try {
+      await setThemePreference(preference);
+    } catch {
+      Alert.alert('Appearance Error', "That display preference didn't save. Please try again.");
     }
   }
 
@@ -254,9 +272,10 @@ export default function SettingsScreen() {
   const academicLine = [profile?.year, profile?.major].filter(Boolean).join(', ');
 
   return (
-    <ScrollView
-      style={[styles.screen, { backgroundColor: palette.background }]}
-      contentContainerStyle={styles.content}>
+    <>
+      <ScrollView
+        style={[styles.screen, { backgroundColor: palette.background }]}
+        contentContainerStyle={styles.content}>
       <ScreenTransition style={styles.transition}>
       {/* Account (design spec §3.13 grouped list). */}
       <View style={styles.section}>
@@ -284,12 +303,27 @@ export default function SettingsScreen() {
             divided={false}
             icon="square.and.pencil"
             label="Edit Profile"
-            onPress={() =>
-              router.replace({
-                pathname: '/(tabs)/profile',
-                params: { edit: 'profile' },
-              } as Href)
-            }
+            onPress={() => setIsEditingProfile(true)}
+          />
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <SectionHeader eyebrow="Appearance" />
+        <View
+          style={[
+            styles.appearanceCard,
+            { backgroundColor: palette.surfaceMuted, borderColor: palette.border },
+          ]}>
+          <Text style={[TypeScale.bodyStrong, { color: palette.text }]}>Color theme</Text>
+          <Text style={[TypeScale.caption, { color: palette.icon }]}>
+            Choose light, dark, or follow your device.
+          </Text>
+          <SegmentedControl
+            accessibilityLabel="Color theme"
+            onChange={handleThemePreferenceChange}
+            options={THEME_OPTIONS}
+            value={themePreference}
           />
         </View>
       </View>
@@ -415,7 +449,35 @@ export default function SettingsScreen() {
           </Pressable>
         </View>
       </ConfirmDialog>
-    </ScrollView>
+      </ScrollView>
+
+      <ProfileEditSheet
+        currentUser={currentUser}
+        initialValues={{
+          displayName: profile?.displayName ?? '',
+          year: profile?.year ?? null,
+          major: profile?.major ?? '',
+          pronouns: profile?.pronouns ?? '',
+          bio: profile?.bio ?? '',
+        }}
+        onClose={() => setIsEditingProfile(false)}
+        onSaved={(values) => {
+          setProfile((current) =>
+            current
+              ? {
+                  ...current,
+                  displayName: values.displayName,
+                  year: values.year ?? undefined,
+                  major: values.major,
+                  pronouns: values.pronouns,
+                  bio: values.bio,
+                }
+              : current
+          );
+        }}
+        visible={isEditingProfile}
+      />
+    </>
   );
 }
 
@@ -433,6 +495,12 @@ const styles = StyleSheet.create({
   },
   section: {
     gap: Space.md,
+  },
+  appearanceCard: {
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: Space.xs,
+    padding: Space.md,
   },
   groupList: {
     borderBottomWidth: StyleSheet.hairlineWidth,

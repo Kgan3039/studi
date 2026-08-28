@@ -106,27 +106,29 @@ describe('sheet keyboard scroll offset', () => {
 });
 
 describe('Edit Profile production wiring', () => {
+  const editorSource = readFileSync('components/profile/ProfileEditSheet.tsx', 'utf8');
   const profileSource = readFileSync('app/(tabs)/profile.tsx', 'utf8');
+  const settingsSource = readFileSync('app/settings.tsx', 'utf8');
   const sheetSource = readFileSync('components/ui/Sheet.tsx', 'utf8');
 
   it('sanitizes all four identity fields during editing and saving', () => {
     for (const field of ['FirstName', 'LastName', 'Major', 'Pronouns']) {
-      assert.match(profileSource, new RegExp(`set${field}\\(stripProfileIdentityEmoji\\(value\\)\\)`));
+      assert.match(editorSource, new RegExp(`set${field}\\(stripProfileIdentityEmoji\\(value\\)\\)`));
     }
-    assert.match(profileSource, /stripProfileIdentityEmoji\(firstName\)\.trim\(\)/);
-    assert.match(profileSource, /stripProfileIdentityEmoji\(lastName\)\.trim\(\)/);
-    assert.match(profileSource, /major: stripProfileIdentityEmoji\(major\)\.trim\(\)/);
-    assert.match(profileSource, /pronouns: stripProfileIdentityEmoji\(pronouns\)\.trim\(\)/);
+    assert.match(editorSource, /stripProfileIdentityEmoji\(firstName\)\.trim\(\)/);
+    assert.match(editorSource, /stripProfileIdentityEmoji\(lastName\)\.trim\(\)/);
+    assert.match(editorSource, /major: stripProfileIdentityEmoji\(major\)\.trim\(\)/);
+    assert.match(editorSource, /pronouns: stripProfileIdentityEmoji\(pronouns\)\.trim\(\)/);
   });
 
   it('leaves bio input and persistence untouched by the sanitizer', () => {
-    const detailsBlock = profileSource.slice(
-      profileSource.indexOf('const details = {'),
-      profileSource.indexOf('const nameChanged')
+    const detailsBlock = editorSource.slice(
+      editorSource.indexOf('const details = {'),
+      editorSource.indexOf('const nameChanged')
     );
-    const bioInput = profileSource.slice(
-      profileSource.indexOf('placeholder="What are you studying toward?"') - 250,
-      profileSource.indexOf('placeholder="What are you studying toward?"') + 250
+    const bioInput = editorSource.slice(
+      editorSource.indexOf('placeholder="What are you studying toward?"') - 250,
+      editorSource.indexOf('placeholder="What are you studying toward?"') + 250
     );
     assert.match(detailsBlock, /bio: bio\.trim\(\)/);
     assert.doesNotMatch(detailsBlock.match(/bio:.*$/m)?.[0] ?? '', /stripProfileIdentityEmoji/);
@@ -135,22 +137,30 @@ describe('Edit Profile production wiring', () => {
   });
 
   it('never renders arbitrary errors from the profile save path', () => {
-    const saveBody = profileSource.slice(
-      profileSource.indexOf('async function handleSaveProfile'),
-      profileSource.indexOf('async function handleSaveClasses')
+    const saveBody = editorSource.slice(
+      editorSource.indexOf('async function handleSave'),
+      editorSource.indexOf('const placeholderColor')
     );
     assert.match(saveBody, /getProfileSaveErrorMessage\(error\)/);
     assert.doesNotMatch(saveBody, /error\.message/);
   });
 
   it('preserves drafts on close while clearing transient bio scroll state', () => {
-    const closeBody = profileSource.slice(
-      profileSource.indexOf('function closeProfileEditor'),
-      profileSource.indexOf('async function handleSaveProfile')
+    const closeBody = editorSource.slice(
+      editorSource.indexOf('function handleClose'),
+      editorSource.indexOf('async function handleSave')
     );
     assert.match(closeBody, /setIsBioFocused\(false\)/);
     assert.match(closeBody, /setBioLayout\(null\)/);
     assert.doesNotMatch(closeBody, /set(?:FirstName|LastName|Major|Year|Pronouns|Bio)\(/);
+  });
+
+  it('opens the shared editor over Settings without switching to the Profile tab', () => {
+    assert.match(settingsSource, /onPress=\{\(\) => setIsEditingProfile\(true\)\}/);
+    assert.match(settingsSource, /<ProfileEditSheet/);
+    assert.match(settingsSource, /visible=\{isEditingProfile\}/);
+    assert.doesNotMatch(settingsSource, /router\.(replace|push).*profile/);
+    assert.match(profileSource, /<ProfileEditSheet/);
   });
 
   it('keeps keyboard padding opt-in for existing Sheet callers', () => {
