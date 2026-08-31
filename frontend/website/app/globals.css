@@ -1245,7 +1245,7 @@ h1 {
 }
 
 .sim-phone-screen {
-  aspect-ratio: 1206 / 2622;
+  aspect-ratio: 1179 / 2556;
   background: #f7f5ef;
   border-radius: 46px;
   overflow: hidden;
@@ -1874,7 +1874,7 @@ body:has(.how-page) .footer {
   }
 
   .sim-phone-stage {
-    height: 347px;
+    height: 345px;
     margin: 0 auto;
     position: relative;
     width: 165px;
