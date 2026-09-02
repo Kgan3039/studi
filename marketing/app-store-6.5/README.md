@@ -1,15 +1,13 @@
-# App Store screenshots — 6.5" (1242×2688)
+# App Store screenshots - 6.5" (1242x2688)
 
-Promotional set for the 6.5" display slot, generated from the anonymised
-captures in `frontend/website/public/screens/`.
+Native iPhone 11 Pro Max simulator captures for the 6.5" App Store display
+slot. The app was built from Build 5 commit
+`9714db92f9f3bf6b72f730a6d71bd272e42a4898` with deterministic anonymized
+local fixture data.
 
-Those sources are 1179×2556 (iPhone 15/16 Pro native), which is a slightly
-narrower aspect than 1242×2688. Each image is widened by 2px — one replicated
-edge column per side, invisible against the flat margins — then rescaled once
-with Lanczos, so no content is cropped.
-
-Regenerating: re-run the resize against the website screens folder after any
-source change, keeping the numbered order below.
+Each PNG was captured directly at 1242x2688 using `xcrun simctl`. The files
+have not been resized, cropped, stretched, upscaled, or edited after capture.
+The separate 1179x2556 website screenshots remain unchanged.
 
 | File | Screen |
 | --- | --- |
@@ -18,6 +16,3 @@ source change, keeping the numbered order below.
 | `03-spots.png` | Spots |
 | `04-messages.png` | Conversation |
 | `05-profile.png` | Profile |
-
-Note: these are upscaled from 1179px-wide sources. For the sharpest result,
-recapture natively on a 6.5" device or simulator (iPhone 11 Pro Max / XS Max).
