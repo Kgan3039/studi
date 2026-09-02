@@ -3,8 +3,7 @@
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
-// device screenshots at their native resolution (iPhone 15/16 Pro), kept
-// unscaled so the same files can be reused for App Store submission
+// Native iPhone 15/16 Pro website preview captures, kept unscaled for the website.
 const SHOT_WIDTH = 1179;
 const SHOT_HEIGHT = 2556;
 
