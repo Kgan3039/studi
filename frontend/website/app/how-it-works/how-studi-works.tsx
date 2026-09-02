@@ -3,10 +3,9 @@
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
-// screenshots are exported straight from the iPhone simulator, so every
-// preview stays in sync with what the app actually looks like
-const SHOT_WIDTH = 800;
-const SHOT_HEIGHT = 1739;
+// Native iPhone 15/16 Pro website preview captures, kept unscaled for the website.
+const SHOT_WIDTH = 1179;
+const SHOT_HEIGHT = 2556;
 
 const steps = [
   {
