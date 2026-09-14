@@ -376,57 +376,33 @@ h1 {
 }
 
 .app-store-button {
-  align-items: center;
-  background: var(--text);
-  border: 1px solid var(--text);
-  border-radius: 999px;
-  box-shadow: 0 13px 30px rgba(23, 33, 29, 0.17);
-  color: #fff;
   display: inline-flex;
-  gap: 11px;
-  min-height: 56px;
-  padding: 9px 26px 9px 20px;
-  text-decoration: none;
-  transition:
-    background 300ms ease,
-    border-color 300ms ease,
-    box-shadow 350ms ease;
-}
-
-/* the apple glyph's leaf makes it sit visually low, so nudge it up */
-.app-store-button svg {
   flex: none;
-  margin-top: -3px;
+  /* Clear space is one-quarter of the 48px badge height on every side. */
+  padding: 12px;
+  text-decoration: none;
 }
 
-.app-store-button-text {
-  display: grid;
-  line-height: 1.08;
-  text-align: left;
-}
-
-.app-store-button-text small {
-  font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  opacity: 0.82;
-}
-
-.app-store-button-text strong {
-  font-size: 1.12rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-}
-
-/* glows into the brand red rather than lifting, matching the footer icons */
-.app-store-button:hover {
-  background: var(--accent-dark);
-  border-color: var(--accent-dark);
-  box-shadow: 0 16px 36px rgba(148, 17, 24, 0.28);
+.app-store-button img {
+  display: block;
+  height: 48px;
+  width: auto;
 }
 
 .app-store-button:focus-visible {
-  border-radius: 999px;
+  outline-offset: 0;
+}
+
+/* Apple badges must remain static, including within entrance/reveal containers. */
+.route-frame:has(.app-store-button),
+.actions:has(.app-store-button),
+.how-closing-card:has(.app-store-button),
+.reveal-ready .how-closing-card[data-reveal]:has(.app-store-button),
+.how-closing-card.is-revealed .how-closing-cta {
+  animation: none;
+  opacity: 1;
+  transform: none;
+  transition: none;
 }
 
 .text-link {
@@ -1548,7 +1524,7 @@ body:has(.how-page) .footer {
   animation: closing-ink 900ms 360ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
 }
 
-.how-closing-card.is-revealed .how-closing-cta {
+.how-closing-card.is-revealed .how-closing-cta > span {
   animation: closing-note-in 650ms 650ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
 }
 

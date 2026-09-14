@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Arapey, Cormorant_Garamond } from "next/font/google";
 import Link from "next/link";
-import { APP_STORE_ID, APP_STORE_URL, AppleLogo } from "./app-store-button";
+import { APP_STORE_ID, APP_STORE_URL } from "./app-store-button";
 import Brand from "./brand";
 import "./globals.css";
 
@@ -89,11 +89,10 @@ export default function RootLayout({
           <div className="footer-social">
             <a
               aria-label="Download Studi on the App Store"
-              className="footer-social-link"
               href={APP_STORE_URL}
               rel="noreferrer noopener"
               target="_blank">
-              <AppleLogo size={18} />
+              App Store
             </a>
             <a
               aria-label="Studi on Instagram"
