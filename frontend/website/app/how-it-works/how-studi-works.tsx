@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import AppStoreButton from "../app-store-button";
 
 // Native iPhone 15/16 Pro website preview captures, kept unscaled for the website.
 const SHOT_WIDTH = 1179;
@@ -194,7 +195,10 @@ export default function HowStudiWorks() {
             <span>Show up</span>
             <strong>together.</strong>
           </h2>
-          <span className="how-closing-note">Launching Fall 2026 at UW–Madison</span>
+          <div className="how-closing-cta">
+            <AppStoreButton />
+            <span>Now live at UW–Madison</span>
+          </div>
         </div>
       </section>
     </article>

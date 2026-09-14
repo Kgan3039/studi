@@ -375,27 +375,34 @@ h1 {
   margin-top: 34px;
 }
 
-.coming-soon {
-  background: var(--text);
-  border: 1px solid var(--text);
-  border-radius: 999px;
-  box-shadow: 0 13px 30px rgba(23, 33, 29, 0.17);
-  color: #fff;
+.app-store-button {
   display: inline-flex;
-  font-size: 0.87rem;
-  font-weight: 800;
-  line-height: 1.25;
-  min-height: 52px;
-  padding: 15px 25px;
-  text-align: center;
-  transition:
-    box-shadow 350ms ease,
-    transform 350ms ease;
+  flex: none;
+  /* Clear space is one-quarter of the 48px badge height on every side. */
+  padding: 12px;
+  text-decoration: none;
 }
 
-.coming-soon:hover {
-  box-shadow: 0 18px 38px rgba(23, 33, 29, 0.22);
-  transform: translateY(-3px);
+.app-store-button img {
+  display: block;
+  height: 48px;
+  width: auto;
+}
+
+.app-store-button:focus-visible {
+  outline-offset: 0;
+}
+
+/* Apple badges must remain static, including within entrance/reveal containers. */
+.route-frame:has(.app-store-button),
+.actions:has(.app-store-button),
+.how-closing-card:has(.app-store-button),
+.reveal-ready .how-closing-card[data-reveal]:has(.app-store-button),
+.how-closing-card.is-revealed .how-closing-cta {
+  animation: none;
+  opacity: 1;
+  transform: none;
+  transition: none;
 }
 
 .text-link {
@@ -1488,20 +1495,21 @@ body:has(.how-page) .footer {
   transform: rotate(-3deg);
 }
 
-.how-closing-note {
-  background: var(--text);
-  border: 1px solid var(--text);
-  border-radius: 999px;
-  box-shadow: 0 15px 30px rgba(23, 33, 29, 0.15);
-  color: #fff;
-  display: inline-flex;
-  font-size: 0.71rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+.how-closing-cta {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
   margin-top: 36px;
-  padding: 11px 15px;
   position: relative;
   z-index: 1;
+}
+
+.how-closing-cta > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .how-closing-card.is-revealed h2 > span {
@@ -1516,7 +1524,7 @@ body:has(.how-page) .footer {
   animation: closing-ink 900ms 360ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
 }
 
-.how-closing-card.is-revealed .how-closing-note {
+.how-closing-card.is-revealed .how-closing-cta > span {
   animation: closing-note-in 650ms 650ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
 }
 
