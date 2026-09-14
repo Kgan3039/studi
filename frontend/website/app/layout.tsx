@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Arapey, Cormorant_Garamond } from "next/font/google";
 import Link from "next/link";
+import { APP_STORE_ID, APP_STORE_URL, AppleLogo } from "./app-store-button";
 import Brand from "./brand";
 import "./globals.css";
 
@@ -54,6 +55,8 @@ const cormorant = Cormorant_Garamond({
 export const metadata: Metadata = {
   title: "Studi",
   description: "Study smarter with students in your classes.",
+  // shows Safari's native "Get" banner for Studi on iPhone
+  itunes: { appId: APP_STORE_ID },
 };
 
 export default function RootLayout({
@@ -84,6 +87,14 @@ export default function RootLayout({
             <span className="footer-contact-address">{contactEmail}</span>
           </a>
           <div className="footer-social">
+            <a
+              aria-label="Download Studi on the App Store"
+              className="footer-social-link"
+              href={APP_STORE_URL}
+              rel="noreferrer noopener"
+              target="_blank">
+              <AppleLogo size={18} />
+            </a>
             <a
               aria-label="Studi on Instagram"
               className="footer-social-link"

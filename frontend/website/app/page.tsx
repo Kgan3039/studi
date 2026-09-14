@@ -1,3 +1,5 @@
+import AppStoreButton from "./app-store-button";
+
 const contactEmail = "isp.studi@gmail.com";
 
 export default function Home() {
@@ -14,7 +16,7 @@ export default function Home() {
           classmates, and find reliable campus study spots.
         </p>
         <div className="actions">
-          <span className="coming-soon">Launching Fall 2026 at UW–Madison</span>
+          <AppStoreButton />
           <a className="text-link" href={`mailto:${contactEmail}`}>
             {contactEmail}
             <span aria-hidden="true">↗</span>

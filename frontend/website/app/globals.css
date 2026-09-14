@@ -375,27 +375,58 @@ h1 {
   margin-top: 34px;
 }
 
-.coming-soon {
+.app-store-button {
+  align-items: center;
   background: var(--text);
   border: 1px solid var(--text);
   border-radius: 999px;
   box-shadow: 0 13px 30px rgba(23, 33, 29, 0.17);
   color: #fff;
   display: inline-flex;
-  font-size: 0.87rem;
-  font-weight: 800;
-  line-height: 1.25;
-  min-height: 52px;
-  padding: 15px 25px;
-  text-align: center;
+  gap: 11px;
+  min-height: 56px;
+  padding: 9px 26px 9px 20px;
+  text-decoration: none;
   transition:
-    box-shadow 350ms ease,
-    transform 350ms ease;
+    background 300ms ease,
+    border-color 300ms ease,
+    box-shadow 350ms ease;
 }
 
-.coming-soon:hover {
-  box-shadow: 0 18px 38px rgba(23, 33, 29, 0.22);
-  transform: translateY(-3px);
+/* the apple glyph's leaf makes it sit visually low, so nudge it up */
+.app-store-button svg {
+  flex: none;
+  margin-top: -3px;
+}
+
+.app-store-button-text {
+  display: grid;
+  line-height: 1.08;
+  text-align: left;
+}
+
+.app-store-button-text small {
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.82;
+}
+
+.app-store-button-text strong {
+  font-size: 1.12rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* glows into the brand red rather than lifting, matching the footer icons */
+.app-store-button:hover {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+  box-shadow: 0 16px 36px rgba(148, 17, 24, 0.28);
+}
+
+.app-store-button:focus-visible {
+  border-radius: 999px;
 }
 
 .text-link {
@@ -1488,20 +1519,21 @@ body:has(.how-page) .footer {
   transform: rotate(-3deg);
 }
 
-.how-closing-note {
-  background: var(--text);
-  border: 1px solid var(--text);
-  border-radius: 999px;
-  box-shadow: 0 15px 30px rgba(23, 33, 29, 0.15);
-  color: #fff;
-  display: inline-flex;
-  font-size: 0.71rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+.how-closing-cta {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
   margin-top: 36px;
-  padding: 11px 15px;
   position: relative;
   z-index: 1;
+}
+
+.how-closing-cta > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .how-closing-card.is-revealed h2 > span {
@@ -1516,7 +1548,7 @@ body:has(.how-page) .footer {
   animation: closing-ink 900ms 360ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
 }
 
-.how-closing-card.is-revealed .how-closing-note {
+.how-closing-card.is-revealed .how-closing-cta {
   animation: closing-note-in 650ms 650ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
 }
 
